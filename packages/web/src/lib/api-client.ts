@@ -1,4 +1,4 @@
-import type { DiagramSummary, FlowNode, FlowEdge } from '@flowstudio/shared';
+import type { DiagramSummary, FlowNode, FlowEdge, SnapshotSummary } from '@flowstudio/shared';
 
 const API_BASE = '/api/diagrams';
 
@@ -53,6 +53,30 @@ export const apiClient = {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`删除图表失败: ${res.statusText}`);
+  },
+
+  async listSnapshots(diagramId: string): Promise<SnapshotSummary[]> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots`);
+    if (!res.ok) throw new Error(`获取快照列表失败: ${res.statusText}`);
+    return res.json();
+  },
+
+  async createSnapshot(diagramId: string, label: string): Promise<SnapshotSummary> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, triggerType: 'manual' }),
+    });
+    if (!res.ok) throw new Error(`创建快照失败: ${res.statusText}`);
+    return res.json();
+  },
+
+  async restoreSnapshot(diagramId: string, snapshotId: string): Promise<{ success: boolean; message?: string }> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`恢复快照失败: ${res.statusText}`);
+    return res.json();
   },
 };
 

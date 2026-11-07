@@ -14,6 +14,7 @@ import {
   Check,
   Share2,
   Sparkles,
+  History,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -22,6 +23,7 @@ import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
+import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
 
 export interface TopBarProps {
   /** 当前图表 ID */
@@ -39,6 +41,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -266,6 +269,17 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           <span>{isLayouting ? '排版中...' : '自动排版'}</span>
         </button>
 
+        {/* 历史版本快照 */}
+        <button
+          type="button"
+          onClick={() => setIsHistoryOpen(true)}
+          title="查看历史版本快照与无损差异恢复"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50 transition-colors cursor-pointer shadow-xs"
+        >
+          <History className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+          <span>版本</span>
+        </button>
+
         {/* 导出菜单 */}
         <div className="relative" ref={exportDropdownRef}>
           <button
@@ -343,6 +357,14 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           <span>{toastMessage}</span>
         </div>
       )}
+
+      {/* 历史版本快照抽屉 */}
+      <SnapshotDrawer
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        diagramId={diagramId}
+        onToast={showToast}
+      />
     </header>
   );
 };
