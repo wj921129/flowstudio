@@ -3,7 +3,7 @@
  * @description 组装 React Flow 视口，集成 15px 网格吸附、橡皮筋框选、全局快捷键、正交连线与就地浮动工具条
  */
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -16,8 +16,9 @@ import {
   DEFAULT_SNAP_GRID,
   isFlowNodeType,
   getDefaultNodeSize,
+  type FlowNode,
 } from '@flowstudio/shared';
-import { snapPositionToGrid } from '../../lib/node-utils';
+import { snapPositionToGrid, generateUniqueId } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
 import { nodeTypes } from './custom-nodes';
 import { edgeTypes } from './custom-edges';
@@ -33,6 +34,7 @@ export const FlowCanvas: React.FC = () => {
   const onEdgesChange = useFlowStore((s) => s.onEdgesChange);
   const onConnect = useFlowStore((s) => s.onConnect);
   const addNode = useFlowStore((s) => s.addNode);
+  const addNodes = useFlowStore((s) => s.addNodes);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
   const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
   const groupSelectedNodes = useFlowStore((s) => s.groupSelectedNodes);
@@ -43,6 +45,9 @@ export const FlowCanvas: React.FC = () => {
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
 
   const { screenToFlowPosition } = useReactFlow();
+
+  // 内存剪贴板（用于 Ctrl+C / Ctrl+V 节点快捷复制粘贴）
+  const clipboardRef = useRef<FlowNode[]>([]);
 
   // 连线模式下的暂存起始源节点 ID
   const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
@@ -184,6 +189,65 @@ export const FlowCanvas: React.FC = () => {
         return;
       }
 
+      // 全选所有节点 (Ctrl+A / Cmd+A)
+      if (modKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        const currentNodes = useFlowStore.getState().nodes;
+        setSelectedNodes(currentNodes.map((n) => n.id));
+        setSelectedEdge(null);
+        return;
+      }
+
+      // 复制选中节点至内存剪贴板 (Ctrl+C / Cmd+C)
+      if (modKey && (e.key === 'c' || e.key === 'C')) {
+        const { nodes: currentNodes, selectedNodeIds: currentSelectedIds } =
+          useFlowStore.getState();
+        const selected = currentNodes.filter(
+          (n) => currentSelectedIds.includes(n.id) || n.selected
+        );
+        if (selected.length > 0) {
+          e.preventDefault();
+          clipboardRef.current = JSON.parse(JSON.stringify(selected));
+        }
+        return;
+      }
+
+      // 粘贴剪贴板中的节点 (Ctrl+V / Cmd+V)
+      if (modKey && (e.key === 'v' || e.key === 'V')) {
+        if (clipboardRef.current && clipboardRef.current.length > 0) {
+          e.preventDefault();
+          // 为克隆图元生成全新唯一 ID，并保留/重映射内部成组父子层级关系
+          const idMap = new Map<string, string>();
+          clipboardRef.current.forEach((n) => {
+            idMap.set(n.id, generateUniqueId(n.type));
+          });
+
+          const clonedNodes: FlowNode[] = clipboardRef.current.map((n) => {
+            const newId = idMap.get(n.id)!;
+            const newParentId =
+              n.parentId && idMap.has(n.parentId)
+                ? idMap.get(n.parentId)
+                : n.parentId;
+
+            return {
+              ...JSON.parse(JSON.stringify(n)),
+              id: newId,
+              parentId: newParentId,
+              position: {
+                x: n.position.x + 20,
+                y: n.position.y + 20,
+              },
+              selected: true,
+            };
+          });
+
+          // 更新剪贴板引用坐标以便连续多次粘贴依次偏移
+          clipboardRef.current = clonedNodes;
+          addNodes(clonedNodes);
+          return;
+        }
+      }
+
       // 撤销 (Ctrl+Z) 与重做 (Ctrl+Shift+Z / Ctrl+Y)
       if (modKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
@@ -236,6 +300,7 @@ export const FlowCanvas: React.FC = () => {
     deleteSelected,
     undo,
     redo,
+    addNodes,
     connectSourceNodeId,
     activeTool,
     setActiveTool,
@@ -262,6 +327,7 @@ export const FlowCanvas: React.FC = () => {
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        deleteKeyCode={null}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

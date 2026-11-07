@@ -11,10 +11,19 @@ import { BaseNodeWrapper } from './base-node-wrapper';
 export const IONode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const fillColor = props.data.style?.fillColor ? String(props.data.style.fillColor) : 'var(--fs-node-bg)';
   const strokeColor = props.data.style?.borderColor ? String(props.data.style.borderColor) : 'var(--fs-node-border)';
+  const strokeWidth = props.data.style?.borderWidth ?? 1.5;
+  const strokeDasharray = props.data.style?.borderStyle === 'dashed' ? '4 4' : undefined;
   return (
     <BaseNodeWrapper {...props} className="!bg-transparent !border-transparent">
       <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100">
-        <polygon points="15,1 99,1 85,99 1,99" fill={fillColor} stroke={strokeColor} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <polygon
+          points="15,1 99,1 85,99 1,99"
+          fill={fillColor}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
     </BaseNodeWrapper>
   );

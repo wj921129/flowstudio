@@ -11,11 +11,30 @@ import { BaseNodeWrapper } from './base-node-wrapper';
 export const DatabaseNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const fillColor = props.data.style?.fillColor ? String(props.data.style.fillColor) : 'var(--fs-node-bg)';
   const strokeColor = props.data.style?.borderColor ? String(props.data.style.borderColor) : 'var(--fs-node-border)';
+  const strokeWidth = props.data.style?.borderWidth ?? 1.5;
+  const strokeDasharray = props.data.style?.borderStyle === 'dashed' ? '4 4' : undefined;
   return (
     <BaseNodeWrapper {...props} className="!bg-transparent !border-transparent">
       <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100">
-        <path d="M 1,15 L 1,85 C 1,95 99,95 99,85 L 99,15 Z" fill={fillColor} stroke={strokeColor} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-        <ellipse cx="50" cy="15" rx="49" ry="14" fill={fillColor} stroke={strokeColor} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <path
+          d="M 1,15 L 1,85 C 1,95 99,95 99,85 L 99,15 Z"
+          fill={fillColor}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          vectorEffect="non-scaling-stroke"
+        />
+        <ellipse
+          cx="50"
+          cy="15"
+          rx="49"
+          ry="14"
+          fill={fillColor}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
     </BaseNodeWrapper>
   );

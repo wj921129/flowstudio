@@ -12,7 +12,7 @@ export const CommentNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   return (
     <BaseNodeWrapper
       {...props}
-      className="rounded-md border-2 border-dashed !bg-[var(--fs-note-bg)] !border-[var(--fs-note-border)] shadow-sm"
+      className="rounded-md border-2 border-dashed bg-[var(--fs-note-bg)] border-[var(--fs-note-border)] shadow-sm"
     >
       <div className="absolute top-0 right-0 w-3 h-3 bg-[var(--fs-note-border)] rounded-bl pointer-events-none" />
     </BaseNodeWrapper>

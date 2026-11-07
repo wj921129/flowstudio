@@ -86,6 +86,8 @@ export interface FlowStoreActions {
   onConnect: (connection: Connection) => void;
   /** 添加指定类型的节点至目标画布坐标 */
   addNode: (type: FlowNodeType, position: { x: number; y: number }) => FlowNode;
+  /** 批量添加节点至画布（例如快捷键复制粘贴），并自动设为唯一激活选中节点集合 */
+  addNodes: (newNodes: FlowNode[]) => void;
   /** 删除所有选中的节点及其相连的连线，以及选中的连线 */
   deleteSelected: () => void;
   /** 更新指定节点的业务数据 */
@@ -315,6 +317,34 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     });
 
     return newNode;
+  },
+
+  addNodes: (newNodes: FlowNode[]) => {
+    const { nodes, edges, historyPast } = get();
+    if (newNodes.length === 0) {
+      return;
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    const newIds = newNodes.map((n) => n.id);
+
+    const nextNodes = [
+      ...nodes.map((n) => ({
+        ...n,
+        selected: false,
+      })),
+      ...newNodes.map((n) => ({
+        ...n,
+        selected: true,
+      })),
+    ];
+
+    set({
+      nodes: nextNodes,
+      selectedNodeIds: newIds,
+      selectedEdgeId: null,
+      ...historyUpdate,
+    });
   },
 
   deleteSelected: () => {

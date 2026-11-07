@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { FlowNodeData, HandlePosition } from '@flowstudio/shared';
-import { NODE_REGISTRY_RECORD, getNodeRegistryEntry } from '@flowstudio/shared';
+import { getNodeRegistryEntry } from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
 
 /**
@@ -91,14 +91,17 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   };
 
   // 获取该节点类型预定义的 handles
-  const registryEntry = getNodeRegistryEntry(data.type) ?? NODE_REGISTRY_RECORD[data.type];
+  const registryEntry = getNodeRegistryEntry(data.type);
   const definedHandles = registryEntry?.handles ?? [];
 
   // 合并节点样式
   const nodeStyle = data.style || {};
+  const isComment = data.type === 'comment';
+  const defaultBg = isComment ? 'var(--fs-note-bg)' : 'var(--fs-node-bg)';
+  const defaultBorder = isComment ? 'var(--fs-note-border)' : 'var(--fs-node-border)';
   const mergedStyle: React.CSSProperties = {
-    backgroundColor: nodeStyle.fillColor ? String(nodeStyle.fillColor) : 'var(--fs-node-bg)',
-    borderColor: nodeStyle.borderColor ? String(nodeStyle.borderColor) : 'var(--fs-node-border)',
+    backgroundColor: nodeStyle.fillColor ? String(nodeStyle.fillColor) : defaultBg,
+    borderColor: nodeStyle.borderColor ? String(nodeStyle.borderColor) : defaultBorder,
     borderWidth: typeof nodeStyle.borderWidth === 'number' ? `${nodeStyle.borderWidth}px` : '1.5px',
     borderStyle: nodeStyle.borderStyle || undefined,
     color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : 'var(--fs-node-text)',

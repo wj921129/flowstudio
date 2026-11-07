@@ -4,7 +4,7 @@
  */
 
 import type { FlowNode, XYPosition } from '@flowstudio/shared';
-import { NODE_REGISTRY_RECORD } from '@flowstudio/shared';
+import { getNodeRegistryEntry } from '@flowstudio/shared';
 
 /**
  * 获取节点的实际宽高尺寸
@@ -13,7 +13,7 @@ import { NODE_REGISTRY_RECORD } from '@flowstudio/shared';
 export function getNodeDimensions(node: FlowNode): { width: number; height: number } {
   const styleWidth = typeof node.style?.width === 'number' ? node.style.width : undefined;
   const styleHeight = typeof node.style?.height === 'number' ? node.style.height : undefined;
-  const def = NODE_REGISTRY_RECORD[node.type];
+  const def = getNodeRegistryEntry(node.type);
   const width = node.width ?? styleWidth ?? (def ? def.defaultSize.width : 160);
   const height = node.height ?? styleHeight ?? (def ? def.defaultSize.height : 80);
   return { width, height };

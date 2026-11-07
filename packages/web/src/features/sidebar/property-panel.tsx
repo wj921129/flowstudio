@@ -3,7 +3,7 @@
  * @description 单选节点或连线时展示对应的实时可编辑属性面板；未选中时呈现占位提示
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   SlidersHorizontal,
   X,
@@ -23,7 +23,7 @@ import {
   Spline,
 } from 'lucide-react';
 import {
-  NODE_REGISTRY_RECORD,
+  getNodeRegistryEntry,
   getDefaultNodeSize,
   type FlowNode,
   type FlowEdge,
@@ -188,6 +188,59 @@ const PaletteColorPicker: React.FC<PaletteColorPickerProps> = ({
   );
 };
 
+/** 属性面板文本输入子组件（支持失焦或回车提交，防抖避免每次击键污染撤销栈） */
+interface PropertyTextInputProps {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChangeCommit: (value: string) => void;
+}
+
+const PropertyTextInput: React.FC<PropertyTextInputProps> = ({
+  label,
+  value,
+  placeholder,
+  onChangeCommit,
+}) => {
+  const [localValue, setLocalValue] = useState(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleBlur = () => {
+    if (localValue !== value) {
+      onChangeCommit(localValue);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur();
+    } else if (e.key === 'Escape') {
+      setLocalValue(value);
+      e.currentTarget.blur();
+    }
+  };
+
+  return (
+    <div>
+      <label className="text-[11px] font-medium text-[var(--fs-text-muted)] block mb-1">
+        {label}
+      </label>
+      <input
+        type="text"
+        value={localValue}
+        placeholder={placeholder}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)] text-[var(--fs-text)] outline-none focus:border-[var(--fs-primary)] transition-colors"
+      />
+    </div>
+  );
+};
+
 export interface PropertyPanelProps {
   className?: string;
 }
@@ -237,7 +290,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
           <SlidersHorizontal className="w-4 h-4 text-fs-primary shrink-0" />
           <span className="text-xs font-semibold text-fs-text tracking-wide whitespace-nowrap">
             {isSingleNodeSelected && selectedNode
-              ? NODE_REGISTRY_RECORD[selectedNode.type]?.label || '节点属性'
+              ? getNodeRegistryEntry(selectedNode.type)?.label || '节点属性'
               : isSingleEdgeSelected
                 ? '连线属性'
                 : '属性面板'}
@@ -273,25 +326,19 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
             {/* 基本属性区块 */}
             <div className="space-y-3">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--fs-text)]">
-                {React.createElement(resolveNodeIcon(NODE_REGISTRY_RECORD[selectedNode.type]?.icon), {
+                {React.createElement(resolveNodeIcon(getNodeRegistryEntry(selectedNode.type)?.icon), {
                   className: 'w-3.5 h-3.5 text-[var(--fs-primary)]',
                 })}
                 <span>基本属性</span>
               </div>
 
               {/* 文本标签 */}
-              <div>
-                <label className="text-[11px] font-medium text-[var(--fs-text-muted)] block mb-1">
-                  文本标签
-                </label>
-                <input
-                  type="text"
-                  value={selectedNode.data.label || ''}
-                  placeholder="输入图元文本..."
-                  onChange={(e) => updateNodeData(selectedNode.id, { label: e.target.value })}
-                  className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)] text-[var(--fs-text)] outline-none focus:border-[var(--fs-primary)] transition-colors"
-                />
-              </div>
+              <PropertyTextInput
+                label="文本标签"
+                value={selectedNode.data.label || ''}
+                placeholder="输入图元文本..."
+                onChangeCommit={(val) => updateNodeData(selectedNode.id, { label: val })}
+              />
 
               {/* 节点尺寸 */}
               {(() => {
@@ -504,25 +551,18 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
                 {/* 折叠状态 */}
                 <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)]">
                   <div className="flex flex-col">
-                    <span className="text-xs font-medium text-[var(--fs-text)]">折叠状态</span>
+                    <span className="text-xs font-medium text-[var(--fs-text)]">折叠状态 (规划中)</span>
                     <span className="text-[10px] text-[var(--fs-text-muted)]">
-                      {selectedNode.data.isCollapsed ? '已折叠' : '展开显示'}
+                      M2 容器折叠能力规划中
                     </span>
                   </div>
                   <button
                     type="button"
                     role="switch"
+                    disabled
                     aria-checked={Boolean(selectedNode.data.isCollapsed)}
-                    onClick={() =>
-                      updateNodeData(selectedNode.id, {
-                        isCollapsed: !selectedNode.data.isCollapsed,
-                      })
-                    }
-                    className={`w-9 h-5 flex items-center rounded-full p-0.5 transition-colors cursor-pointer ${
-                      selectedNode.data.isCollapsed
-                        ? 'bg-[var(--fs-primary)] justify-end'
-                        : 'bg-[var(--fs-border)] justify-start'
-                    }`}
+                    title="M2 容器折叠能力规划中"
+                    className="w-9 h-5 flex items-center rounded-full p-0.5 transition-colors cursor-not-allowed opacity-50 bg-[var(--fs-border)] justify-start"
                   >
                     <span className="w-4 h-4 rounded-full bg-[var(--fs-surface)] shadow-xs transition-transform" />
                   </button>
@@ -542,19 +582,13 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
                 <span>连线设置</span>
               </div>
 
-              {/* 连线文本 */}
-              <div>
-                <label className="text-[11px] font-medium text-[var(--fs-text-muted)] block mb-1">
-                  连线文本 (Label)
-                </label>
-                <input
-                  type="text"
-                  value={selectedEdge.data?.label || selectedEdge.label || ''}
-                  placeholder="输入连线标签..."
-                  onChange={(e) => updateEdgeData(selectedEdge.id, { label: e.target.value })}
-                  className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)] text-[var(--fs-text)] outline-none focus:border-[var(--fs-primary)] transition-colors"
-                />
-              </div>
+              {/* 连线文本 (防抖/失焦回车提交，避免污染历史快照) */}
+              <PropertyTextInput
+                label="连线文本 (Label)"
+                value={selectedEdge.data?.label || selectedEdge.label || ''}
+                placeholder="输入连线标签..."
+                onChangeCommit={(val) => updateEdgeData(selectedEdge.id, { label: val })}
+              />
 
               {/* 线条颜色 */}
               <PaletteColorPicker
