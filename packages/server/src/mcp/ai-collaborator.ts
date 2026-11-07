@@ -6,15 +6,25 @@
 import * as Y from 'yjs';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import type { CompactDiagram, McpOp } from './types.js';
 
 const elkInstance = new ELK();
 
 export class AiCollaborator {
+  private batchManager: AiBatchManager;
+
   constructor(
     private repo: DiagramRepository,
-    private serverBaseUrl: string = 'http://127.0.0.1:3000'
-  ) {}
+    private serverBaseUrl: string = 'http://127.0.0.1:3000',
+    batchManager?: AiBatchManager
+  ) {
+    this.batchManager = batchManager || new AiBatchManager(repo);
+  }
+
+  getBatchManager(): AiBatchManager {
+    return this.batchManager;
+  }
 
   /**
    * 1. list_diagrams
@@ -270,6 +280,11 @@ export class AiCollaborator {
     const warnings: string[] = [];
     let appliedCount = 0;
 
+    const batchId = `ai-batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const createdNodeIds: string[] = [];
+    const createdEdgeIds: string[] = [];
+    const updatedNodeBackups: Array<{ id: string; oldData: Record<string, unknown> }> = [];
+
     doc.transact(() => {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
@@ -290,6 +305,7 @@ export class AiCollaborator {
             }
             nodeMap.set('data', { label: op.label, type: op.type || 'process', ...(op.style ? { style: op.style } : {}) });
             nodesMap.set(nodeId, nodeMap);
+            createdNodeIds.push(nodeId);
             appliedCount++;
             break;
           }
@@ -301,6 +317,7 @@ export class AiCollaborator {
               break;
             }
             const data = (nodeMap.get('data') as Record<string, unknown>) || {};
+            updatedNodeBackups.push({ id: op.id, oldData: { ...data } });
             const nextData = { ...data };
             if (op.label) nextData.label = op.label;
             if (op.style) nextData.style = { ...((nextData.style as object) || {}), ...op.style };
@@ -340,6 +357,7 @@ export class AiCollaborator {
             edgeMap.set('type', 'orthogonal');
             edgeMap.set('data', { label: op.label, ...(op.style ? { style: op.style } : {}) });
             edgesMap.set(edgeId, edgeMap);
+            createdEdgeIds.push(edgeId);
             appliedCount++;
             break;
           }
@@ -378,8 +396,20 @@ export class AiCollaborator {
 
     this.repo.saveYDocState(input.diagramId, Y.encodeStateAsUpdate(doc));
 
+    // 记录 AI 批次
+    this.batchManager.recordBatch({
+      batchId,
+      diagramId: input.diagramId,
+      summary: `AI 增量执行了 ${appliedCount} 项操作（新增 ${createdNodeIds.length} 节点，${createdEdgeIds.length} 连线）`,
+      createdNodeIds,
+      createdEdgeIds,
+      updatedNodeBackups,
+      createdAt: new Date().toISOString(),
+    });
+
     return {
       success: true,
+      batchId,
       appliedCount,
       totalOps: input.ops.length,
       warnings,

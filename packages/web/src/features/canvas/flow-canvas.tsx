@@ -26,6 +26,7 @@ import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
 import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
+import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 
@@ -410,6 +411,7 @@ export const FlowCanvas: React.FC = () => {
       onMouseLeave={handleMouseLeave}
     >
       <CollaborativeCursors />
+      <AiBatchBanner diagramId={typeof window !== 'undefined' ? window.location.hash.slice(1) : undefined} />
       <ReactFlow
         nodes={nodes}
         edges={edges}

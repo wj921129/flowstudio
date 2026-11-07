@@ -1,9 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createDiagramInputSchema, updateDiagramInputSchema } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 
 interface DiagramRouteOptions {
   repo: DiagramRepository;
+  aiBatchManager?: AiBatchManager;
 }
 
 export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fastify, opts) => {
@@ -107,5 +109,25 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
       return reply.status(400).send({ error: result.error || '恢复快照失败' });
     }
     return { success: true, message: '快照已成功恢复' };
+  });
+
+  // 获取图表最近的有效 AI 批次
+  fastify.get('/:id/ai-batches', async (request) => {
+    const { id } = request.params as { id: string };
+    if (!opts.aiBatchManager) return [];
+    return opts.aiBatchManager.getBatches(id);
+  });
+
+  // 撤回指定的 AI 批次
+  fastify.post('/:id/ai-batches/:batchId/revert', async (request, reply) => {
+    const { id, batchId } = request.params as { id: string; batchId: string };
+    if (!opts.aiBatchManager) {
+      return reply.status(400).send({ error: 'AI 批次管理器未配置' });
+    }
+    const res = opts.aiBatchManager.revertBatch(id, batchId);
+    if (!res.success) {
+      return reply.status(400).send({ error: res.message });
+    }
+    return res;
   });
 };

@@ -5,6 +5,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import { AiCollaborator } from './ai-collaborator.js';
 import type { McpToolDefinition } from './types.js';
 
@@ -134,10 +135,11 @@ export const MCP_TOOLS: McpToolDefinition[] = [
 
 export interface McpPluginOptions {
   repo: DiagramRepository;
+  batchManager?: AiBatchManager;
 }
 
 export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, options) => {
-  const collaborator = new AiCollaborator(options.repo);
+  const collaborator = new AiCollaborator(options.repo, 'http://127.0.0.1:3000', options.batchManager);
 
   fastify.post('/', async (request, reply) => {
     const body = (request.body || {}) as {
