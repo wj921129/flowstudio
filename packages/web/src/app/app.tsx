@@ -3,6 +3,7 @@ import { VERSION } from '@flowstudio/shared';
 import { Providers } from './providers';
 import { ThemeToggle } from '../features/theme/theme-toggle';
 import { ShapePalette } from '../features/sidebar/shape-palette';
+import { PropertyPanel } from '../features/sidebar/property-panel';
 import { FlowCanvas } from '../features/canvas/flow-canvas';
 import { usePersistence } from '../hooks/use-persistence';
 
@@ -28,12 +29,13 @@ export const AppContent: React.FC = () => {
         </div>
       </header>
 
-      {/* 画布核心工作区：左侧图形库侧边栏 + 右侧流程图主画布 */}
+      {/* 画布核心工作区：左侧图形库侧边栏 + 中间流程图主画布 + 右侧属性面板 */}
       <main className="flex-1 w-full relative overflow-hidden flex">
         <ShapePalette />
         <div className="flex-1 h-full relative overflow-hidden">
           <FlowCanvas />
         </div>
+        <PropertyPanel />
       </main>
     </div>
   );

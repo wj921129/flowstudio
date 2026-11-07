@@ -32,6 +32,7 @@ export const FlowCanvas: React.FC = () => {
   const onConnect = useFlowStore((s) => s.onConnect);
   const addNode = useFlowStore((s) => s.addNode);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
+  const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
   const groupSelectedNodes = useFlowStore((s) => s.groupSelectedNodes);
   const ungroupNodes = useFlowStore((s) => s.ungroupNodes);
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
@@ -81,10 +82,40 @@ export const FlowCanvas: React.FC = () => {
       const newNode = addNode(rawType, snappedPosition);
       if (newNode?.id) {
         setSelectedNodes([newNode.id]);
+        setSelectedEdge(null);
       }
     },
-    [screenToFlowPosition, addNode, setSelectedNodes]
+    [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]
   );
+
+  /**
+   * 连线点击事件处理器：激活连线属性模式，并清空所有节点选中状态
+   */
+  const handleEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: { id: string }) => {
+      setSelectedNodes([]);
+      setSelectedEdge(edge.id);
+    },
+    [setSelectedNodes, setSelectedEdge]
+  );
+
+  /**
+   * 节点点击事件处理器：清空连线选中状态，确保属性面板专注呈现节点属性
+   */
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, _node: { id: string }) => {
+      setSelectedEdge(null);
+    },
+    [setSelectedEdge]
+  );
+
+  /**
+   * 画布空白区域点击事件处理器：清空所有节点与连线选中态
+   */
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodes([]);
+    setSelectedEdge(null);
+  }, [setSelectedNodes, setSelectedEdge]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -159,6 +190,9 @@ export const FlowCanvas: React.FC = () => {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onEdgeClick={handleEdgeClick}
+        onNodeClick={handleNodeClick}
+        onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         snapToGrid={true}

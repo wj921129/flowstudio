@@ -90,6 +90,8 @@ export interface FlowStoreActions {
   deleteSelected: () => void;
   /** 更新指定节点的业务数据 */
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => void;
+  /** 更新指定节点的宽高尺寸 (px) */
+  updateNodeDimensions: (id: string, width: number, height: number) => void;
   /** 批量更新多个节点的业务数据（单次压入历史快照） */
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => void;
   /** 更新指定连线的业务数据 */
@@ -403,6 +405,37 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     });
   },
 
+  updateNodeDimensions: (id: string, width: number, height: number) => {
+    const { nodes, edges, historyPast } = get();
+    const targetNode = nodes.find((n) => n.id === id);
+    if (!targetNode) {
+      return;
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    const nextNodes = nodes.map((n) => {
+      if (n.id === id) {
+        return {
+          ...n,
+          width,
+          height,
+          style: {
+            ...n.style,
+            width,
+            height,
+          },
+        };
+      }
+      return n;
+    });
+
+    set({
+      nodes: nextNodes,
+      ...historyUpdate,
+    });
+  },
+
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => {
     if (updates.length === 0) {
       return;
@@ -450,8 +483,15 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const nextEdges = edges.map((e) => {
       if (e.id === id) {
+        const nextAnimated =
+          data.style?.animated !== undefined
+            ? data.style.animated
+            : e.animated;
+        const nextLabel = data.label !== undefined ? data.label : e.label;
         return {
           ...e,
+          label: nextLabel,
+          animated: nextAnimated,
           data: {
             ...e.data,
             ...data,
