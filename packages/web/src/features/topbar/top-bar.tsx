@@ -1,52 +1,40 @@
 /**
  * @fileoverview 顶部导航栏组件 (TopBar)
- * @description 48px 高度毛玻璃风格顶部导航栏，包含品牌 Logo、可编辑图表标题、节点/连线统计徽标、导出菜单、主题切换及外部链接
+ * @description 48px 高度毛玻璃风格顶部导航栏，包含返回看板、可编辑图表标题、在线协作者头像、分享链接、统计徽标、导出菜单与主题切换
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Workflow,
+  ArrowLeft,
   Download,
   ChevronDown,
   Image,
   FileCode,
   FileJson,
-  Github,
   Check,
+  Share2,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
-
-/** 图表标题本地持久化存储键 */
-const DIAGRAM_TITLE_STORAGE_KEY = 'fs-diagram-title';
+import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
+import { apiClient } from '../../lib/api-client';
 
 export interface TopBarProps {
+  /** 当前图表 ID */
+  diagramId?: string;
   /** 附加样式类名 */
   className?: string;
 }
 
-/**
- * 顶部导航栏组件
- */
-export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
+export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
+  const storeTitle = useFlowStore((s) => s.diagramTitle);
+  const setDiagramTitle = useFlowStore((s) => s.setDiagramTitle);
 
-  // 图表标题状态（支持本地存储恢复与编辑更新）
-  const [title, setTitle] = useState<string>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const savedTitle = window.localStorage.getItem(DIAGRAM_TITLE_STORAGE_KEY);
-      if (savedTitle && savedTitle.trim()) {
-        return savedTitle.trim();
-      }
-    }
-    return DEFAULT_DIAGRAM_TITLE;
-  });
-
-  // 临时编辑缓存（用于按 Esc 时回退）
-  const [editingTitle, setEditingTitle] = useState(title);
+  const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -55,21 +43,30 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const isEscapingRef = useRef(false);
 
-  // 标题变更同步至本地存储
+  // 当外部/远端 storeTitle 变化时同步更新编辑缓存
+  useEffect(() => {
+    setEditingTitle(storeTitle);
+  }, [storeTitle]);
+
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setEditingTitle(e.target.value);
   };
 
-  const handleTitleBlur = () => {
+  const handleTitleBlur = async () => {
     if (isEscapingRef.current) {
       isEscapingRef.current = false;
       return;
     }
     const finalTitle = editingTitle.trim() || DEFAULT_DIAGRAM_TITLE;
-    setTitle(finalTitle);
     setEditingTitle(finalTitle);
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(DIAGRAM_TITLE_STORAGE_KEY, finalTitle);
+    setDiagramTitle(finalTitle);
+
+    if (diagramId) {
+      try {
+        await apiClient.updateDiagram(diagramId, { title: finalTitle });
+      } catch (err) {
+        console.error('[TopBar] 同步标题失败:', err);
+      }
     }
   };
 
@@ -78,12 +75,11 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
       titleInputRef.current?.blur();
     } else if (e.key === 'Escape') {
       isEscapingRef.current = true;
-      setEditingTitle(title);
+      setEditingTitle(storeTitle);
       titleInputRef.current?.blur();
     }
   };
 
-  // 显示临时轻量 Toast 提示
   const showToast = useCallback((msg: string) => {
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -94,7 +90,15 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     }, 2500);
   }, []);
 
-  // 点击外部关闭导出下拉菜单
+  const handleCopyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      showToast('已复制局域网协作链接');
+    } catch {
+      showToast('复制失败，请手动复制浏览器地址栏');
+    }
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -114,7 +118,6 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     };
   }, [isExportOpen]);
 
-  // 组件卸载时清除 Toast 定时器
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) {
@@ -123,18 +126,17 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     };
   }, []);
 
-  // 导出功能处理
   const handleExport = (format: 'png' | 'svg' | 'json') => {
     setIsExportOpen(false);
 
     if (format === 'json') {
       try {
-        const sanitizeFileName = (title || 'flowstudio-diagram')
+        const sanitizeFileName = (storeTitle || 'flowstudio-diagram')
           .replace(/[/\\?%*:|"<>]/g, '_')
           .trim() || 'flowstudio-diagram';
 
         const exportData = {
-          title,
+          title: storeTitle,
           version: '1.0',
           exportedAt: new Date().toISOString(),
           nodes: sanitizeNodes(nodes),
@@ -152,7 +154,6 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
 
-        console.info('[TopBar] 成功导出 JSON 流程图工程数据', exportData);
         showToast('已成功导出 JSON 图表数据');
       } catch (error) {
         console.error('[TopBar] 导出 JSON 数据失败:', error);
@@ -162,13 +163,11 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     }
 
     if (format === 'png') {
-      console.info('[TopBar] 触发 PNG 导出请求（占位预留）');
       showToast('PNG 导出功能开发中，敬请期待');
       return;
     }
 
     if (format === 'svg') {
-      console.info('[TopBar] 触发 SVG 导出请求（占位预留）');
       showToast('SVG 导出功能开发中，敬请期待');
       return;
     }
@@ -178,21 +177,22 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     <header
       className={`h-12 border-b border-fs-border bg-fs-surface/85 backdrop-blur-md px-4 flex items-center justify-between select-none z-20 shrink-0 ${className}`}
     >
-      {/* 左侧：Logo + 品牌名称 + 分隔线 + 可编辑图表标题 */}
+      {/* 左侧：返回图列表 + 分隔线 + 可编辑图表标题 */}
       <div className="flex items-center gap-3 min-w-0">
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="p-1 rounded-lg bg-fs-primary/10 text-fs-primary flex items-center justify-center">
-            <Workflow className="w-5 h-5 text-fs-primary" />
-          </div>
-          <span className="font-bold text-sm tracking-tight text-fs-text hidden sm:inline">
-            FlowStudio
-          </span>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            window.location.hash = '#/';
+          }}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer text-xs font-medium"
+          title="返回图表列表"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">图表列表</span>
+        </button>
 
-        {/* 垂直分割线 */}
         <div className="h-4 w-px bg-fs-border shrink-0" />
 
-        {/* 可编辑图表标题输入框 */}
         <div className="relative flex items-center">
           <input
             ref={titleInputRef}
@@ -208,8 +208,22 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
         </div>
       </div>
 
-      {/* 右侧：状态统计徽标 + 导出菜单 + 分隔线 + 主题切换 + 外部链接 */}
+      {/* 右侧：在线头像 + 分享链接 + 节点统计 + 导出 + 主题切换 */}
       <div className="flex items-center gap-2.5 shrink-0">
+        {/* 协作者在线头像 */}
+        <CollaboratorAvatars />
+
+        {/* 分享链接按钮 */}
+        <button
+          type="button"
+          onClick={handleCopyShareLink}
+          title="复制局域网协作链接"
+          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
+        >
+          <Share2 className="w-3.5 h-3.5 text-fs-primary" />
+          <span className="hidden sm:inline">分享</span>
+        </button>
+
         {/* 节点与连线统计徽标 */}
         <div
           className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-fs-bg border border-fs-border text-fs-text-muted select-none font-medium"
@@ -221,7 +235,7 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
           </span>
         </div>
 
-        {/* 导出菜单容器 */}
+        {/* 导出菜单 */}
         <div className="relative" ref={exportDropdownRef}>
           <button
             type="button"
@@ -239,7 +253,6 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
             />
           </button>
 
-          {/* 导出下拉浮层 */}
           {isExportOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-48 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
               <div className="px-3 py-1 text-[11px] font-medium text-fs-text-muted border-b border-fs-border mb-1">
@@ -282,23 +295,10 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
           )}
         </div>
 
-        {/* 垂直分割线 */}
         <div className="h-4 w-px bg-fs-border" />
 
         {/* 主题切换开关 */}
         <ThemeToggle />
-
-        {/* GitHub 外部链接 */}
-        <a
-          href="https://github.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="访问 GitHub 仓库"
-          title="访问 GitHub 仓库"
-          className="p-2 rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:border-fs-primary transition-colors inline-flex items-center justify-center cursor-pointer shadow-xs"
-        >
-          <Github className="w-4 h-4" />
-        </a>
       </div>
 
       {/* 悬浮 Toast 提示 */}
