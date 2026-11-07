@@ -1,6 +1,6 @@
 /**
  * @fileoverview FlowStudio 全局流程图状态管理 (Zustand Store)
- * @description 管理节点、连线、工具模式、选择态以及快照撤销/重做历史
+ * @description 管理节点、连线、工具模式、选择态以及快照撤销/重做历史，并与 YjsDiagramBridge 实现无缝 CRDT 协同绑定
  */
 
 import { create } from 'zustand';
@@ -28,17 +28,16 @@ import {
   toWorldPosition,
   getNodeDimensions,
 } from '../features/canvas/utils/group-calculator';
+import type { YjsDiagramBridge } from '../features/collaboration/yjs-doc-bridge';
+import type { CollaborativeUndoManager } from '../features/collaboration/undo-manager';
 
 /**
  * 画布操作工具模式枚举
- * - 'select': 选择模式（框选、点击选择、拖拽节点）
- * - 'pan': 漫游平移模式（拖动画布）
- * - 'connect': 快速连线模式
  */
 export type ActiveTool = 'select' | 'pan' | 'connect';
 
 /**
- * 历史快照单元（用于撤销/重做）
+ * 历史快照单元（用于单机撤销/重做）
  */
 export interface DiagramSnapshot {
   nodes: FlowNode[];
@@ -63,6 +62,8 @@ export interface FlowStoreState {
   canUndo: boolean;
   /** 是否可重做 */
   canRedo: boolean;
+  /** 当前流程图标题 */
+  diagramTitle: string;
 }
 
 /**
@@ -78,23 +79,23 @@ interface FlowStoreInternalState extends FlowStoreState {
  * FlowStore 操作动作定义
  */
 export interface FlowStoreActions {
-  /** 节点状态变更处理器（位置拖拽、选择、尺寸等） */
+  /** 节点状态变更处理器 */
   onNodesChange: (changes: NodeChange[]) => void;
-  /** 连线状态变更处理器（选择、删除等） */
+  /** 连线状态变更处理器 */
   onEdgesChange: (changes: EdgeChange[]) => void;
   /** 节点连线建立处理器 */
   onConnect: (connection: Connection) => void;
-  /** 添加指定类型的节点至目标画布坐标 */
+  /** 添加指定类型的节点 */
   addNode: (type: FlowNodeType, position: { x: number; y: number }) => FlowNode;
-  /** 批量添加节点至画布（例如快捷键复制粘贴），并自动设为唯一激活选中节点集合 */
+  /** 批量添加节点至画布 */
   addNodes: (newNodes: FlowNode[]) => void;
-  /** 删除所有选中的节点及其相连的连线，以及选中的连线 */
+  /** 删除所有选中的节点及其相连的连线 */
   deleteSelected: () => void;
   /** 更新指定节点的业务数据 */
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => void;
   /** 更新指定节点的宽高尺寸 (px) */
   updateNodeDimensions: (id: string, width: number, height: number) => void;
-  /** 批量更新多个节点的业务数据（单次压入历史快照） */
+  /** 批量更新多个节点的业务数据 */
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => void;
   /** 更新指定连线的业务数据 */
   updateEdgeData: (id: string, data: Partial<FlowEdgeData>) => void;
@@ -116,8 +117,14 @@ export interface FlowStoreActions {
   alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
   /** 批量均匀分布选中的多个节点 */
   distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => void;
-  /** 全量替换图表数据（通常用于数据水合与新建/重置图表） */
+  /** 全量替换图表数据 */
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
+  /** 设置当前图表标题 */
+  setDiagramTitle: (title: string) => void;
+  /** 绑定 Yjs 协同桥接与协同撤销管理器 */
+  bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => () => void;
+  /** 解除 Yjs 协同绑定 */
+  unbindCollaboration: () => void;
 }
 
 export type FlowStore = FlowStoreInternalState & FlowStoreActions;
@@ -125,9 +132,18 @@ export type FlowStore = FlowStoreInternalState & FlowStoreActions;
 /** 历史快照最大存储上限 */
 const MAX_HISTORY_LENGTH = 50;
 
-/**
- * 深拷贝快照，保障历史切片不可变
- */
+let activeBridge: YjsDiagramBridge | null = null;
+let activeUndoManager: CollaborativeUndoManager | null = null;
+let unsubscribeBridge: (() => void) | null = null;
+let unsubscribeUndoManager: (() => void) | null = null;
+
+function commitGraph(nodes: FlowNode[], edges: FlowEdge[]) {
+  if (activeBridge) {
+    activeBridge.setDiagram(nodes, edges);
+    activeUndoManager?.stopCapturing();
+  }
+}
+
 function cloneSnapshot(nodes: FlowNode[], edges: FlowEdge[]): DiagramSnapshot {
   if (typeof structuredClone === 'function') {
     return {
@@ -141,9 +157,6 @@ function cloneSnapshot(nodes: FlowNode[], edges: FlowEdge[]): DiagramSnapshot {
   };
 }
 
-/**
- * 记录历史快照辅助计算
- */
 function pushHistorySnapshot(
   currentPast: DiagramSnapshot[],
   nodes: FlowNode[],
@@ -162,11 +175,7 @@ function pushHistorySnapshot(
   };
 }
 
-/**
- * 创建 FlowStore Zustand 实例
- */
 export const useFlowStore = create<FlowStore>((set, get) => ({
-  // 初始状态
   nodes: [],
   edges: [],
   selectedNodeIds: [],
@@ -174,47 +183,49 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   activeTool: 'select',
   canUndo: false,
   canRedo: false,
+  diagramTitle: '未命名流程图',
   historyPast: [],
   historyFuture: [],
   isInteracting: false,
 
-  // 动作定义
   onNodesChange: (changes: NodeChange[]) => {
-    if (changes.length === 0) {
-      return;
-    }
+    if (changes.length === 0) return;
 
     const { nodes, edges, historyPast, isInteracting } = get();
 
-    // 判断是否仅包含选中状态变更（无需入历史栈）
     const isSelectionOnly =
       changes.length > 0 && changes.every((c) => c.type === 'select');
 
     let nextInteracting = isInteracting;
     let shouldPushHistory = false;
 
-    if (!isSelectionOnly) {
-      const hasDragStart = changes.some(
+    const isDraggingOnly =
+      changes.length > 0 &&
+      changes.every(
         (c) =>
-          (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true) ||
-          (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === true)
-      );
-      const hasDragEnd = changes.some(
-        (c) =>
-          (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === false) ||
-          (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === false)
+          c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true
       );
 
+    const hasDragStart = changes.some(
+      (c) =>
+        (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true) ||
+        (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === true)
+    );
+    const hasDragEnd = changes.some(
+      (c) =>
+        (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === false) ||
+        (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === false)
+    );
+
+    if (!isSelectionOnly) {
       if (hasDragStart) {
         if (!isInteracting) {
-          // 交互拖拽刚触发：记录开始前的稳定快照
           shouldPushHistory = true;
           nextInteracting = true;
         }
       } else if (hasDragEnd) {
         nextInteracting = false;
       } else if (!isInteracting) {
-        // 非拖拽连发过程中的修改（如测试调用、直接赋值或节点移除等）
         shouldPushHistory = true;
       }
     }
@@ -225,7 +236,6 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const nextNodes = applyNodeChanges(changes as any, nodes) as FlowNode[];
 
-    // 若存在节点删除，级联清除相关连线以保持图表引用一致
     const hasRemove = changes.some((c) => c.type === 'remove');
     let nextEdges = edges;
     if (hasRemove) {
@@ -246,15 +256,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       isInteracting: nextInteracting,
       ...historyUpdate,
     });
+
+    if (!isDraggingOnly && !isSelectionOnly) {
+      commitGraph(nextNodes, nextEdges);
+    } else if (hasDragEnd) {
+      commitGraph(nextNodes, nextEdges);
+    }
   },
 
   onEdgesChange: (changes: EdgeChange[]) => {
-    if (changes.length === 0) {
-      return;
-    }
+    if (changes.length === 0) return;
 
     const { nodes, edges, historyPast } = get();
-
     const isSelectionOnly =
       changes.length > 0 && changes.every((c) => c.type === 'select');
     const shouldPushHistory = !isSelectionOnly;
@@ -271,12 +284,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       selectedEdgeId: selectedEdge ? selectedEdge.id : null,
       ...historyUpdate,
     });
+
+    if (!isSelectionOnly) {
+      commitGraph(nodes, nextEdges);
+    }
   },
 
   onConnect: (connection: Connection) => {
-    if (!connection.source || !connection.target) {
-      return;
-    }
+    if (!connection.source || !connection.target) return;
 
     const { nodes, edges, historyPast } = get();
 
@@ -292,9 +307,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     };
 
     const nextEdges = addEdge(newEdge as any, edges) as FlowEdge[];
-    if (nextEdges.length === edges.length) {
-      return;
-    }
+    if (nextEdges.length === edges.length) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -302,6 +315,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       ...historyUpdate,
     });
+
+    commitGraph(nodes, nextEdges);
   },
 
   addNode: (type: FlowNodeType, position: { x: number; y: number }): FlowNode => {
@@ -316,27 +331,20 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
+    commitGraph(nextNodes, edges);
     return newNode;
   },
 
   addNodes: (newNodes: FlowNode[]) => {
     const { nodes, edges, historyPast } = get();
-    if (newNodes.length === 0) {
-      return;
-    }
+    if (newNodes.length === 0) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const newIds = newNodes.map((n) => n.id);
 
     const nextNodes = [
-      ...nodes.map((n) => ({
-        ...n,
-        selected: false,
-      })),
-      ...newNodes.map((n) => ({
-        ...n,
-        selected: true,
-      })),
+      ...nodes.map((n) => ({ ...n, selected: false })),
+      ...newNodes.map((n) => ({ ...n, selected: true })),
     ];
 
     set({
@@ -345,12 +353,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       selectedEdgeId: null,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, edges);
   },
 
   deleteSelected: () => {
     const { nodes, edges, selectedNodeIds, selectedEdgeId, historyPast } = get();
 
-    // 收集需删除的节点 ID
     const nodeIdsToDelete = new Set(selectedNodeIds);
     for (const n of nodes) {
       if (n.selected) {
@@ -358,7 +367,6 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    // 级联收集包含在被删除 group 内部的子节点，避免孤立悬空
     let hasNewCascades = true;
     while (hasNewCascades) {
       hasNewCascades = false;
@@ -370,27 +378,19 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    // 收集需删除的连线 ID（直接选中 + 连接到被删除节点的连线）
     const edgeIdsToDelete = new Set<string>();
     if (selectedEdgeId) {
       edgeIdsToDelete.add(selectedEdgeId);
     }
     for (const e of edges) {
-      if (
-        e.selected ||
-        nodeIdsToDelete.has(e.source) ||
-        nodeIdsToDelete.has(e.target)
-      ) {
+      if (e.selected || nodeIdsToDelete.has(e.source) || nodeIdsToDelete.has(e.target)) {
         edgeIdsToDelete.add(e.id);
       }
     }
 
-    if (nodeIdsToDelete.size === 0 && edgeIdsToDelete.size === 0) {
-      return;
-    }
+    if (nodeIdsToDelete.size === 0 && edgeIdsToDelete.size === 0) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
-
     const nextNodes = nodes.filter((n) => !nodeIdsToDelete.has(n.id));
     const nextEdges = edges.filter((e) => !edgeIdsToDelete.has(e.id));
 
@@ -401,14 +401,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       selectedEdgeId: null,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, nextEdges);
   },
 
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => {
     const { nodes, edges, historyPast } = get();
     const targetNode = nodes.find((n) => n.id === id);
-    if (!targetNode) {
-      return;
-    }
+    if (!targetNode) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -433,14 +433,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       nodes: nextNodes,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, edges);
   },
 
   updateNodeDimensions: (id: string, width: number, height: number) => {
     const { nodes, edges, historyPast } = get();
     const targetNode = nodes.find((n) => n.id === id);
-    if (!targetNode) {
-      return;
-    }
+    if (!targetNode) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -464,23 +464,20 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       nodes: nextNodes,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, edges);
   },
 
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => {
-    if (updates.length === 0) {
-      return;
-    }
     const { nodes, edges, historyPast } = get();
-    const updateMap = new Map(updates.map((u) => [u.id, u.data]));
-    const hasTarget = nodes.some((n) => updateMap.has(n.id));
-    if (!hasTarget) {
-      return;
-    }
+    if (updates.length === 0) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    const updateMap = new Map(updates.map((u) => [u.id, u.data]));
+
     const nextNodes = nodes.map((n) => {
-      const patch = updateMap.get(n.id);
-      if (patch) {
+      if (updateMap.has(n.id)) {
+        const patch = updateMap.get(n.id)!;
         return {
           ...n,
           data: {
@@ -500,23 +497,21 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       nodes: nextNodes,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, edges);
   },
 
   updateEdgeData: (id: string, data: Partial<FlowEdgeData>) => {
     const { nodes, edges, historyPast } = get();
     const targetEdge = edges.find((e) => e.id === id);
-    if (!targetEdge) {
-      return;
-    }
+    if (!targetEdge) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
     const nextEdges = edges.map((e) => {
       if (e.id === id) {
         const nextAnimated =
-          data.style?.animated !== undefined
-            ? data.style.animated
-            : e.animated;
+          data.style?.animated !== undefined ? data.style.animated : e.animated;
         const nextLabel = data.label !== undefined ? data.label : e.label;
         return {
           ...e,
@@ -539,6 +534,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       ...historyUpdate,
     });
+
+    commitGraph(nodes, nextEdges);
   },
 
   setSelectedNodes: (ids: string[]) => {
@@ -569,10 +566,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   undo: () => {
-    const { historyPast, historyFuture, nodes, edges } = get();
-    if (historyPast.length === 0) {
+    if (activeUndoManager) {
+      activeUndoManager.undo();
       return;
     }
+
+    const { historyPast, historyFuture, nodes, edges } = get();
+    if (historyPast.length === 0) return;
 
     const previous = historyPast[historyPast.length - 1];
     const newPast = historyPast.slice(0, historyPast.length - 1);
@@ -598,10 +598,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   redo: () => {
-    const { historyPast, historyFuture, nodes, edges } = get();
-    if (historyFuture.length === 0) {
+    if (activeUndoManager) {
+      activeUndoManager.redo();
       return;
     }
+
+    const { historyPast, historyFuture, nodes, edges } = get();
+    if (historyFuture.length === 0) return;
 
     const next = historyFuture[0];
     const newFuture = historyFuture.slice(1);
@@ -629,15 +632,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   groupSelectedNodes: (options?: { asFrame?: boolean; label?: string }): string | null => {
     const { nodes, edges, selectedNodeIds, historyPast } = get();
 
-    // 筛选被选中的节点集合
     const selectedSet = new Set(selectedNodeIds);
     const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
+    if (targetNodes.length < 2) return null;
 
-    if (targetNodes.length < 2) {
-      return null;
-    }
-
-    // 计算世界绝对坐标与外接包围盒
     const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
     const getAbsolutePos = (node: FlowNode): { x: number; y: number } => {
       if (node.parentId && nodeMap.has(node.parentId)) {
@@ -678,7 +676,6 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const targetIdSet = new Set(targetNodes.map((n) => n.id));
 
-    // 子节点转为相对于 group 的局部坐标，并配置 extent: 'parent'
     const updatedNodes = nodes.map((n) => {
       if (targetIdSet.has(n.id)) {
         const absPos = getAbsolutePos(n);
@@ -701,7 +698,6 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       };
     });
 
-    // 在 React Flow 中，父容器节点在节点数组中必须位于其子节点之前
     const firstTargetIndex = updatedNodes.findIndex((n) => targetIdSet.has(n.id));
     const insertIndex = firstTargetIndex >= 0 ? firstTargetIndex : 0;
     const nextNodes = [
@@ -719,26 +715,23 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
+    commitGraph(nextNodes, edges);
     return groupId;
   },
 
   ungroupNodes: (groupIds?: string[]) => {
     const { nodes, edges, selectedNodeIds, historyPast } = get();
 
-    // 确定目标 group 节点 ID 列表
     let targetGroupIds: string[] = [];
     if (groupIds && groupIds.length > 0) {
       targetGroupIds = groupIds;
     } else {
-      const selectedSet = new Set(selectedNodeIds);
       targetGroupIds = nodes
-        .filter((n) => (selectedSet.has(n.id) || n.selected) && n.type === 'group')
+        .filter((n) => n.type === 'group' && (selectedNodeIds.includes(n.id) || n.selected))
         .map((n) => n.id);
     }
 
-    if (targetGroupIds.length === 0) {
-      return;
-    }
+    if (targetGroupIds.length === 0) return;
 
     const groupSet = new Set(targetGroupIds);
     const groupMap = new Map<string, FlowNode>();
@@ -748,29 +741,30 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    const childIds: string[] = [];
     const nextNodes: FlowNode[] = [];
+    const unGroupedChildIds: string[] = [];
 
     for (const n of nodes) {
-      if (groupSet.has(n.id)) {
-        // 销毁 Group 节点本身
-        continue;
-      }
+      if (groupSet.has(n.id)) continue;
 
       if (n.parentId && groupSet.has(n.parentId)) {
-        const parentGroup = groupMap.get(n.parentId)!;
-        const worldPos = toWorldPosition(n.position, parentGroup.position);
-        childIds.push(n.id);
-        const { parentId, extent, ...rest } = n;
+        const parentGroup = groupMap.get(n.parentId);
+        const parentPos = parentGroup ? parentGroup.position : { x: 0, y: 0 };
+        const absPos = toWorldPosition(n.position, parentPos);
+
+        const { parentId, extent, ...restData } = n.data;
+
         nextNodes.push({
-          ...rest,
-          position: worldPos,
+          ...n,
+          position: absPos,
+          parentId: undefined,
+          extent: undefined,
           selected: true,
           data: {
-            ...n.data,
-            parentId: undefined,
+            ...restData,
           },
         });
+        unGroupedChildIds.push(n.id);
       } else {
         nextNodes.push(n);
       }
@@ -780,10 +774,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     set({
       nodes: nextNodes,
-      selectedNodeIds: childIds,
+      selectedNodeIds: unGroupedChildIds,
       selectedEdgeId: null,
       ...historyUpdate,
     });
+
+    commitGraph(nextNodes, edges);
   },
 
   alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
@@ -791,65 +787,77 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const selectedSet = new Set(selectedNodeIds);
     const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
 
-    if (targetNodes.length < 2) {
-      return;
-    }
+    if (targetNodes.length < 2) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    let targetValue = 0;
 
-    // 计算对齐基准线
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    for (const node of targetNodes) {
-      const { width, height } = getNodeDimensions(node);
-      minX = Math.min(minX, node.position.x);
-      maxX = Math.max(maxX, node.position.x + width);
-      minY = Math.min(minY, node.position.y);
-      maxY = Math.max(maxY, node.position.y + height);
+    switch (alignment) {
+      case 'left':
+        targetValue = Math.min(...targetNodes.map((n) => n.position.x));
+        break;
+      case 'center': {
+        const centers = targetNodes.map(
+          (n) => n.position.x + getNodeDimensions(n).width / 2
+        );
+        targetValue = centers.reduce((a, b) => a + b, 0) / centers.length;
+        break;
+      }
+      case 'right':
+        targetValue = Math.max(
+          ...targetNodes.map((n) => n.position.x + getNodeDimensions(n).width)
+        );
+        break;
+      case 'top':
+        targetValue = Math.min(...targetNodes.map((n) => n.position.y));
+        break;
+      case 'middle': {
+        const middles = targetNodes.map(
+          (n) => n.position.y + getNodeDimensions(n).height / 2
+        );
+        targetValue = middles.reduce((a, b) => a + b, 0) / middles.length;
+        break;
+      }
+      case 'bottom':
+        targetValue = Math.max(
+          ...targetNodes.map((n) => n.position.y + getNodeDimensions(n).height)
+        );
+        break;
     }
 
+    const targetIdSet = new Set(targetNodes.map((n) => n.id));
     const nextNodes = nodes.map((node) => {
-      if (!selectedSet.has(node.id) && !node.selected) {
-        return node;
-      }
-      const { width, height } = getNodeDimensions(node);
-      let nextX = node.position.x;
-      let nextY = node.position.y;
+      if (!targetIdSet.has(node.id)) return node;
+
+      const dim = getNodeDimensions(node);
+      const nextPos = { ...node.position };
 
       switch (alignment) {
         case 'left':
-          nextX = minX;
+          nextPos.x = targetValue;
           break;
         case 'center':
-          nextX = Math.round((minX + maxX) / 2 - width / 2);
+          nextPos.x = Math.round(targetValue - dim.width / 2);
           break;
         case 'right':
-          nextX = maxX - width;
+          nextPos.x = Math.round(targetValue - dim.width);
           break;
         case 'top':
-          nextY = minY;
+          nextPos.y = targetValue;
           break;
         case 'middle':
-          nextY = Math.round((minY + maxY) / 2 - height / 2);
+          nextPos.y = Math.round(targetValue - dim.height / 2);
           break;
         case 'bottom':
-          nextY = maxY - height;
+          nextPos.y = Math.round(targetValue - dim.height);
           break;
       }
 
-      return {
-        ...node,
-        position: { x: nextX, y: nextY },
-      };
+      return { ...node, position: nextPos };
     });
 
-    set({
-      nodes: nextNodes,
-      ...historyUpdate,
-    });
+    set({ nodes: nextNodes, ...historyUpdate });
+    commitGraph(nextNodes, edges);
   },
 
   distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => {
@@ -857,9 +865,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const selectedSet = new Set(selectedNodeIds);
     const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
 
-    if (targetNodes.length < 3) {
-      return;
-    }
+    if (targetNodes.length < 3) return;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -886,6 +892,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       set({ nodes: nextNodes, ...historyUpdate });
+      commitGraph(nextNodes, edges);
     } else {
       const sorted = [...targetNodes].sort((a, b) => a.position.y - b.position.y);
       const first = sorted[0];
@@ -909,6 +916,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       set({ nodes: nextNodes, ...historyUpdate });
+      commitGraph(nextNodes, edges);
     }
   },
 
@@ -935,10 +943,83 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canRedo: false,
       isInteracting: false,
     });
+
+    commitGraph(cleanNodes, cleanEdges);
+  },
+
+  setDiagramTitle: (title: string) => {
+    const trimmed = title.trim();
+    set({ diagramTitle: trimmed });
+    if (activeBridge) {
+      activeBridge.setTitle(trimmed);
+    }
+  },
+
+  bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => {
+    activeBridge = bridge;
+    activeUndoManager = undoManager;
+
+    const bridgeState = bridge.toReactFlowState();
+    if (bridgeState.nodes.length > 0 || bridgeState.edges.length > 0) {
+      set({
+        nodes: bridgeState.nodes,
+        edges: bridgeState.edges,
+        diagramTitle: bridgeState.title,
+      });
+    } else {
+      const { nodes, edges, diagramTitle } = get();
+      if (nodes.length > 0 || edges.length > 0) {
+        bridge.setDiagram(nodes, edges);
+      }
+      if (diagramTitle) {
+        bridge.setTitle(diagramTitle);
+      }
+    }
+
+    if (unsubscribeBridge) unsubscribeBridge();
+    unsubscribeBridge = bridge.subscribe((state) => {
+      const currentSelectedNodeIds = get().selectedNodeIds;
+      const currentSelectedEdgeId = get().selectedEdgeId;
+      const mergedNodes = state.nodes.map((n) => ({
+        ...n,
+        selected: currentSelectedNodeIds.includes(n.id),
+      }));
+      const mergedEdges = state.edges.map((e) => ({
+        ...e,
+        selected: e.id === currentSelectedEdgeId,
+      }));
+      set({
+        nodes: mergedNodes,
+        edges: mergedEdges,
+        diagramTitle: state.title,
+      });
+    });
+
+    if (unsubscribeUndoManager) unsubscribeUndoManager();
+    unsubscribeUndoManager = undoManager.subscribe((status) => {
+      set({
+        canUndo: status.canUndo,
+        canRedo: status.canRedo,
+      });
+    });
+
+    return () => {
+      get().unbindCollaboration();
+    };
+  },
+
+  unbindCollaboration: () => {
+    if (unsubscribeBridge) {
+      unsubscribeBridge();
+      unsubscribeBridge = null;
+    }
+    if (unsubscribeUndoManager) {
+      unsubscribeUndoManager();
+      unsubscribeUndoManager = null;
+    }
+    activeBridge = null;
+    activeUndoManager = null;
   },
 }));
 
-/**
- * 导出 store 实例，供非 React 组件环境或测试直接调用
- */
 export const flowStore = useFlowStore;

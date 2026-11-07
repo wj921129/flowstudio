@@ -21,7 +21,12 @@ export interface UsePersistenceReturn {
  * - 节点或连线数据发生变动时，使用 AUTO_SAVE_DEBOUNCE_MS 进行防抖自动落盘
  * - 页面卸载 (beforeunload) 时刷新暂存，避免丢失最新更改
  */
-export function usePersistence(): UsePersistenceReturn {
+export interface UsePersistenceOptions {
+  disabled?: boolean;
+}
+
+export function usePersistence(options?: UsePersistenceOptions): UsePersistenceReturn {
+  const isDisabled = options?.disabled ?? false;
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
   const setDiagram = useFlowStore((s) => s.setDiagram);
@@ -30,8 +35,13 @@ export function usePersistence(): UsePersistenceReturn {
   const isHydratedRef = useRef(false);
   const hasHydratedOnceRef = useRef(false);
 
-  // 挂载时执行一次数据水合
+  // 挂载时执行一次数据水合（若非禁用）
   useEffect(() => {
+    if (isDisabled) {
+      setIsHydrated(true);
+      isHydratedRef.current = true;
+      return;
+    }
     if (hasHydratedOnceRef.current) {
       return;
     }
@@ -48,7 +58,7 @@ export function usePersistence(): UsePersistenceReturn {
       setIsHydrated(true);
       isHydratedRef.current = true;
     }
-  }, [setDiagram]);
+  }, [setDiagram, isDisabled]);
 
   // 保持最新数据引用以供卸载或即时保存时使用
   const latestDataRef = useRef({ nodes, edges });
@@ -56,8 +66,7 @@ export function usePersistence(): UsePersistenceReturn {
 
   // 防抖自动保存逻辑
   useEffect(() => {
-    // 未水合前切勿触发保存，防止以空状态冲掉本地数据
-    if (!isHydratedRef.current) {
+    if (isDisabled || !isHydratedRef.current) {
       return;
     }
 
@@ -68,12 +77,12 @@ export function usePersistence(): UsePersistenceReturn {
     return () => {
       clearTimeout(timer);
     };
-  }, [nodes, edges]);
+  }, [nodes, edges, isDisabled]);
 
   // 页面离开时执行最后一次落盘保障
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (isHydratedRef.current) {
+      if (!isDisabled && isHydratedRef.current) {
         saveDiagram(latestDataRef.current.nodes, latestDataRef.current.edges);
       }
     };
@@ -82,14 +91,15 @@ export function usePersistence(): UsePersistenceReturn {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, []);
+  }, [isDisabled]);
 
   // 立即保存方法
   const saveNow = useCallback(() => {
-    if (isHydratedRef.current) {
+    if (!isDisabled && isHydratedRef.current) {
       saveDiagram(latestDataRef.current.nodes, latestDataRef.current.edges);
     }
-  }, []);
+  }, [isDisabled]);
+
 
   return {
     isHydrated,
