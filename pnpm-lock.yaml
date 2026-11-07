@@ -35,6 +35,9 @@ importers:
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
+      elkjs:
+        specifier: ^0.12.1
+        version: 0.12.1
       fastify:
         specifier: ^5.12.8
         version: 5.12.8

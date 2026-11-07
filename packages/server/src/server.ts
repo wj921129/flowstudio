@@ -7,6 +7,7 @@ import { initDatabase } from './db/database.js';
 import { DiagramRepository } from './db/diagram-repository.js';
 import { createCollaborationServer } from './collaboration/hocuspocus.js';
 import { diagramRoutes } from './routes/diagrams.js';
+import { mcpPlugin } from './mcp/mcp-server.js';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type * as WebSocket from 'ws';
 
@@ -42,6 +43,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   // 注册 REST API 路由
   await app.register(diagramRoutes, {
     prefix: '/api/diagrams',
+    repo,
+  });
+
+  // 注册 MCP 端点 (JSON-RPC 2.0 / Streamable HTTP)
+  await app.register(mcpPlugin, {
+    prefix: '/mcp',
     repo,
   });
 
