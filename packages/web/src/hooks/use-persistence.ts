@@ -39,7 +39,7 @@ export function usePersistence(): UsePersistenceReturn {
 
     try {
       const persisted = loadDiagram();
-      if (persisted && (persisted.nodes.length > 0 || persisted.edges.length > 0)) {
+      if (persisted !== null) {
         setDiagram(persisted.nodes, persisted.edges);
       }
     } catch (error) {

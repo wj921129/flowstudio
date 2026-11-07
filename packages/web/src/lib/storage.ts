@@ -38,6 +38,26 @@ function isStorageAvailable(): boolean {
 }
 
 /**
+ * 清理节点瞬态属性（选中、拖拽等交互态）
+ */
+function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
+  return nodes.map((n) => {
+    const { selected, dragging, resizing, ...rest } = n as Record<string, unknown>;
+    return rest as FlowNode;
+  });
+}
+
+/**
+ * 清理连线瞬态属性（选中态等）
+ */
+function sanitizeEdges(edges: FlowEdge[]): FlowEdge[] {
+  return edges.map((e) => {
+    const { selected, ...rest } = e as Record<string, unknown>;
+    return rest as FlowEdge;
+  });
+}
+
+/**
  * 将流程图节点与连线数据持久化至 localStorage
  * @param nodes 流程图节点集合
  * @param edges 流程图连线集合
@@ -50,8 +70,8 @@ export function saveDiagram(nodes: FlowNode[], edges: FlowEdge[]): void {
 
   try {
     const payload: PersistedDiagram = {
-      nodes,
-      edges,
+      nodes: sanitizeNodes(nodes),
+      edges: sanitizeEdges(edges),
       updatedAt: new Date().toISOString(),
       version: '1.0',
     };

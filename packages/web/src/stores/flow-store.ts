@@ -159,6 +159,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   // 动作定义
   onNodesChange: (changes: NodeChange[]) => {
+    if (changes.length === 0) {
+      return;
+    }
+
     const { nodes, edges, historyPast, isInteracting } = get();
 
     // 判断是否仅包含选中状态变更（无需入历史栈）
@@ -224,6 +228,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   onEdgesChange: (changes: EdgeChange[]) => {
+    if (changes.length === 0) {
+      return;
+    }
+
     const { nodes, edges, historyPast } = get();
 
     const isSelectionOnly =
@@ -435,15 +443,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const currentSnapshot = cloneSnapshot(nodes, edges);
     const newFuture = [currentSnapshot, ...historyFuture];
 
-    const restoredNodeIds = new Set(previous.nodes.map((n) => n.id));
-    const nextSelectedNodeIds = get().selectedNodeIds.filter((id) =>
-      restoredNodeIds.has(id)
-    );
-    const restoredEdgeIds = new Set(previous.edges.map((e) => e.id));
+    const nextSelectedNodeIds = previous.nodes
+      .filter((n) => n.selected)
+      .map((n) => n.id);
     const nextSelectedEdgeId =
-      get().selectedEdgeId && restoredEdgeIds.has(get().selectedEdgeId!)
-        ? get().selectedEdgeId
-        : null;
+      previous.edges.find((e) => e.selected)?.id ?? null;
 
     set({
       nodes: previous.nodes,
@@ -468,15 +472,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const currentSnapshot = cloneSnapshot(nodes, edges);
     const newPast = [...historyPast, currentSnapshot];
 
-    const restoredNodeIds = new Set(next.nodes.map((n) => n.id));
-    const nextSelectedNodeIds = get().selectedNodeIds.filter((id) =>
-      restoredNodeIds.has(id)
-    );
-    const restoredEdgeIds = new Set(next.edges.map((e) => e.id));
+    const nextSelectedNodeIds = next.nodes
+      .filter((n) => n.selected)
+      .map((n) => n.id);
     const nextSelectedEdgeId =
-      get().selectedEdgeId && restoredEdgeIds.has(get().selectedEdgeId!)
-        ? get().selectedEdgeId
-        : null;
+      next.edges.find((e) => e.selected)?.id ?? null;
 
     set({
       nodes: next.nodes,
@@ -492,9 +492,19 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => {
     const snapshot = cloneSnapshot(nodes, edges);
+    const cleanNodes = snapshot.nodes.map((n) => ({
+      ...n,
+      selected: false,
+      dragging: false,
+    }));
+    const cleanEdges = snapshot.edges.map((e) => ({
+      ...e,
+      selected: false,
+    }));
+
     set({
-      nodes: snapshot.nodes,
-      edges: snapshot.edges,
+      nodes: cleanNodes,
+      edges: cleanEdges,
       selectedNodeIds: [],
       selectedEdgeId: null,
       historyPast: [],
