@@ -77,4 +77,35 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     }
     return reply.status(204).send();
   });
+
+  // 获取图表快照列表
+  fastify.get('/:id/snapshots', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const diagram = repo.getDiagramById(id);
+    if (!diagram) {
+      return reply.status(404).send({ error: '图表不存在' });
+    }
+    return repo.listSnapshots(id);
+  });
+
+  // 创建新快照
+  fastify.post('/:id/snapshots', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as { label?: string; triggerType?: 'manual' | 'ai_batch' | 'auto' };
+    const snapshot = repo.createSnapshot(id, body.label || '手动快照', body.triggerType || 'manual');
+    if (!snapshot) {
+      return reply.status(404).send({ error: '图表不存在，无法创建快照' });
+    }
+    return reply.status(201).send(snapshot);
+  });
+
+  // 恢复快照（无损差异写回）
+  fastify.post('/:id/snapshots/:snapshotId/restore', async (request, reply) => {
+    const { id, snapshotId } = request.params as { id: string; snapshotId: string };
+    const result = repo.restoreSnapshot(id, snapshotId);
+    if (!result.success) {
+      return reply.status(400).send({ error: result.error || '恢复快照失败' });
+    }
+    return { success: true, message: '快照已成功恢复' };
+  });
 };

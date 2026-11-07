@@ -355,3 +355,19 @@ export const COLLABORATOR_COLORS: readonly string[] = [
   '#EF4444',
 ] as const;
 
+/**
+ * 图表历史快照摘要
+ */
+export interface SnapshotSummary {
+  /** 快照唯一标识 */
+  id: string;
+  /** 所属图表 ID */
+  diagramId: string;
+  /** 快照备注标题 */
+  label: string;
+  /** 触发类型：手动触发 | AI批次前自动快照 | 定时轮巡快照 */
+  triggerType: 'manual' | 'ai_batch' | 'auto';
+  /** 创建时间 ISO 字符串 */
+  createdAt: string;
+}
+
