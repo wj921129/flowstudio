@@ -11,6 +11,7 @@
     "@flowstudio/shared": "workspace:*",
     "@hocuspocus/provider": "^4.8.0",
     "@xyflow/react": "^12.4.2",
+    "elkjs": "^0.12.1",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
