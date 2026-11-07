@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { FlowNodeData, HandlePosition } from '@flowstudio/shared';
-import { NODE_REGISTRY_RECORD } from '@flowstudio/shared';
+import { NODE_REGISTRY_RECORD, getNodeRegistryEntry } from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
 
 /**
@@ -91,7 +91,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   };
 
   // 获取该节点类型预定义的 handles
-  const registryEntry = NODE_REGISTRY_RECORD[data.type];
+  const registryEntry = getNodeRegistryEntry(data.type) ?? NODE_REGISTRY_RECORD[data.type];
   const definedHandles = registryEntry?.handles ?? [];
 
   // 合并节点样式

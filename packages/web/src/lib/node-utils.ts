@@ -4,7 +4,11 @@
  */
 
 import type { FlowNode, FlowNodeType } from '@flowstudio/shared';
-import { NODE_REGISTRY_RECORD, DEFAULT_SNAP_GRID } from '@flowstudio/shared';
+import {
+  NODE_REGISTRY_RECORD,
+  DEFAULT_SNAP_GRID,
+  getNodeRegistryEntry,
+} from '@flowstudio/shared';
 
 /**
  * 生成全局唯一 ID
@@ -41,7 +45,7 @@ export function createNodeFromType(
   type: FlowNodeType,
   position: { x: number; y: number }
 ): FlowNode {
-  const entry = NODE_REGISTRY_RECORD[type];
+  const entry = getNodeRegistryEntry(type) ?? NODE_REGISTRY_RECORD[type];
   const width = entry ? entry.defaultSize.width : 160;
   const height = entry ? entry.defaultSize.height : 80;
   const label = entry ? entry.label : type;

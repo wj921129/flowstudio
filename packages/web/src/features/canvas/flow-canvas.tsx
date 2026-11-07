@@ -40,6 +40,7 @@ export const FlowCanvas: React.FC = () => {
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
+  const setActiveTool = useFlowStore((s) => s.setActiveTool);
 
   const { screenToFlowPosition } = useReactFlow();
 
@@ -206,11 +207,41 @@ export const FlowCanvas: React.FC = () => {
         deleteSelected();
         return;
       }
+
+      // 取消连线模式或清空选中 (Escape)
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (connectSourceNodeId) {
+          setConnectSourceNodeId(null);
+          setActiveTool('select');
+          setSelectedNodes([]);
+          setSelectedEdge(null);
+        } else if (activeTool === 'connect') {
+          setActiveTool('select');
+          setSelectedNodes([]);
+          setSelectedEdge(null);
+        } else {
+          setSelectedNodes([]);
+          setSelectedEdge(null);
+        }
+        return;
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [groupSelectedNodes, ungroupNodes, deleteSelected, undo, redo]);
+  }, [
+    groupSelectedNodes,
+    ungroupNodes,
+    deleteSelected,
+    undo,
+    redo,
+    connectSourceNodeId,
+    activeTool,
+    setActiveTool,
+    setSelectedNodes,
+    setSelectedEdge,
+  ]);
 
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =

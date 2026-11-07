@@ -17,6 +17,7 @@ import {
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { ThemeToggle } from '../theme/theme-toggle';
+import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 
 /** 图表标题本地持久化存储键 */
 const DIAGRAM_TITLE_STORAGE_KEY = 'fs-diagram-title';
@@ -52,6 +53,7 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const isEscapingRef = useRef(false);
 
   // 标题变更同步至本地存储
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -59,6 +61,10 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
   };
 
   const handleTitleBlur = () => {
+    if (isEscapingRef.current) {
+      isEscapingRef.current = false;
+      return;
+    }
     const finalTitle = editingTitle.trim() || DEFAULT_DIAGRAM_TITLE;
     setTitle(finalTitle);
     setEditingTitle(finalTitle);
@@ -71,6 +77,7 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
     if (e.key === 'Enter') {
       titleInputRef.current?.blur();
     } else if (e.key === 'Escape') {
+      isEscapingRef.current = true;
       setEditingTitle(title);
       titleInputRef.current?.blur();
     }
@@ -122,12 +129,16 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
 
     if (format === 'json') {
       try {
+        const sanitizeFileName = (title || 'flowstudio-diagram')
+          .replace(/[/\\?%*:|"<>]/g, '_')
+          .trim() || 'flowstudio-diagram';
+
         const exportData = {
           title,
           version: '1.0',
           exportedAt: new Date().toISOString(),
-          nodes,
-          edges,
+          nodes: sanitizeNodes(nodes),
+          edges: sanitizeEdges(edges),
         };
         const blob = new Blob([JSON.stringify(exportData, null, 2)], {
           type: 'application/json',
@@ -135,7 +146,7 @@ export const TopBar: React.FC<TopBarProps> = ({ className = '' }) => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${title || 'flowstudio-diagram'}.json`;
+        link.download = `${sanitizeFileName}.json`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

@@ -123,6 +123,14 @@ export function getNodeRegistryEntry(type: FlowNodeType): NodeRegistryEntry | un
 }
 
 /**
+ * 动态注册或更新节点类型至注册中心
+ * @param entry 节点注册配置项
+ */
+export function registerNodeType(entry: NodeRegistryEntry): void {
+  NODE_REGISTRY.set(entry.type, entry);
+}
+
+/**
  * 获取所有已注册的节点配置列表
  * @returns 节点注册配置数组
  */

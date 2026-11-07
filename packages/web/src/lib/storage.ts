@@ -40,7 +40,7 @@ function isStorageAvailable(): boolean {
 /**
  * 清理节点瞬态属性（选中、拖拽等交互态）
  */
-function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
+export function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
   return nodes.map((n) => {
     const { selected, dragging, resizing, ...rest } = n as Record<string, unknown>;
     return rest as FlowNode;
@@ -50,7 +50,7 @@ function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
 /**
  * 清理连线瞬态属性（选中态等）
  */
-function sanitizeEdges(edges: FlowEdge[]): FlowEdge[] {
+export function sanitizeEdges(edges: FlowEdge[]): FlowEdge[] {
   return edges.map((e) => {
     const { selected, ...rest } = e as Record<string, unknown>;
     return rest as FlowEdge;
