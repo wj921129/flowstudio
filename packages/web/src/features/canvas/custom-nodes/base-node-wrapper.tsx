@@ -8,6 +8,8 @@ import { Handle, Position } from '@xyflow/react';
 import type { FlowNodeData, HandlePosition } from '@flowstudio/shared';
 import { getNodeRegistryEntry } from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
+import { useCollaboration } from '../../collaboration/collaboration-provider';
+
 
 /**
  * 锚点方向与 React Flow Position 枚举映射字典
@@ -45,6 +47,10 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '');
   const inputRef = useRef<HTMLInputElement>(null);
+  const collab = useCollaboration();
+
+  const remoteSelector = collab?.remoteUsers.find((u) => u.selectedNodeIds.includes(id));
+
 
   // 当外部 data.label 变更且非编辑态时同步
   useEffect(() => {
@@ -106,7 +112,11 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     borderStyle: nodeStyle.borderStyle || undefined,
     color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : 'var(--fs-node-text)',
     fontSize: typeof nodeStyle.fontSize === 'number' ? `${nodeStyle.fontSize}px` : '14px',
-    boxShadow: selected ? '0 0 0 2px var(--fs-selection-ring)' : undefined,
+    boxShadow: selected
+      ? '0 0 0 2px var(--fs-selection-ring)'
+      : remoteSelector
+      ? `0 0 0 2px ${remoteSelector.color}`
+      : undefined,
     ...style,
   };
 
@@ -116,6 +126,16 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       style={mergedStyle}
       onDoubleClick={handleDoubleClick}
     >
+      {/* 他人选中高亮标识 */}
+      {remoteSelector && (
+        <div
+          className="absolute -top-5 left-0 px-1.5 py-0.5 rounded-sm text-[10px] font-bold text-white shadow-xs pointer-events-none whitespace-nowrap z-30"
+          style={{ backgroundColor: remoteSelector.color }}
+        >
+          {remoteSelector.nickname}
+        </div>
+      )}
+
       {/* 渲染连接桩 (Handles) */}
       {customHandles
         ? customHandles.map((pos) => (

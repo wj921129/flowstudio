@@ -25,6 +25,9 @@ import { edgeTypes } from './custom-edges';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
+import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
+import { useCollaboration } from '../collaboration/collaboration-provider';
+
 
 export const FlowCanvas: React.FC = () => {
   const nodes = useFlowStore((s) => s.nodes);
@@ -45,6 +48,24 @@ export const FlowCanvas: React.FC = () => {
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
 
   const { screenToFlowPosition } = useReactFlow();
+  const collab = useCollaboration();
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (collab) {
+        const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        collab.broadcastCursor(flowPos);
+      }
+    },
+    [collab, screenToFlowPosition]
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    if (collab) {
+      collab.broadcastCursor(null);
+    }
+  }, [collab]);
+
 
   // 内存剪贴板（用于 Ctrl+C / Ctrl+V 节点快捷复制粘贴）
   const clipboardRef = useRef<FlowNode[]>([]);
@@ -321,7 +342,10 @@ export const FlowCanvas: React.FC = () => {
       className={`w-full h-full relative overflow-hidden bg-[var(--fs-canvas-bg)] ${cursorClass}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
     >
+      <CollaborativeCursors />
       <ReactFlow
         nodes={nodes}
         edges={edges}
