@@ -176,7 +176,7 @@ export const FlowCanvas: React.FC = () => {
    * 节点拖拽松手事件处理器：执行泳道吸附、坐标转换与容器尺寸自动扩充
    */
   const handleNodeDragStop = useCallback(
-    (_event: React.MouseEvent, node: any) => {
+    (_event: any, node: any) => {
       const store = useFlowStore.getState();
       const { updated, nextNodes } = handleNodeDragNesting(node.id, store.nodes);
       if (updated) {
