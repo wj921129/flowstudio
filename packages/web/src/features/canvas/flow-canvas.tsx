@@ -8,6 +8,8 @@ import {
   ReactFlow,
   Background,
   SelectionMode,
+  ConnectionMode,
+  MarkerType,
 } from '@xyflow/react';
 import { DEFAULT_SNAP_GRID } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -100,8 +102,10 @@ export const FlowCanvas: React.FC = () => {
         snapToGrid={true}
         snapGrid={DEFAULT_SNAP_GRID}
         selectionMode={SelectionMode.Partial}
+        connectionMode={ConnectionMode.Loose}
         defaultEdgeOptions={{
           type: 'orthogonal',
+          markerEnd: { type: MarkerType.ArrowClosed },
         }}
         fitView
         minZoom={0.1}

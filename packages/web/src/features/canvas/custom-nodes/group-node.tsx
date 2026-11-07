@@ -34,6 +34,7 @@ export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   };
 
   const handleSave = () => {
+    if (!isEditing) return;
     setIsEditing(false);
     const trimmed = labelValue.trim();
     if (trimmed !== props.data.label) {

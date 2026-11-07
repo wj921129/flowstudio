@@ -67,6 +67,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   };
 
   const handleSave = () => {
+    if (!isEditing) return;
     setIsEditing(false);
     const trimmed = labelValue.trim();
     if (trimmed !== data.label) {
@@ -99,7 +100,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     backgroundColor: nodeStyle.fillColor ? String(nodeStyle.fillColor) : 'var(--fs-node-bg)',
     borderColor: nodeStyle.borderColor ? String(nodeStyle.borderColor) : 'var(--fs-node-border)',
     borderWidth: typeof nodeStyle.borderWidth === 'number' ? `${nodeStyle.borderWidth}px` : '1.5px',
-    borderStyle: nodeStyle.borderStyle || 'solid',
+    borderStyle: nodeStyle.borderStyle || undefined,
     color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : 'var(--fs-node-text)',
     fontSize: typeof nodeStyle.fontSize === 'number' ? `${nodeStyle.fontSize}px` : '14px',
     boxShadow: selected ? '0 0 0 2px var(--fs-selection-ring)' : undefined,

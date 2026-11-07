@@ -35,7 +35,7 @@ export const ContextualActionBar: React.FC = () => {
   const ungroupNodes = useFlowStore((s) => s.ungroupNodes);
   const alignSelectedNodes = useFlowStore((s) => s.alignSelectedNodes);
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
-  const updateNodeData = useFlowStore((s) => s.updateNodeData);
+  const batchUpdateNodeData = useFlowStore((s) => s.batchUpdateNodeData);
 
   const selectedSet = new Set(selectedNodeIds);
   const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
@@ -69,14 +69,16 @@ export const ContextualActionBar: React.FC = () => {
   const screenY = bbox.y * zoom + vpY - 12;
 
   const handleApplyColor = (colorVar: string) => {
-    targetNodes.forEach((node) => {
-      updateNodeData(node.id, {
+    const updates = targetNodes.map((node) => ({
+      id: node.id,
+      data: {
         style: {
           ...node.data?.style,
           borderColor: colorVar,
         },
-      });
-    });
+      },
+    }));
+    batchUpdateNodeData(updates);
   };
 
   return (

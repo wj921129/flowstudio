@@ -8,6 +8,7 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
+  MarkerType,
   type NodeChange,
   type EdgeChange,
   type Connection,
@@ -89,6 +90,8 @@ export interface FlowStoreActions {
   deleteSelected: () => void;
   /** 更新指定节点的业务数据 */
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => void;
+  /** 批量更新多个节点的业务数据（单次压入历史快照） */
+  batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => void;
   /** 更新指定连线的业务数据 */
   updateEdgeData: (id: string, data: Partial<FlowEdgeData>) => void;
   /** 设置选中的节点 ID 列表 */
@@ -279,7 +282,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       target: connection.target,
       sourceHandle: connection.sourceHandle ?? undefined,
       targetHandle: connection.targetHandle ?? undefined,
-      type: DEFAULT_EDGE_TYPE,
+      type: 'orthogonal',
+      markerEnd: { type: MarkerType.ArrowClosed },
       animated: false,
     };
 
@@ -319,6 +323,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     for (const n of nodes) {
       if (n.selected) {
         nodeIdsToDelete.add(n.id);
+      }
+    }
+
+    // 级联收集包含在被删除 group 内部的子节点，避免孤立悬空
+    let hasNewCascades = true;
+    while (hasNewCascades) {
+      hasNewCascades = false;
+      for (const n of nodes) {
+        if (n.parentId && nodeIdsToDelete.has(n.parentId) && !nodeIdsToDelete.has(n.id)) {
+          nodeIdsToDelete.add(n.id);
+          hasNewCascades = true;
+        }
       }
     }
 
@@ -374,6 +390,42 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             style: {
               ...n.data.style,
               ...data.style,
+            },
+          },
+        };
+      }
+      return n;
+    });
+
+    set({
+      nodes: nextNodes,
+      ...historyUpdate,
+    });
+  },
+
+  batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => {
+    if (updates.length === 0) {
+      return;
+    }
+    const { nodes, edges, historyPast } = get();
+    const updateMap = new Map(updates.map((u) => [u.id, u.data]));
+    const hasTarget = nodes.some((n) => updateMap.has(n.id));
+    if (!hasTarget) {
+      return;
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    const nextNodes = nodes.map((n) => {
+      const patch = updateMap.get(n.id);
+      if (patch) {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            ...patch,
+            style: {
+              ...n.data.style,
+              ...patch.style,
             },
           },
         };
