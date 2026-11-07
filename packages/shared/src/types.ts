@@ -4,7 +4,7 @@
  */
 
 /**
- * 流程图 9 种基础节点类型枚举
+ * 流程图 9 种基础节点类型与 2 种泳道容器类型枚举
  */
 export const FlowNodeTypeEnum = {
   StartEnd: 'start-end',
@@ -16,10 +16,12 @@ export const FlowNodeTypeEnum = {
   Database: 'database',
   Comment: 'comment',
   Group: 'group',
+  Pool: 'pool',
+  Lane: 'lane',
 } as const;
 
 /**
- * 流程图节点类型联合类型
+ * 流程图节点类型联合类型（含流程节点与泳道容器）
  */
 export type FlowNodeType =
   | 'start-end'
@@ -30,7 +32,9 @@ export type FlowNodeType =
   | 'subprocess'
   | 'database'
   | 'comment'
-  | 'group';
+  | 'group'
+  | 'pool'
+  | 'lane';
 
 /**
  * 所有支持的节点类型列表（只读元组）
@@ -45,6 +49,8 @@ export const FLOW_NODE_TYPES: readonly FlowNodeType[] = [
   'database',
   'comment',
   'group',
+  'pool',
+  'lane',
 ] as const;
 
 /**
@@ -143,6 +149,16 @@ export interface FlowNodeData {
   isFrame?: boolean;
   /** 折叠状态 (针对容器框) */
   isCollapsed?: boolean;
+  /** 泳道池方向：水平 (横向) 或 垂直 (纵向) */
+  orientation?: 'horizontal' | 'vertical';
+  /** 泳道池包含的子泳道 ID 有序列表 */
+  laneOrder?: string[];
+  /** 泳道或池表头颜色 */
+  headerColor?: string;
+  /** 泳道标题 */
+  laneTitle?: string;
+  /** 泳道或池表头宽度/高度 (默认 40px) */
+  headerSize?: number;
   /** 节点自定义样式覆盖 */
   style?: NodeStyleData;
   /** 节点详细描述说明 */

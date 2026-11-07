@@ -5,6 +5,9 @@ import {
   createDiagramInputSchema,
   updateDiagramInputSchema,
   awarenessUserStateSchema,
+  FLOW_NODE_TYPES,
+  isFlowNodeType,
+  getNodeRegistryEntry,
 } from '../src/index.js';
 
 describe('@flowstudio/shared schemas', () => {
@@ -24,6 +27,46 @@ describe('@flowstudio/shared schemas', () => {
       data: { label: '错误', type: 'invalid-type' },
     });
     expect(invalid.success).toBe(false);
+  });
+
+  it('validates pool and lane swimlane nodes with hierarchical relationships', () => {
+    expect(FLOW_NODE_TYPES).toContain('pool');
+    expect(FLOW_NODE_TYPES).toContain('lane');
+    expect(isFlowNodeType('pool')).toBe(true);
+    expect(isFlowNodeType('lane')).toBe(true);
+
+    const poolEntry = getNodeRegistryEntry('pool');
+    expect(poolEntry?.defaultSize.width).toBeGreaterThan(400);
+
+    const poolNode = flowNodeSchema.safeParse({
+      id: 'pool-1',
+      type: 'pool',
+      position: { x: 50, y: 50 },
+      width: 900,
+      height: 500,
+      data: {
+        label: '业务协同泳道池',
+        type: 'pool',
+        orientation: 'horizontal',
+        laneOrder: ['lane-frontend', 'lane-backend'],
+        headerColor: '#4F46E5',
+      },
+    });
+    expect(poolNode.success).toBe(true);
+
+    const laneNode = flowNodeSchema.safeParse({
+      id: 'lane-frontend',
+      type: 'lane',
+      position: { x: 0, y: 0 },
+      parentId: 'pool-1',
+      extent: 'parent',
+      data: {
+        label: '前端组',
+        type: 'lane',
+        laneTitle: '前端组',
+      },
+    });
+    expect(laneNode.success).toBe(true);
   });
 
   it('validates createDiagramInputSchema and rejects blank title', () => {

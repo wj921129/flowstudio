@@ -19,6 +19,11 @@ export const flowNodeDataSchema = z.object({
   parentId: z.string().optional(),
   isFrame: z.boolean().optional(),
   isCollapsed: z.boolean().optional(),
+  orientation: z.enum(['horizontal', 'vertical']).optional(),
+  laneOrder: z.array(z.string()).optional(),
+  headerColor: z.string().optional(),
+  laneTitle: z.string().optional(),
+  headerSize: z.number().optional(),
   style: z.record(z.string(), z.unknown()).optional(),
   description: z.string().optional(),
 }).passthrough();

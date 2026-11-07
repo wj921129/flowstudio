@@ -95,7 +95,23 @@ export const NODE_REGISTRY_RECORD: Record<FlowNodeType, NodeRegistryEntry> = {
     icon: 'Layers',
     defaultSize: { width: 400, height: 300 },
     handles: [], // 分组框不承载连线桩
-    mcpDescription: '泳道或逻辑容器节点，用于在视觉与层级上编组子节点（矩形容器框）',
+    mcpDescription: '逻辑容器节点，用于在视觉与层级上编组子节点（矩形容器框）',
+  },
+  pool: {
+    type: 'pool',
+    label: '泳道池',
+    icon: 'Columns3',
+    defaultSize: { width: 800, height: 400 },
+    handles: [], // 泳道池容器不直接承载普通连线
+    mcpDescription: '泳道池容器节点，支持横向或纵向多个泳道划分，包含整体表头（Pool）',
+  },
+  lane: {
+    type: 'lane',
+    label: '泳道',
+    icon: 'Splitscreen',
+    defaultSize: { width: 750, height: 200 },
+    handles: [], // 泳道本身为承载条带
+    mcpDescription: '单一泳道节点，属于泳道池的子容器（Lane），负责容纳归属该泳道的步骤节点',
   },
 };
 
