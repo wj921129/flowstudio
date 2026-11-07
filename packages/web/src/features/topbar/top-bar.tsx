@@ -24,6 +24,7 @@ import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
 import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
+import { exportToPng, exportToSvg, exportToJson } from '../../lib/export-utils';
 
 export interface TopBarProps {
   /** 当前图表 ID */
@@ -148,50 +149,24 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     };
   }, []);
 
-  const handleExport = (format: 'png' | 'svg' | 'json') => {
+  const handleExport = async (format: 'png' | 'svg' | 'json') => {
     setIsExportOpen(false);
 
-    if (format === 'json') {
-      try {
-        const sanitizeFileName = (storeTitle || 'flowstudio-diagram')
-          .replace(/[/\\?%*:|"<>]/g, '_')
-          .trim() || 'flowstudio-diagram';
-
-        const exportData = {
-          title: storeTitle,
-          version: '1.0',
-          exportedAt: new Date().toISOString(),
-          nodes: sanitizeNodes(nodes),
-          edges: sanitizeEdges(edges),
-        };
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-          type: 'application/json',
-        });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${sanitizeFileName}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        showToast('已成功导出 JSON 图表数据');
-      } catch (error) {
-        console.error('[TopBar] 导出 JSON 数据失败:', error);
-        showToast('导出 JSON 失败，请检查浏览器权限');
+    try {
+      if (format === 'json') {
+        exportToJson(nodes, edges, storeTitle);
+        showToast('已成功导出 JSON 图表文件');
+      } else if (format === 'svg') {
+        exportToSvg(nodes, edges, storeTitle);
+        showToast('已成功导出无损矢量 SVG');
+      } else if (format === 'png') {
+        showToast('正在生成 Retina 超清 PNG...');
+        await exportToPng(nodes, edges, storeTitle, 2);
+        showToast('已成功导出高清 PNG 图片');
       }
-      return;
-    }
-
-    if (format === 'png') {
-      showToast('PNG 导出功能开发中，敬请期待');
-      return;
-    }
-
-    if (format === 'svg') {
-      showToast('SVG 导出功能开发中，敬请期待');
-      return;
+    } catch (error: any) {
+      console.error('[TopBar] 导出失败:', error);
+      showToast(`导出失败: ${error?.message || '请检查浏览器下载权限'}`);
     }
   };
 
