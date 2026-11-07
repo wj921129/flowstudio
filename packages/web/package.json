@@ -9,10 +9,12 @@
   },
   "dependencies": {
     "@flowstudio/shared": "workspace:*",
+    "@hocuspocus/provider": "^4.8.0",
     "@xyflow/react": "^12.4.2",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "yjs": "^13.6.33",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
