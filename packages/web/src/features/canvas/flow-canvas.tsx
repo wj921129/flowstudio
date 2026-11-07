@@ -3,7 +3,7 @@
  * @description 组装 React Flow 视口，集成 15px 网格吸附、橡皮筋框选、全局快捷键、正交连线与就地浮动工具条
  */
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -23,10 +23,12 @@ import { nodeTypes } from './custom-nodes';
 import { edgeTypes } from './custom-edges';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
+import { FloatingToolbar } from '../toolbar/floating-toolbar';
 
 export const FlowCanvas: React.FC = () => {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
+  const activeTool = useFlowStore((s) => s.activeTool);
   const onNodesChange = useFlowStore((s) => s.onNodesChange);
   const onEdgesChange = useFlowStore((s) => s.onEdgesChange);
   const onConnect = useFlowStore((s) => s.onConnect);
@@ -40,6 +42,16 @@ export const FlowCanvas: React.FC = () => {
   const redo = useFlowStore((s) => s.redo);
 
   const { screenToFlowPosition } = useReactFlow();
+
+  // 连线模式下的暂存起始源节点 ID
+  const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
+
+  // 当工具模式切出连线模式时，清理暂存状态
+  useEffect(() => {
+    if (activeTool !== 'connect') {
+      setConnectSourceNodeId(null);
+    }
+  }, [activeTool]);
 
   /**
    * 画布拖拽经过处理器：允许放置操作并指明 move 移动意图
@@ -95,26 +107,50 @@ export const FlowCanvas: React.FC = () => {
     (_event: React.MouseEvent, edge: { id: string }) => {
       setSelectedNodes([]);
       setSelectedEdge(edge.id);
+      setConnectSourceNodeId(null);
     },
     [setSelectedNodes, setSelectedEdge]
   );
 
   /**
-   * 节点点击事件处理器：清空连线选中状态，确保属性面板专注呈现节点属性
+   * 节点点击事件处理器：
+   * - 选择/常规模式：清空连线选中状态，确保属性面板专注呈现节点属性
+   * - 连线模式：两两点击节点直接建立正交连线，并高亮反馈
    */
   const handleNodeClick = useCallback(
-    (_event: React.MouseEvent, _node: { id: string }) => {
+    (_event: React.MouseEvent, node: { id: string }) => {
       setSelectedEdge(null);
+
+      if (activeTool === 'connect') {
+        if (!connectSourceNodeId) {
+          setConnectSourceNodeId(node.id);
+          setSelectedNodes([node.id]);
+        } else if (connectSourceNodeId !== node.id) {
+          onConnect({
+            source: connectSourceNodeId,
+            target: node.id,
+            sourceHandle: null,
+            targetHandle: null,
+          });
+          setConnectSourceNodeId(null);
+          setSelectedNodes([node.id]);
+        } else {
+          // 再次点击相同节点取消源标记
+          setConnectSourceNodeId(null);
+          setSelectedNodes([]);
+        }
+      }
     },
-    [setSelectedEdge]
+    [activeTool, connectSourceNodeId, onConnect, setSelectedNodes, setSelectedEdge]
   );
 
   /**
-   * 画布空白区域点击事件处理器：清空所有节点与连线选中态
+   * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态
    */
   const handlePaneClick = useCallback(() => {
     setSelectedNodes([]);
     setSelectedEdge(null);
+    setConnectSourceNodeId(null);
   }, [setSelectedNodes, setSelectedEdge]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
@@ -176,9 +212,17 @@ export const FlowCanvas: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [groupSelectedNodes, ungroupNodes, deleteSelected, undo, redo]);
 
+  // 根据当前激活的工具模式配置画布专属光标
+  const cursorClass =
+    activeTool === 'pan'
+      ? 'cursor-grab active:cursor-grabbing [&_.react-flow__pane]:cursor-grab [&_.react-flow__pane:active]:cursor-grabbing'
+      : activeTool === 'connect'
+      ? 'cursor-crosshair [&_.react-flow__pane]:cursor-crosshair [&_.react-flow__node]:cursor-crosshair'
+      : '';
+
   return (
     <div
-      className="w-full h-full relative overflow-hidden bg-[var(--fs-canvas-bg)]"
+      className={`w-full h-full relative overflow-hidden bg-[var(--fs-canvas-bg)] ${cursorClass}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
@@ -195,6 +239,10 @@ export const FlowCanvas: React.FC = () => {
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        panOnDrag={activeTool === 'pan' ? [0, 1, 2] : [1, 2]}
+        panOnScroll={activeTool === 'pan'}
+        nodesDraggable={activeTool === 'select'}
+        elementsSelectable={activeTool === 'select'}
         snapToGrid={true}
         snapGrid={DEFAULT_SNAP_GRID}
         selectionMode={SelectionMode.Partial}
@@ -206,7 +254,7 @@ export const FlowCanvas: React.FC = () => {
         fitView
         minZoom={0.1}
         maxZoom={2.5}
-        className="w-full h-full"
+        className={`w-full h-full ${cursorClass}`}
       >
         {/* 点阵网格背景 */}
         <Background
@@ -220,6 +268,9 @@ export const FlowCanvas: React.FC = () => {
 
         {/* 左下角视口辅助缩放与小地图控件 */}
         <CanvasControls />
+
+        {/* 底部居中悬浮主工具栏 */}
+        <FloatingToolbar />
       </ReactFlow>
     </div>
   );

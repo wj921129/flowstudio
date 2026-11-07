@@ -208,9 +208,9 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
 
   // 模式判断：单选节点、单选连线或未选择
-  const isSingleNodeSelected = selectedNodeIds.length === 1 && !selectedEdgeId;
-  const isSingleEdgeSelected = !isSingleNodeSelected && Boolean(selectedEdgeId);
   const isMultiNodesSelected = selectedNodeIds.length > 1;
+  const isSingleNodeSelected = selectedNodeIds.length === 1 && !selectedEdgeId;
+  const isSingleEdgeSelected = selectedNodeIds.length === 0 && Boolean(selectedEdgeId);
 
   const selectedNode: FlowNode | undefined = isSingleNodeSelected
     ? nodes.find((n) => n.id === selectedNodeIds[0])
