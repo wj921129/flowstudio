@@ -1,0 +1,13 @@
+{
+  "name": "flowstudio-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlowStudio collaborative diagramming platform monorepo",
+  "scripts": {
+    "dev": "pnpm -C packages/web dev",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
