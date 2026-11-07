@@ -67,7 +67,7 @@ export const ToolbarButton: React.FC<ToolbarButtonProps> = ({
       {/* 气泡提示 (Tooltip + 快捷键徽标) */}
       <div
         role="tooltip"
-        className="pointer-events-none absolute bottom-full mb-2 hidden group-hover:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs whitespace-nowrap bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-border)] shadow-lg z-50 select-none animate-in fade-in duration-150"
+        className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs whitespace-nowrap bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-border)] shadow-lg z-50 select-none animate-in fade-in duration-150"
       >
         <span>{label}</span>
         {shortcut && (
