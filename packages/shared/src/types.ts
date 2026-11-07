@@ -137,6 +137,12 @@ export interface FlowNodeData {
   label: string;
   /** 节点类型 */
   type: FlowNodeType;
+  /** 所属父容器或 Group ID */
+  parentId?: string;
+  /** 组合形态：true 为显式容器框(带标题和底色)，false/undefined 为纯逻辑组合 */
+  isFrame?: boolean;
+  /** 折叠状态 (针对容器框) */
+  isCollapsed?: boolean;
   /** 节点自定义样式覆盖 */
   style?: NodeStyleData;
   /** 节点详细描述说明 */
@@ -153,6 +159,10 @@ export interface FlowEdgeData {
   label?: string;
   /** 连线自定义样式覆盖 */
   style?: EdgeStyleData;
+  /** 手动调线折拐点坐标集合 */
+  waypoints?: XYPosition[];
+  /** 连线路由策略: orthogonal | bezier | straight */
+  routingType?: 'orthogonal' | 'bezier' | 'straight';
   /** 扩展属性 */
   [key: string]: unknown;
 }

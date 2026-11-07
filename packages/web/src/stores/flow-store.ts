@@ -20,7 +20,13 @@ import type {
   FlowNodeType,
 } from '@flowstudio/shared';
 import { DEFAULT_EDGE_TYPE } from '@flowstudio/shared';
-import { createNodeFromType, generateEdgeId } from '../lib/node-utils';
+import { createNodeFromType, generateEdgeId, generateUniqueId } from '../lib/node-utils';
+import {
+  computeBoundingBox,
+  toLocalPosition,
+  toWorldPosition,
+  getNodeDimensions,
+} from '../features/canvas/utils/group-calculator';
 
 /**
  * 画布操作工具模式枚举
@@ -95,6 +101,14 @@ export interface FlowStoreActions {
   undo: () => void;
   /** 重做操作 */
   redo: () => void;
+  /** 将当前选中的多个节点进行成组包装 */
+  groupSelectedNodes: (options?: { asFrame?: boolean; label?: string }) => string | null;
+  /** 解散指定的组合节点或当前选中的组合节点 */
+  ungroupNodes: (groupIds?: string[]) => void;
+  /** 批量对齐选中的多个节点 */
+  alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
+  /** 批量均匀分布选中的多个节点 */
+  distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => void;
   /** 全量替换图表数据（通常用于数据水合与新建/重置图表） */
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
 }
@@ -488,6 +502,292 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canUndo: true,
       canRedo: newFuture.length > 0,
     });
+  },
+
+  groupSelectedNodes: (options?: { asFrame?: boolean; label?: string }): string | null => {
+    const { nodes, edges, selectedNodeIds, historyPast } = get();
+
+    // 筛选被选中的节点集合
+    const selectedSet = new Set(selectedNodeIds);
+    const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
+
+    if (targetNodes.length < 2) {
+      return null;
+    }
+
+    // 计算世界绝对坐标与外接包围盒
+    const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
+    const getAbsolutePos = (node: FlowNode): { x: number; y: number } => {
+      if (node.parentId && nodeMap.has(node.parentId)) {
+        const parent = nodeMap.get(node.parentId)!;
+        const parentPos = getAbsolutePos(parent);
+        return toWorldPosition(node.position, parentPos);
+      }
+      return { ...node.position };
+    };
+
+    const worldNodes: FlowNode[] = targetNodes.map((n) => ({
+      ...n,
+      position: getAbsolutePos(n),
+    }));
+
+    const bbox = computeBoundingBox(worldNodes, 20);
+    const groupId = generateUniqueId('group');
+    const isFrame = options?.asFrame ?? false;
+    const label = options?.label ?? (isFrame ? '容器框' : '组合');
+
+    const groupNode: FlowNode = {
+      id: groupId,
+      type: 'group',
+      position: { x: bbox.x, y: bbox.y },
+      width: bbox.width,
+      height: bbox.height,
+      style: {
+        width: bbox.width,
+        height: bbox.height,
+      },
+      data: {
+        label,
+        type: 'group',
+        isFrame,
+      },
+      selected: true,
+    };
+
+    const targetIdSet = new Set(targetNodes.map((n) => n.id));
+
+    // 子节点转为相对于 group 的局部坐标，并配置 extent: 'parent'
+    const updatedNodes = nodes.map((n) => {
+      if (targetIdSet.has(n.id)) {
+        const absPos = getAbsolutePos(n);
+        const localPos = toLocalPosition(absPos, groupNode.position);
+        return {
+          ...n,
+          parentId: groupId,
+          extent: 'parent' as const,
+          position: localPos,
+          selected: false,
+          data: {
+            ...n.data,
+            parentId: groupId,
+          },
+        };
+      }
+      return {
+        ...n,
+        selected: false,
+      };
+    });
+
+    // 在 React Flow 中，父容器节点在节点数组中必须位于其子节点之前
+    const firstTargetIndex = updatedNodes.findIndex((n) => targetIdSet.has(n.id));
+    const insertIndex = firstTargetIndex >= 0 ? firstTargetIndex : 0;
+    const nextNodes = [
+      ...updatedNodes.slice(0, insertIndex),
+      groupNode,
+      ...updatedNodes.slice(insertIndex),
+    ];
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    set({
+      nodes: nextNodes,
+      selectedNodeIds: [groupId],
+      selectedEdgeId: null,
+      ...historyUpdate,
+    });
+
+    return groupId;
+  },
+
+  ungroupNodes: (groupIds?: string[]) => {
+    const { nodes, edges, selectedNodeIds, historyPast } = get();
+
+    // 确定目标 group 节点 ID 列表
+    let targetGroupIds: string[] = [];
+    if (groupIds && groupIds.length > 0) {
+      targetGroupIds = groupIds;
+    } else {
+      const selectedSet = new Set(selectedNodeIds);
+      targetGroupIds = nodes
+        .filter((n) => (selectedSet.has(n.id) || n.selected) && n.type === 'group')
+        .map((n) => n.id);
+    }
+
+    if (targetGroupIds.length === 0) {
+      return;
+    }
+
+    const groupSet = new Set(targetGroupIds);
+    const groupMap = new Map<string, FlowNode>();
+    for (const n of nodes) {
+      if (groupSet.has(n.id)) {
+        groupMap.set(n.id, n);
+      }
+    }
+
+    const childIds: string[] = [];
+    const nextNodes: FlowNode[] = [];
+
+    for (const n of nodes) {
+      if (groupSet.has(n.id)) {
+        // 销毁 Group 节点本身
+        continue;
+      }
+
+      if (n.parentId && groupSet.has(n.parentId)) {
+        const parentGroup = groupMap.get(n.parentId)!;
+        const worldPos = toWorldPosition(n.position, parentGroup.position);
+        childIds.push(n.id);
+        const { parentId, extent, ...rest } = n;
+        nextNodes.push({
+          ...rest,
+          position: worldPos,
+          selected: true,
+          data: {
+            ...n.data,
+            parentId: undefined,
+          },
+        });
+      } else {
+        nextNodes.push(n);
+      }
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    set({
+      nodes: nextNodes,
+      selectedNodeIds: childIds,
+      selectedEdgeId: null,
+      ...historyUpdate,
+    });
+  },
+
+  alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+    const { nodes, edges, selectedNodeIds, historyPast } = get();
+    const selectedSet = new Set(selectedNodeIds);
+    const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
+
+    if (targetNodes.length < 2) {
+      return;
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    // 计算对齐基准线
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const node of targetNodes) {
+      const { width, height } = getNodeDimensions(node);
+      minX = Math.min(minX, node.position.x);
+      maxX = Math.max(maxX, node.position.x + width);
+      minY = Math.min(minY, node.position.y);
+      maxY = Math.max(maxY, node.position.y + height);
+    }
+
+    const nextNodes = nodes.map((node) => {
+      if (!selectedSet.has(node.id) && !node.selected) {
+        return node;
+      }
+      const { width, height } = getNodeDimensions(node);
+      let nextX = node.position.x;
+      let nextY = node.position.y;
+
+      switch (alignment) {
+        case 'left':
+          nextX = minX;
+          break;
+        case 'center':
+          nextX = Math.round((minX + maxX) / 2 - width / 2);
+          break;
+        case 'right':
+          nextX = maxX - width;
+          break;
+        case 'top':
+          nextY = minY;
+          break;
+        case 'middle':
+          nextY = Math.round((minY + maxY) / 2 - height / 2);
+          break;
+        case 'bottom':
+          nextY = maxY - height;
+          break;
+      }
+
+      return {
+        ...node,
+        position: { x: nextX, y: nextY },
+      };
+    });
+
+    set({
+      nodes: nextNodes,
+      ...historyUpdate,
+    });
+  },
+
+  distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => {
+    const { nodes, edges, selectedNodeIds, historyPast } = get();
+    const selectedSet = new Set(selectedNodeIds);
+    const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
+
+    if (targetNodes.length < 3) {
+      return;
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    if (axis === 'horizontal') {
+      const sorted = [...targetNodes].sort((a, b) => a.position.x - b.position.x);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const totalSpan = last.position.x - first.position.x;
+      const step = totalSpan / (sorted.length - 1);
+
+      const posMap = new Map<string, number>();
+      sorted.forEach((node, index) => {
+        posMap.set(node.id, Math.round(first.position.x + index * step));
+      });
+
+      const nextNodes = nodes.map((node) => {
+        if (posMap.has(node.id)) {
+          return {
+            ...node,
+            position: { ...node.position, x: posMap.get(node.id)! },
+          };
+        }
+        return node;
+      });
+
+      set({ nodes: nextNodes, ...historyUpdate });
+    } else {
+      const sorted = [...targetNodes].sort((a, b) => a.position.y - b.position.y);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const totalSpan = last.position.y - first.position.y;
+      const step = totalSpan / (sorted.length - 1);
+
+      const posMap = new Map<string, number>();
+      sorted.forEach((node, index) => {
+        posMap.set(node.id, Math.round(first.position.y + index * step));
+      });
+
+      const nextNodes = nodes.map((node) => {
+        if (posMap.has(node.id)) {
+          return {
+            ...node,
+            position: { ...node.position, y: posMap.get(node.id)! },
+          };
+        }
+        return node;
+      });
+
+      set({ nodes: nextNodes, ...historyUpdate });
+    }
   },
 
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => {

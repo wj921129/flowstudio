@@ -21,6 +21,16 @@
   --fs-node-text: #0f172a;
   --fs-edge-stroke: #94a3b8;
   --fs-selection-ring: #3b82f6;
+  --fs-note-bg: #fef9c3;
+  --fs-note-border: #facc15;
+
+  /* 快速调色盘预设令牌 */
+  --fs-palette-1: #3b82f6;
+  --fs-palette-2: #10b981;
+  --fs-palette-3: #f59e0b;
+  --fs-palette-4: #ef4444;
+  --fs-palette-5: #8b5cf6;
+  --fs-palette-6: #64748b;
 }
 
 :root.dark,
@@ -43,6 +53,16 @@ html.dark {
   --fs-node-text: #f8fafc;
   --fs-edge-stroke: #64748b;
   --fs-selection-ring: #60a5fa;
+  --fs-note-bg: #422006;
+  --fs-note-border: #a16207;
+
+  /* 快速调色盘预设令牌 (深色) */
+  --fs-palette-1: #60a5fa;
+  --fs-palette-2: #34d399;
+  --fs-palette-3: #fbbf24;
+  --fs-palette-4: #f87171;
+  --fs-palette-5: #a78bfa;
+  --fs-palette-6: #94a3b8;
 }
 
 @theme {
@@ -62,6 +82,8 @@ html.dark {
   --color-fs-node-text: var(--fs-node-text);
   --color-fs-edge-stroke: var(--fs-edge-stroke);
   --color-fs-selection-ring: var(--fs-selection-ring);
+  --color-fs-note-bg: var(--fs-note-bg);
+  --color-fs-note-border: var(--fs-note-border);
 }
 
 body {
