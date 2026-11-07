@@ -7,7 +7,8 @@ import { initDatabase } from './db/database.js';
 import { DiagramRepository } from './db/diagram-repository.js';
 import { createCollaborationServer } from './collaboration/hocuspocus.js';
 import { diagramRoutes } from './routes/diagrams.js';
-import type { Server as HocuspocusServer } from '@hocuspocus/server';
+import type { Hocuspocus } from '@hocuspocus/server';
+import type * as WebSocket from 'ws';
 
 export interface BuildServerOptions {
   dbPath?: string;
@@ -17,8 +18,9 @@ export interface BuildServerOptions {
 export interface ServerContext {
   app: FastifyInstance;
   repo: DiagramRepository;
-  hocuspocus: HocuspocusServer;
+  hocuspocus: Hocuspocus;
 }
+
 
 export async function buildServer(options: BuildServerOptions = {}): Promise<ServerContext> {
   const app = fastify({ logger: false });
@@ -43,14 +45,48 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     repo,
   });
 
+  // 辅助函数：将 Fastify WebSocket 连接转发至 Hocuspocus ClientConnection
+  const bindHocuspocusSocket = (socket: WebSocket.WebSocket, reqRaw: any) => {
+    try {
+      const clientConnection = hocuspocus.handleConnection(socket, reqRaw);
+
+      socket.on('message', (data: any) => {
+        let uint8: Uint8Array;
+        if (data instanceof Uint8Array) {
+          uint8 = data;
+        } else if (Array.isArray(data)) {
+          uint8 = new Uint8Array(Buffer.concat(data));
+        } else {
+          uint8 = new Uint8Array(data);
+        }
+        clientConnection.handleMessage(uint8);
+      });
+
+      socket.on('close', (code: number, reason: Buffer) => {
+        clientConnection.handleClose({ code, reason: reason ? reason.toString() : '' });
+      });
+
+      socket.on('error', (err: any) => {
+        app.log.error(err, '[WebSocket] Client connection error');
+      });
+
+      socket.on('pong', () => {
+        clientConnection.touch();
+      });
+    } catch (err) {
+      app.log.error(err, '[WebSocket] Failed to bind Hocuspocus socket');
+    }
+  };
+
+
+
   // 注册 Hocuspocus WebSocket 协同路由
   app.get('/collaboration', { websocket: true }, (socket, req) => {
-    hocuspocus.handleConnection(socket, req.raw);
+    bindHocuspocusSocket(socket, req.raw);
   });
 
   app.get('/collaboration/:documentName', { websocket: true }, (socket, req) => {
-    const { documentName } = req.params as { documentName?: string };
-    hocuspocus.handleConnection(socket, req.raw, documentName);
+    bindHocuspocusSocket(socket, req.raw);
   });
 
   // 静态文件托管（若配置且存在）
@@ -67,7 +103,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
 
   // 关闭钩子
   app.addHook('onClose', async () => {
-    await hocuspocus.destroy();
+    if (typeof (hocuspocus as any).destroy === 'function') {
+      await (hocuspocus as any).destroy();
+    }
     db.close();
   });
 

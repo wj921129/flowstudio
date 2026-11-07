@@ -1,4 +1,4 @@
-import { Server as HocuspocusServer } from '@hocuspocus/server';
+import { Hocuspocus } from '@hocuspocus/server';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import { SqlitePersistenceExtension } from './sqlite-extension.js';
 
@@ -10,8 +10,8 @@ export interface CollaborationServerOptions {
 export function createCollaborationServer(
   repo: DiagramRepository,
   options?: CollaborationServerOptions,
-): HocuspocusServer {
-  return new HocuspocusServer({
+): Hocuspocus {
+  return new Hocuspocus({
     debounce: options?.debounce ?? 500,
     maxDebounce: options?.maxDebounce ?? 2000,
     extensions: [new SqlitePersistenceExtension(repo)],

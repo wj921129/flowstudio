@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
 import * as Y from 'yjs';
 import type { DiagramSummary } from '@flowstudio/shared';
 
