@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@flowstudio/shared": "workspace:*",
+    "@hocuspocus/server": "^4.8.0",
     "better-sqlite3": "^13.0.3",
     "yjs": "^13.6.33"
   },
