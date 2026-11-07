@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import '@xyflow/react/dist/style.css';
+import '../features/theme/tokens.css';
 import { VERSION } from '@flowstudio/shared';
 import { App } from './app';
 
