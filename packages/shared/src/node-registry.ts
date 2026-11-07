@@ -108,7 +108,7 @@ export const NODE_REGISTRY_RECORD: Record<FlowNodeType, NodeRegistryEntry> = {
   lane: {
     type: 'lane',
     label: '泳道',
-    icon: 'Splitscreen',
+    icon: 'Rows3',
     defaultSize: { width: 750, height: 200 },
     handles: [], // 泳道本身为承载条带
     mcpDescription: '单一泳道节点，属于泳道池的子容器（Lane），负责容纳归属该泳道的步骤节点',

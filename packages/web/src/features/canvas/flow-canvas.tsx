@@ -118,14 +118,63 @@ export const FlowCanvas: React.FC = () => {
       // 吸附至 15px 栅格网格步长
       const snappedPosition = snapPositionToGrid(centeredPosition, DEFAULT_SNAP_GRID);
 
-      // 添加节点至全局 Store 并自动设为唯一激活选中节点
+      if (rawType === 'pool') {
+        // 拖入泳道池时自动附带生成两条初始子泳道
+        const poolId = generateUniqueId('pool');
+        const lane1Id = `lane-${Date.now().toString(36)}-1`;
+        const lane2Id = `lane-${Date.now().toString(36)}-2`;
+
+        const poolNode: FlowNode = {
+          id: poolId,
+          type: 'pool',
+          position: snappedPosition,
+          width: 800,
+          height: 440,
+          data: {
+            label: '业务泳道池',
+            type: 'pool',
+            orientation: 'horizontal',
+            laneOrder: [lane1Id, lane2Id],
+            headerSize: 40,
+          },
+        };
+
+        const lane1Node: FlowNode = {
+          id: lane1Id,
+          type: 'lane',
+          parentId: poolId,
+          extent: 'parent',
+          position: { x: 0, y: 40 },
+          width: 800,
+          height: 200,
+          data: { label: '泳道 1', type: 'lane', laneTitle: '泳道 1' },
+        };
+
+        const lane2Node: FlowNode = {
+          id: lane2Id,
+          type: 'lane',
+          parentId: poolId,
+          extent: 'parent',
+          position: { x: 0, y: 240 },
+          width: 800,
+          height: 200,
+          data: { label: '泳道 2', type: 'lane', laneTitle: '泳道 2' },
+        };
+
+        addNodes([poolNode, lane1Node, lane2Node]);
+        setSelectedNodes([poolId]);
+        setSelectedEdge(null);
+        return;
+      }
+
+      // 添加常规节点至全局 Store 并自动设为唯一激活选中节点
       const newNode = addNode(rawType, snappedPosition);
       if (newNode?.id) {
         setSelectedNodes([newNode.id]);
         setSelectedEdge(null);
       }
     },
-    [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]
+    [screenToFlowPosition, addNode, addNodes, setSelectedNodes, setSelectedEdge]
   );
 
   /**

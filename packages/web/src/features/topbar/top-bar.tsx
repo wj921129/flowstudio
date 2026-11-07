@@ -13,6 +13,7 @@ import {
   FileJson,
   Check,
   Share2,
+  Sparkles,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -20,6 +21,7 @@ import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
+import { layoutDiagram } from '../canvas/layout/elk-layout';
 
 export interface TopBarProps {
   /** 当前图表 ID */
@@ -33,9 +35,11 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const edges = useFlowStore((s) => s.edges);
   const storeTitle = useFlowStore((s) => s.diagramTitle);
   const setDiagramTitle = useFlowStore((s) => s.setDiagramTitle);
+  const setDiagram = useFlowStore((s) => s.setDiagram);
 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
@@ -96,6 +100,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
       showToast('已复制局域网协作链接');
     } catch {
       showToast('复制失败，请手动复制浏览器地址栏');
+    }
+  };
+
+  const handleAutoLayout = async () => {
+    if (nodes.length === 0 || isLayouting) return;
+    try {
+      setIsLayouting(true);
+      const res = await layoutDiagram(nodes, edges);
+      setDiagram(res.nodes, res.edges);
+      showToast('自动排版已完成');
+    } catch (err) {
+      console.error('[TopBar] 自动排版失败:', err);
+      showToast('自动排版异常，已保留原样');
+    } finally {
+      setIsLayouting(false);
     }
   };
 
@@ -234,6 +253,18 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             {nodes.length} 节点 · {edges.length} 连线
           </span>
         </div>
+
+        {/* 一键自动排版 */}
+        <button
+          type="button"
+          onClick={handleAutoLayout}
+          disabled={isLayouting || nodes.length === 0}
+          title="基于 elkjs 执行一键整图/泳道自动正交排版"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
+          <span>{isLayouting ? '排版中...' : '自动排版'}</span>
+        </button>
 
         {/* 导出菜单 */}
         <div className="relative" ref={exportDropdownRef}>

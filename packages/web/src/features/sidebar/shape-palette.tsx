@@ -18,6 +18,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   GripVertical,
+  Columns3,
+  Rows3,
 } from 'lucide-react';
 import {
   getAllNodeRegistryEntries,
@@ -36,6 +38,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Database,
   StickyNote,
   Layers,
+  Columns3,
+  Rows3,
 };
 
 /**
@@ -111,13 +115,12 @@ export const ShapePalette: React.FC<ShapePaletteProps> = ({
         className={`flex-1 overflow-y-auto overflow-x-hidden ${
           isCollapsed
             ? 'p-1.5 flex flex-col items-center space-y-2'
-            : 'p-2 space-y-2'
+            : 'p-2 space-y-3'
         }`}
       >
-        {entries.map((entry) => {
-          const IconComponent = resolveNodeIcon(entry.icon);
-
-          if (isCollapsed) {
+        {isCollapsed ? (
+          entries.map((entry) => {
+            const IconComponent = resolveNodeIcon(entry.icon);
             return (
               <div
                 key={entry.type}
@@ -130,31 +133,78 @@ export const ShapePalette: React.FC<ShapePaletteProps> = ({
                 <IconComponent className="w-4 h-4 shrink-0" />
               </div>
             );
-          }
-
-          return (
-            <div
-              key={entry.type}
-              draggable
-              onDragStart={(e) => handleDragStart(e, entry.type)}
-              title={`${entry.label} - ${entry.mcpDescription}`}
-              className="group flex items-center gap-2.5 px-3 py-2 rounded-lg border border-fs-border bg-fs-surface hover:border-fs-primary hover:bg-fs-bg/60 hover:shadow-xs transition-all duration-150 cursor-grab active:cursor-grabbing select-none"
-            >
-              <div className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-fs-bg border border-fs-border text-fs-text group-hover:text-fs-primary group-hover:border-fs-primary/40 transition-colors">
-                <IconComponent className="w-4 h-4" />
+          })
+        ) : (
+          <>
+            {/* 流程图元分组 */}
+            <div className="space-y-1.5">
+              <div className="px-1 text-[10px] font-semibold text-fs-text-muted tracking-wider uppercase">
+                流程图元
               </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <span className="text-xs font-medium text-fs-text truncate">
-                  {entry.label}
-                </span>
-                <span className="text-[10px] text-fs-text-muted truncate">
-                  {entry.defaultSize.width} × {entry.defaultSize.height}
-                </span>
-              </div>
-              <GripVertical className="w-3.5 h-3.5 text-fs-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              {entries
+                .filter((e) => e.type !== 'pool' && e.type !== 'lane')
+                .map((entry) => {
+                  const IconComponent = resolveNodeIcon(entry.icon);
+                  return (
+                    <div
+                      key={entry.type}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, entry.type)}
+                      title={`${entry.label} - ${entry.mcpDescription}`}
+                      className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg border border-fs-border bg-fs-surface hover:border-fs-primary hover:bg-fs-bg/60 hover:shadow-xs transition-all duration-150 cursor-grab active:cursor-grabbing select-none"
+                    >
+                      <div className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md bg-fs-bg border border-fs-border text-fs-text group-hover:text-fs-primary group-hover:border-fs-primary/40 transition-colors">
+                        <IconComponent className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-xs font-medium text-fs-text truncate">
+                          {entry.label}
+                        </span>
+                        <span className="text-[10px] text-fs-text-muted truncate">
+                          {entry.defaultSize.width} × {entry.defaultSize.height}
+                        </span>
+                      </div>
+                      <GripVertical className="w-3 h-3 text-fs-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </div>
+                  );
+                })}
             </div>
-          );
-        })}
+
+            {/* 泳道图元分组 */}
+            <div className="space-y-1.5 pt-1 border-t border-fs-border/60">
+              <div className="px-1 text-[10px] font-semibold text-fs-text-muted tracking-wider uppercase">
+                泳道容器
+              </div>
+              {entries
+                .filter((e) => e.type === 'pool' || e.type === 'lane')
+                .map((entry) => {
+                  const IconComponent = resolveNodeIcon(entry.icon);
+                  return (
+                    <div
+                      key={entry.type}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, entry.type)}
+                      title={`${entry.label} - ${entry.mcpDescription}`}
+                      className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg border border-fs-border bg-fs-surface hover:border-fs-primary hover:bg-fs-bg/60 hover:shadow-xs transition-all duration-150 cursor-grab active:cursor-grabbing select-none"
+                    >
+                      <div className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md bg-fs-bg border border-fs-border text-fs-text group-hover:text-fs-primary group-hover:border-fs-primary/40 transition-colors">
+                        <IconComponent className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-xs font-medium text-fs-text truncate">
+                          {entry.label}
+                        </span>
+                        <span className="text-[10px] text-fs-text-muted truncate">
+                          {entry.defaultSize.width} × {entry.defaultSize.height}
+                        </span>
+                      </div>
+                      <GripVertical className="w-3 h-3 text-fs-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </div>
+                  );
+                })}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 底部拖拽辅助说明 */}
