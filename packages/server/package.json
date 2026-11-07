@@ -8,9 +8,12 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@flowstudio/shared": "workspace:*"
+    "@flowstudio/shared": "workspace:*",
+    "better-sqlite3": "^13.0.3",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "typescript": "^5.7.3"
   }
 }
