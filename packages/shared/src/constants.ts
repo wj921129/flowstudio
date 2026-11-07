@@ -3,7 +3,8 @@
  * @description 包含本地持久化 Key、图表默认配置、样式预设与交互参数
  */
 
-import { FlowNodeType, NodeStyleData, EdgeStyleData } from './types.js';
+import { FlowNodeType, NodeStyleData, EdgeStyleData, FLOW_NODE_TYPES } from './types.js';
+import { NODE_REGISTRY_RECORD } from './node-registry.js';
 
 /**
  * 流程图 LocalStorage 持久化存储键
@@ -39,19 +40,13 @@ export const DEFAULT_EDGE_TYPE = 'smoothstep';
 export const AUTO_SAVE_DEBOUNCE_MS = 500;
 
 /**
- * 各节点类型的默认显示标签
+ * 各节点类型的默认显示标签（直接从 NODE_REGISTRY_RECORD 派生，严格保证单一真实源 SSOT）
  */
-export const DEFAULT_NODE_LABELS: Record<FlowNodeType, string> = {
-  'start-end': '开始/结束',
-  process: '处理步骤',
-  decision: '条件判断',
-  io: '输入/输出',
-  document: '文档说明',
-  subprocess: '子流程',
-  database: '数据存储',
-  comment: '便签注释',
-  group: '新建分组',
-};
+export const DEFAULT_NODE_LABELS: Record<FlowNodeType, string> = Object.freeze(
+  Object.fromEntries(
+    FLOW_NODE_TYPES.map((type) => [type, NODE_REGISTRY_RECORD[type].label])
+  ) as Record<FlowNodeType, string>
+);
 
 /**
  * 节点默认样式数据
@@ -80,9 +75,9 @@ export const CANVAS_ZOOM_LIMITS = {
 } as const;
 
 /**
- * 画布网格吸附步长 [x, y]
+ * 画布网格吸附步长 [x, y]（可变元组类型以直接兼容 React Flow 的 snapGrid 参数）
  */
-export const DEFAULT_SNAP_GRID: readonly [number, number] = [15, 15] as const;
+export const DEFAULT_SNAP_GRID: [number, number] = [15, 15];
 
 /**
  * 默认视口配置
