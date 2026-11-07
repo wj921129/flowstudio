@@ -13,6 +13,8 @@ import { SubprocessNode } from './subprocess-node';
 import { DatabaseNode } from './database-node';
 import { CommentNode } from './comment-node';
 import { GroupNode } from './group-node';
+import { PoolNode } from './pool-node';
+import { LaneNode } from './lane-node';
 
 export const nodeTypes: NodeTypes = {
   'start-end': StartEndNode,
@@ -24,6 +26,8 @@ export const nodeTypes: NodeTypes = {
   database: DatabaseNode,
   comment: CommentNode,
   group: GroupNode,
+  pool: PoolNode,
+  lane: LaneNode,
 };
 
 export {
@@ -36,4 +40,6 @@ export {
   DatabaseNode,
   CommentNode,
   GroupNode,
+  PoolNode,
+  LaneNode,
 };
