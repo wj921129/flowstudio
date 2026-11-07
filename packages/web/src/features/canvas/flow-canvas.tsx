@@ -27,6 +27,7 @@ import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
 import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { useCollaboration } from '../collaboration/collaboration-provider';
+import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 
 
 export const FlowCanvas: React.FC = () => {
@@ -169,6 +170,20 @@ export const FlowCanvas: React.FC = () => {
       }
     },
     [activeTool, connectSourceNodeId, onConnect, setSelectedNodes, setSelectedEdge]
+  );
+
+  /**
+   * 节点拖拽松手事件处理器：执行泳道吸附、坐标转换与容器尺寸自动扩充
+   */
+  const handleNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: any) => {
+      const store = useFlowStore.getState();
+      const { updated, nextNodes } = handleNodeDragNesting(node.id, store.nodes);
+      if (updated) {
+        store.setDiagram(nextNodes, store.edges);
+      }
+    },
+    []
   );
 
   /**
@@ -357,6 +372,7 @@ export const FlowCanvas: React.FC = () => {
         onConnect={onConnect}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
