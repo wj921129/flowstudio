@@ -276,3 +276,66 @@ export interface NodeRegistryEntry {
   /** MCP / AI Agent 交互描述（用于语义化提示与生成） */
   mcpDescription: string;
 }
+
+/**
+ * 图表简要元数据（用于列表、看板、卡片展示）
+ */
+export interface DiagramSummary {
+  /** 图表唯一标识 */
+  id: string;
+  /** 图表标题 */
+  title: string;
+  /** 图表补充描述 */
+  description: string;
+  /** SVG 缩略图字符串 */
+  thumbnail: string;
+  /** 创建时间 (ISO 8601 字符串) */
+  createdAt: string;
+  /** 最后更新时间 (ISO 8601 字符串) */
+  updatedAt: string;
+}
+
+/**
+ * 局域网免登用户身份模型
+ */
+export interface UserIdentity {
+  /** 浏览器客户端唯一 ID */
+  clientId: string;
+  /** 用户昵称 */
+  nickname: string;
+  /** 分配的高对比度专属颜色 (十六进制) */
+  color: string;
+  /** 是否首次访问（用于弹窗提示） */
+  isFirstVisit?: boolean;
+}
+
+/**
+ * Hocuspocus Awareness 广播状态
+ */
+export interface AwarenessUserState {
+  /** 客户端 ID */
+  clientId: string;
+  /** 用户昵称 */
+  nickname: string;
+  /** 分配的颜色 */
+  color: string;
+  /** 鼠标在画布中的世界坐标 (Flow Position)，移出时为 null */
+  cursor: { x: number; y: number } | null;
+  /** 当前选中的节点 ID 集合 */
+  selectedNodeIds: string[];
+}
+
+/**
+ * 协作者专属高对比度配色池
+ */
+export const COLLABORATOR_COLORS: readonly string[] = [
+  '#6366F1',
+  '#EC4899',
+  '#10B981',
+  '#F59E0B',
+  '#8B5CF6',
+  '#06B6D4',
+  '#3B82F6',
+  '#EF4444',
+] as const;
+
