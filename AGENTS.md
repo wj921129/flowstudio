@@ -45,7 +45,7 @@ flowstudio/
 - 遵循现代函数式 React、Tailwind CSS 设计令牌与 TypeScript 严格类型范式。
 
 ### 5. 记忆协同与原子沉淀 (Mem0 Co-Governance)
-- **记忆先行 (Pre-check Mandatory)**：排查、设计、改码前通过 `PreInvocation` Hook 自动检索（或显式调用 `mem0_search`），命中高相关事实核实有效性；
+- **记忆先行 (Pre-check Mandatory)**：排查、设计、改码前优先利用 `PreInvocation` Hook 自动检索注入的记忆；仅当 Hook 未注入、需深挖特定业务细节或写入前防重时才显式调用 `mem0_search`，命中高相关事实核实有效性；
 - **作用域隔离**：本项目在 Mem0 体系中固化唯一标识 `project="flowstudio"`，严禁省略或混入公共池；
 - **权威与截断**：服务端实施 `score > 0.55` 硬物理截断；`[人工权威]` 为老板钦定铁律必须严格遵从，`[系统沉淀]` 作为参考证据；
 - **单句原子化**：沉淀事实单句全中文表达（≤ 100 字），严格落实“四不录入”（严禁虚假推测、临时状态、静态公理、大段原始流水）。
