@@ -5,6 +5,11 @@
 
 import type { XYPosition } from '@flowstudio/shared';
 
+/**
+ * 连线端点所依附的节点锚点方位（与 @xyflow/react 的 Position 枚举字面量一致）
+ */
+export type EdgeAnchorDirection = 'left' | 'right' | 'top' | 'bottom';
+
 export interface PathSegment {
   index: number;
   start: XYPosition;
@@ -57,12 +62,39 @@ export function buildWaypointPath(
 }
 
 /**
- * 从默认起点和终点派生一个初始的正交拐点
+ * 从默认起点和终点派生初始正交拐点
+ *
+ * 派生结果必须与自动走线 (getSmoothStepPath) 的拐点位置一致，否则用户点击"调折点"
+ * 的瞬间线形会跳变；因此按两端锚点方位分三种情形构造：
+ * 同横轴取 midX 双拐点、同纵轴取 midY 双拐点、横竖混合取单拐点。
  */
 export function deriveDefaultOrthogonalWaypoints(
   source: XYPosition,
-  target: XYPosition
+  target: XYPosition,
+  sourcePosition?: EdgeAnchorDirection,
+  targetPosition?: EdgeAnchorDirection
 ): XYPosition[] {
+  const sourceHorizontal = sourcePosition === 'left' || sourcePosition === 'right';
+  const sourceVertical = sourcePosition === 'top' || sourcePosition === 'bottom';
+  const targetHorizontal = targetPosition === 'left' || targetPosition === 'right';
+  const targetVertical = targetPosition === 'top' || targetPosition === 'bottom';
+
+  if (sourceVertical && targetVertical) {
+    const midY = (source.y + target.y) / 2;
+    return [
+      { x: source.x, y: midY },
+      { x: target.x, y: midY },
+    ];
+  }
+
+  if (sourceHorizontal && targetVertical) {
+    return [{ x: target.x, y: source.y }];
+  }
+
+  if (sourceVertical && targetHorizontal) {
+    return [{ x: source.x, y: target.y }];
+  }
+
   const midX = (source.x + target.x) / 2;
   return [
     { x: midX, y: source.y },

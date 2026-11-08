@@ -4,12 +4,17 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Handle, Position } from '@xyflow/react';
-import type { FlowNodeData, HandlePosition } from '@flowstudio/shared';
+import { Handle, Position, NodeResizer, useConnection } from '@xyflow/react';
+import type { FlowNodeData, FlowNodeType, HandlePosition } from '@flowstudio/shared';
 import { getNodeRegistryEntry } from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
 import { useCollaboration } from '../../collaboration/collaboration-provider';
 
+
+/**
+ * 容器类图元：子节点坐标相对容器，缩放必须锚定对角，因此沿用各自组件内的 NodeResizer
+ */
+const CONTAINER_NODE_TYPES: FlowNodeType[] = ['pool', 'lane', 'group'];
 
 /**
  * 锚点方向与 React Flow Position 枚举映射字典
@@ -51,6 +56,16 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
 
   const remoteSelector = collab?.remoteUsers.find((u) => u.selectedNodeIds.includes(id));
 
+  let isConnecting = false;
+  try {
+    const connection = useConnection();
+    isConnecting = Boolean(connection?.inProgress);
+  } catch {
+    // 兼容可能无 ReactFlowProvider 包装的单测上下文
+  }
+  const activeTool = useFlowStore((s) => s.activeTool);
+  const showHandles = isConnecting || activeTool === 'connect' || selected;
+  const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
 
   // 当外部 data.label 变更且非编辑态时同步
   useEffect(() => {
@@ -136,47 +151,60 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         </div>
       )}
 
-      {/* 渲染连接桩 (Handles) */}
-      {customHandles
-        ? customHandles.map((pos) => (
-            <React.Fragment key={pos}>
-              <Handle
-                type="target"
-                position={POSITION_MAP[pos]}
-                id={`${pos}-target`}
-                className="!w-2 !h-2 !bg-[var(--fs-surface)] !border-2 !border-[var(--fs-selection-ring)] opacity-0 group-hover:opacity-100 transition-opacity !pointer-events-auto"
+      {/* 中心锚定缩放手柄：拖任意一边/一角，对侧等量同步扩展 */}
+      {showResize && (
+        <NodeResizer
+          minWidth={40}
+          minHeight={30}
+          onResizeStart={() => useFlowStore.getState().startCenteredResize(id)}
+          onResizeEnd={() => useFlowStore.getState().finishCenteredResize(id)}
+          lineClassName="border-[var(--fs-selection-ring)]/80"
+          handleClassName="h-2 w-2 bg-white border border-[var(--fs-selection-ring)] rounded-sm"
+        />
+      )}
+
+      {/*
+        渲染连接桩 (Handles)：桩体保持 6px 默认尺寸，因为 React Flow 以桩矩形外沿作为连线端点，
+        放大桩体会把端点推出形状边界；24px 感应热区改由 before 伪元素扩出，不影响端点计算
+      */}
+      {(customHandles
+        ? customHandles.map((pos) => ({ id: pos, position: pos }))
+        : definedHandles
+      ).map((handle) => {
+        const pos = POSITION_MAP[handle.position];
+        return (
+          <React.Fragment key={handle.id}>
+            {/* Target 终点连接桩 */}
+            <Handle
+              type="target"
+              position={pos}
+              id={handle.id}
+              isConnectable={true}
+              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-10 ${
+                showHandles ? '!opacity-100' : 'opacity-0'
+              }`}
+            />
+            {/* Source 起点连接桩 (带视觉指示小圆点) */}
+            <Handle
+              type="source"
+              position={pos}
+              id={handle.id}
+              isConnectable={true}
+              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] flex items-center justify-center cursor-crosshair group/handle !pointer-events-auto z-20 transition-all duration-150 ${
+                showHandles ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+            >
+              <span
+                className={`rounded-full transition-all duration-150 pointer-events-none ${
+                  showHandles
+                    ? 'w-3 h-3 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.5)]'
+                    : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] border-2 border-[var(--fs-selection-ring,#2563eb)] group-hover/handle:w-3.5 group-hover/handle:h-3.5 group-hover/handle:bg-[var(--fs-selection-ring,#2563eb)] group-hover/handle:border-white shadow-xs group-hover/handle:shadow-[0_0_0_3px_rgba(37,99,235,0.35)]'
+                }`}
               />
-              <Handle
-                type="source"
-                position={POSITION_MAP[pos]}
-                id={`${pos}-source`}
-                className="!w-2 !h-2 !bg-[var(--fs-surface)] !border-2 !border-[var(--fs-selection-ring)] opacity-0 group-hover:opacity-100 transition-opacity !pointer-events-auto"
-              />
-            </React.Fragment>
-          ))
-        : definedHandles.map((handle) => {
-            const pos = POSITION_MAP[handle.position];
-            return (
-              <React.Fragment key={handle.id}>
-                {(handle.type === 'target' || handle.type === 'both') && (
-                  <Handle
-                    type="target"
-                    position={pos}
-                    id={handle.type === 'both' ? `${handle.id}-target` : handle.id}
-                    className="!w-2 !h-2 !bg-[var(--fs-surface)] !border-2 !border-[var(--fs-selection-ring)] opacity-0 group-hover:opacity-100 transition-opacity !pointer-events-auto"
-                  />
-                )}
-                {(handle.type === 'source' || handle.type === 'both') && (
-                  <Handle
-                    type="source"
-                    position={pos}
-                    id={handle.type === 'both' ? `${handle.id}-source` : handle.id}
-                    className="!w-2 !h-2 !bg-[var(--fs-surface)] !border-2 !border-[var(--fs-selection-ring)] opacity-0 group-hover:opacity-100 transition-opacity !pointer-events-auto"
-                  />
-                )}
-              </React.Fragment>
-            );
-          })}
+            </Handle>
+          </React.Fragment>
+        );
+      })}
 
       {/* 自定义几何轮廓或子元素插槽 */}
       {children}

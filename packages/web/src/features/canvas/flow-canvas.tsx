@@ -1,6 +1,6 @@
 /**
  * @fileoverview 主画布容器组件 (FlowCanvas)
- * @description 组装 React Flow 视口，集成 15px 网格吸附、橡皮筋框选、全局快捷键、正交连线与就地浮动工具条
+ * @description 组装 React Flow 视口，集成自由拖拽与智能对齐参考线、橡皮筋框选、全局快捷键、正交连线与就地浮动工具条
  */
 
 import React, { useEffect, useCallback, useState, useRef } from 'react';
@@ -10,6 +10,7 @@ import {
   SelectionMode,
   ConnectionMode,
   MarkerType,
+  ConnectionLineType,
   useReactFlow,
 } from '@xyflow/react';
 import {
@@ -18,10 +19,11 @@ import {
   getDefaultNodeSize,
   type FlowNode,
 } from '@flowstudio/shared';
-import { snapPositionToGrid, generateUniqueId } from '../../lib/node-utils';
+import { generateUniqueId } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
 import { nodeTypes } from './custom-nodes';
 import { edgeTypes } from './custom-edges';
+import { AlignmentGuides } from './alignment-guides';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
@@ -29,7 +31,13 @@ import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
+import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
+import { useSidebarStore } from '../sidebar/sidebar-store';
+import { getThemePreset } from '../sidebar/styles/theme-presets';
 
+
+/** 协同光标广播最小间隔 (ms)：原生 mousemove 频率远超展示与带宽需要，逐帧直发会引发全树重渲染 */
+const CURSOR_BROADCAST_INTERVAL_MS = 40;
 
 export const FlowCanvas: React.FC = () => {
   const nodes = useFlowStore((s) => s.nodes);
@@ -40,6 +48,7 @@ export const FlowCanvas: React.FC = () => {
   const onConnect = useFlowStore((s) => s.onConnect);
   const addNode = useFlowStore((s) => s.addNode);
   const addNodes = useFlowStore((s) => s.addNodes);
+  const appendSubgraph = useFlowStore((s) => s.appendSubgraph);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
   const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
   const groupSelectedNodes = useFlowStore((s) => s.groupSelectedNodes);
@@ -51,22 +60,55 @@ export const FlowCanvas: React.FC = () => {
 
   const { screenToFlowPosition } = useReactFlow();
   const collab = useCollaboration();
+  const setAlignmentSnapEnabled = useFlowStore((s) => s.setAlignmentSnapEnabled);
+
+  const lastCursorBroadcastRef = useRef(0);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (collab) {
-        const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-        collab.broadcastCursor(flowPos);
-      }
+      if (!collab) return;
+
+      const now = performance.now();
+      if (now - lastCursorBroadcastRef.current < CURSOR_BROADCAST_INTERVAL_MS) return;
+      lastCursorBroadcastRef.current = now;
+
+      collab.broadcastCursor(screenToFlowPosition({ x: e.clientX, y: e.clientY }));
     },
     [collab, screenToFlowPosition]
   );
 
   const handleMouseLeave = useCallback(() => {
-    if (collab) {
-      collab.broadcastCursor(null);
-    }
+    if (!collab) return;
+    lastCursorBroadcastRef.current = 0;
+    collab.broadcastCursor(null);
   }, [collab]);
+
+  /** 视口缩放随 pan/zoom 变化，对齐感应半径需要据此换算 */
+  const handleViewportMove = useCallback(
+    (_event: unknown, viewport: { x: number; y: number; zoom: number }) => {
+      useFlowStore.getState().setViewportZoom(viewport.zoom);
+    },
+    []
+  );
+
+  // 按住 Alt 期间临时关闭智能对齐吸附，回到逐像素自由落点
+  useEffect(() => {
+    const handleAltKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Alt') return;
+      setAlignmentSnapEnabled(e.type !== 'keydown');
+    };
+    const restoreSnap = () => setAlignmentSnapEnabled(true);
+
+    window.addEventListener('keydown', handleAltKey);
+    window.addEventListener('keyup', handleAltKey);
+    window.addEventListener('blur', restoreSnap);
+
+    return () => {
+      window.removeEventListener('keydown', handleAltKey);
+      window.removeEventListener('keyup', handleAltKey);
+      window.removeEventListener('blur', restoreSnap);
+    };
+  }, [setAlignmentSnapEnabled]);
 
 
   // 内存剪贴板（用于 Ctrl+C / Ctrl+V 节点快捷复制粘贴）
@@ -91,12 +133,32 @@ export const FlowCanvas: React.FC = () => {
   }, []);
 
   /**
-   * 画布拖拽放置处理器：将图元落点转换为画布坐标，居中并网格吸附后生成节点并自动选中
+   * 画布拖拽放置处理器：将图元落点转换为画布坐标并按光标居中生成节点，随后自动选中
    */
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
+
+      // 1. 优先识别业务模板拖拽放置 (Drag Template)
+      const templateId = e.dataTransfer.getData('application/flowstudio-template-id');
+      if (templateId) {
+        const template = TEMPLATES_REGISTRY.find((t) => t.id === templateId);
+        if (template) {
+          const flowPosition = screenToFlowPosition({
+            x: e.clientX,
+            y: e.clientY,
+          });
+          const activeThemeId = useSidebarStore.getState().activeThemeId;
+          const currentTheme = getThemePreset(activeThemeId);
+          const instance = instantiateTemplate(template, currentTheme, flowPosition);
+
+          appendSubgraph(instance.nodes, instance.edges);
+          setSelectedNodes(instance.nodes.map((n) => n.id));
+          setSelectedEdge(null);
+          return;
+        }
+      }
 
       const rawType = e.dataTransfer.getData('application/flowstudio-node-type');
       if (!isFlowNodeType(rawType)) {
@@ -109,15 +171,12 @@ export const FlowCanvas: React.FC = () => {
         y: e.clientY,
       });
 
-      // 根据节点预设尺寸进行中心对称偏移
+      // 根据节点预设尺寸进行中心对称偏移，落点不做栅格约束
       const defaultSize = getDefaultNodeSize(rawType);
       const centeredPosition = {
         x: flowPosition.x - defaultSize.width / 2,
         y: flowPosition.y - defaultSize.height / 2,
       };
-
-      // 吸附至 15px 栅格网格步长
-      const snappedPosition = snapPositionToGrid(centeredPosition, DEFAULT_SNAP_GRID);
 
       if (rawType === 'pool') {
         // 拖入泳道池时自动附带生成两条初始子泳道
@@ -128,7 +187,7 @@ export const FlowCanvas: React.FC = () => {
         const poolNode: FlowNode = {
           id: poolId,
           type: 'pool',
-          position: snappedPosition,
+          position: centeredPosition,
           width: 800,
           height: 440,
           data: {
@@ -169,13 +228,13 @@ export const FlowCanvas: React.FC = () => {
       }
 
       // 添加常规节点至全局 Store 并自动设为唯一激活选中节点
-      const newNode = addNode(rawType, snappedPosition);
+      const newNode = addNode(rawType, centeredPosition);
       if (newNode?.id) {
         setSelectedNodes([newNode.id]);
         setSelectedEdge(null);
       }
     },
-    [screenToFlowPosition, addNode, addNodes, setSelectedNodes, setSelectedEdge]
+    [screenToFlowPosition, addNode, addNodes, appendSubgraph, setSelectedNodes, setSelectedEdge]
   );
 
   /**
@@ -189,6 +248,18 @@ export const FlowCanvas: React.FC = () => {
     },
     [setSelectedNodes, setSelectedEdge]
   );
+
+  const handleConnect = useCallback(
+    (connection: any) => {
+      setConnectSourceNodeId(null);
+      onConnect(connection);
+    },
+    [onConnect]
+  );
+
+  const handleConnectStart = useCallback(() => {
+    setConnectSourceNodeId(null);
+  }, []);
 
   /**
    * 节点点击事件处理器：
@@ -411,7 +482,7 @@ export const FlowCanvas: React.FC = () => {
       onMouseLeave={handleMouseLeave}
     >
       <CollaborativeCursors />
-      <AiBatchBanner diagramId={typeof window !== 'undefined' ? window.location.hash.slice(1) : undefined} />
+      <AiBatchBanner diagramId={collab?.diagramId} />
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -420,10 +491,12 @@ export const FlowCanvas: React.FC = () => {
         deleteKeyCode={null}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        onConnect={handleConnect}
+        onConnectStart={handleConnectStart}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
+        onMove={handleViewportMove}
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
@@ -431,10 +504,20 @@ export const FlowCanvas: React.FC = () => {
         panOnScroll={activeTool === 'pan'}
         nodesDraggable={activeTool === 'select'}
         elementsSelectable={activeTool === 'select'}
-        snapToGrid={true}
-        snapGrid={DEFAULT_SNAP_GRID}
+        nodesConnectable={activeTool !== 'pan'}
+        connectionRadius={35}
         selectionMode={SelectionMode.Partial}
+        selectionOnDrag={activeTool === 'select'}
         connectionMode={ConnectionMode.Loose}
+        connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineStyle={{
+          stroke: 'var(--fs-selection-ring, #2563eb)',
+          strokeWidth: 2,
+          strokeDasharray: '4,4',
+        }}
+        isValidConnection={(connection) =>
+          Boolean(connection.source && connection.target && connection.source !== connection.target)
+        }
         defaultEdgeOptions={{
           type: 'orthogonal',
           markerEnd: { type: MarkerType.ArrowClosed },
@@ -450,6 +533,9 @@ export const FlowCanvas: React.FC = () => {
           size={1}
           color="var(--fs-canvas-dot)"
         />
+
+        {/* 拖拽智能对齐参考线 */}
+        <AlignmentGuides />
 
         {/* 多选与组合悬浮操作条 */}
         <ContextualActionBar />

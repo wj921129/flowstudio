@@ -8,6 +8,29 @@ export interface UseAwarenessOptions {
   selectedNodeIds: string[];
 }
 
+/**
+ * 逐字段比对远端用户状态：本地 setLocalStateField 同样会触发 awareness change，
+ * 若无条件写入新数组，CollaborationContext 的全部消费者都会随之重渲染
+ */
+function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): boolean {
+  if (a.length !== b.length) return false;
+
+  // 远端 awareness 载荷来自其他客户端，字段可能缺失，比对时统一按空集合处理
+  const joinIds = (ids: string[] | undefined) => (ids ?? []).join(',');
+
+  return a.every((item, index) => {
+    const other = b[index];
+    return (
+      item.clientId === other.clientId &&
+      item.nickname === other.nickname &&
+      item.color === other.color &&
+      item.cursor?.x === other.cursor?.x &&
+      item.cursor?.y === other.cursor?.y &&
+      joinIds(item.selectedNodeIds) === joinIds(other.selectedNodeIds)
+    );
+  });
+}
+
 export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwarenessOptions) {
   const [remoteUsers, setRemoteUsers] = useState<AwarenessUserState[]>([]);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
@@ -55,7 +78,7 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
         }
       });
 
-      setRemoteUsers(remotes);
+      setRemoteUsers((prev) => (isSameRemoteUsers(prev, remotes) ? prev : remotes));
     };
 
     provider.awareness.on('change', handleAwarenessChange);

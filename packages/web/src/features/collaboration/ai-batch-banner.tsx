@@ -3,7 +3,7 @@
  * @description 悬浮于画布右上角，呈现最近的 AI 协作者批次修改摘要，提供一键撤回操作
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Bot, RotateCcw, X } from 'lucide-react';
 
 export interface AiBatchBannerProps {
@@ -18,16 +18,29 @@ interface AiBatchInfo {
   createdAt: string;
 }
 
+/**
+ * 清洗并规范化 diagramId（防御性剥离 hash 前缀、斜杠与 query 参数，杜绝非法路径注入）
+ */
+export function sanitizeDiagramId(diagramId?: string): string {
+  if (!diagramId) return '';
+  const trimmed = diagramId.trim();
+  const withoutPrefix = trimmed.replace(/^#?\/*diagram\//, '').replace(/^\/+/, '').split('?')[0];
+  return withoutPrefix.includes('/') ? '' : withoutPrefix;
+}
+
 export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast }) => {
   const [latestBatch, setLatestBatch] = useState<AiBatchInfo | null>(null);
   const [dismissedBatchId, setDismissedBatchId] = useState<string | null>(null);
   const [isReverting, setIsReverting] = useState(false);
 
+  // 清洗并规范化 diagramId
+  const cleanDiagramId = useMemo(() => sanitizeDiagramId(diagramId), [diagramId]);
+
   // 定期轮询检查当前图最新的 AI 批次
   const checkBatches = useCallback(async () => {
-    if (!diagramId) return;
+    if (!cleanDiagramId) return;
     try {
-      const res = await fetch(`/api/diagrams/${diagramId}/ai-batches`);
+      const res = await fetch(`/api/diagrams/${cleanDiagramId}/ai-batches`);
       if (!res.ok) return;
       const batches = (await res.json()) as AiBatchInfo[];
       if (batches.length > 0) {
@@ -41,7 +54,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
     } catch {
       // 忽略轮询静默异常
     }
-  }, [diagramId, dismissedBatchId]);
+  }, [cleanDiagramId, dismissedBatchId]);
 
   useEffect(() => {
     checkBatches();
@@ -50,10 +63,10 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   }, [checkBatches]);
 
   const handleRevert = async () => {
-    if (!diagramId || !latestBatch || isReverting) return;
+    if (!cleanDiagramId || !latestBatch || isReverting) return;
     try {
       setIsReverting(true);
-      const res = await fetch(`/api/diagrams/${diagramId}/ai-batches/${latestBatch.batchId}/revert`, {
+      const res = await fetch(`/api/diagrams/${cleanDiagramId}/ai-batches/${latestBatch.batchId}/revert`, {
         method: 'POST',
       });
       const data = await res.json();

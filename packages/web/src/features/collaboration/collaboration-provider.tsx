@@ -9,8 +9,10 @@ import { getOrCreateUserIdentity, saveUserNickname } from './user-identity.js';
 import { useAwareness } from './use-awareness.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
+import { useSidebarStore } from '../sidebar/sidebar-store.js';
 
 export interface CollaborationContextValue {
+  diagramId: string;
   provider: HocuspocusProvider | null;
   doc: Y.Doc;
   bridge: YjsDiagramBridge;
@@ -54,8 +56,14 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   // 绑定至 zustand flow-store
   useEffect(() => {
     const unbind = useFlowStore.getState().bindCollaboration(bridge, undoManager);
+    const unbindTheme = bridge.subscribe((state) => {
+      if (state.themeId) {
+        useSidebarStore.getState().setActiveThemeId(state.themeId);
+      }
+    });
     return () => {
       unbind();
+      unbindTheme();
     };
   }, [bridge, undoManager]);
 
@@ -117,6 +125,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
 
   const contextValue = useMemo<CollaborationContextValue>(
     () => ({
+      diagramId,
       provider,
       doc,
       bridge,
@@ -129,6 +138,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       broadcastCursor,
     }),
     [
+      diagramId,
       provider,
       doc,
       bridge,

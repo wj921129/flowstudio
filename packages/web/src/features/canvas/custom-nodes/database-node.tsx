@@ -16,8 +16,12 @@ export const DatabaseNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => 
   return (
     <BaseNodeWrapper {...props} className="!bg-transparent !border-transparent">
       <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100">
+        {/*
+          上下弧线各占 12 单位，使视觉边界正好落在 viewBox 的 1~99：
+          几何内缩会让底部连接桩与柱底之间出现可见间隙，连线箭头随之悬空
+        */}
         <path
-          d="M 1,15 L 1,85 C 1,95 99,95 99,85 L 99,15 Z"
+          d="M 1,13 L 1,87 A 49,12 0 0 0 99,87 L 99,13 Z"
           fill={fillColor}
           stroke={strokeColor}
           strokeWidth={strokeWidth}
@@ -26,9 +30,9 @@ export const DatabaseNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => 
         />
         <ellipse
           cx="50"
-          cy="15"
+          cy="13"
           rx="49"
-          ry="14"
+          ry="12"
           fill={fillColor}
           stroke={strokeColor}
           strokeWidth={strokeWidth}

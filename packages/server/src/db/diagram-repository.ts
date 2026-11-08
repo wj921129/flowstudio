@@ -235,6 +235,16 @@ export class DiagramRepository {
   }
 
   /**
+   * 仅替换二进制状态，不触碰 updated_at。
+   * 供加载期压缩使用：维护动作不应伪装成用户的协作编辑记录。
+   */
+  replaceYDocState(id: string, update: Uint8Array): void {
+    this.db
+      .prepare(`UPDATE diagrams SET ydoc_state = ? WHERE id = ?`)
+      .run(Buffer.from(update), id);
+  }
+
+  /**
    * 为指定图表创建历史版本快照
    */
   createSnapshot(

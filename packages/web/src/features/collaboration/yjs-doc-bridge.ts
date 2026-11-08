@@ -1,9 +1,40 @@
 import * as Y from 'yjs';
 import type { FlowNode, FlowEdge } from '@flowstudio/shared';
 import type { DiagramBridgeState } from './types.js';
+import { DEFAULT_THEME_ID, type ThemePreset } from '../sidebar/styles/theme-presets';
+import { resolveNodeStyle } from '../sidebar/styles/style-resolver';
 
 export interface YjsDiagramBridgeOptions {
   localClientId: string;
+}
+
+/**
+ * 递归排序对象键名，使字段比较不受属性写入顺序影响
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const ordered: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      ordered[key] = canonicalize(source[key]);
+    }
+    return ordered;
+  }
+  return value;
+}
+
+function sameValue(current: unknown, next: unknown): boolean {
+  if (current === next) return true;
+  if (current === null || next === null) return false;
+  if (typeof current !== 'object' || typeof next !== 'object') return false;
+  return JSON.stringify(canonicalize(current)) === JSON.stringify(canonicalize(next));
+}
+
+function clonePlain(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value));
 }
 
 export class YjsDiagramBridge {
@@ -44,31 +75,50 @@ export class YjsDiagramBridge {
     });
   }
 
+  getThemeId(): string {
+    const themeId = this.metaMap.get('themeId');
+    return typeof themeId === 'string' ? themeId : DEFAULT_THEME_ID;
+  }
+
+  setThemeId(themeId: string): void {
+    this.transact(() => {
+      this.metaMap.set('themeId', themeId);
+    });
+  }
+
+  applyTheme(theme: ThemePreset, preserveManual: boolean = true): void {
+    applyThemeToYDoc(this.doc, theme, preserveManual, this.localClientId);
+  }
+
+  getState(): DiagramBridgeState {
+    return this.toReactFlowState();
+  }
+
   transact(fn: () => void, origin: string = this.localClientId): void {
     this.doc.transact(fn, origin);
   }
 
   /**
-   * 全量替换或重置图表（原子事务）
+   * 对齐目标图表状态（原子事务）
+   * 按 key 做增量 diff：只删除消失的条目、只写入真正变化的字段，
+   * 避免每次提交都清空重建而累积数百万 CRDT 历史条目。
    */
   setDiagram(nodes: FlowNode[], edges: FlowEdge[]): void {
     this.transact(() => {
-      // 清空现有
-      this.nodesMap.clear();
-      this.edgesMap.clear();
-
-      // 写入节点
+      const nodeIdSet = new Set(nodes.map((node) => node.id));
+      for (const id of Array.from(this.nodesMap.keys())) {
+        if (!nodeIdSet.has(id)) this.nodesMap.delete(id);
+      }
       for (const node of nodes) {
-        const itemMap = new Y.Map<unknown>();
-        this.writeNodeToYMap(itemMap, node);
-        this.nodesMap.set(node.id, itemMap);
+        this.upsertNode(node);
       }
 
-      // 写入连线
+      const edgeIdSet = new Set(edges.map((edge) => edge.id));
+      for (const id of Array.from(this.edgesMap.keys())) {
+        if (!edgeIdSet.has(id)) this.edgesMap.delete(id);
+      }
       for (const edge of edges) {
-        const edgeItem = new Y.Map<unknown>();
-        this.writeEdgeToYMap(edgeItem, edge);
-        this.edgesMap.set(edge.id, edgeItem);
+        this.upsertEdge(edge);
       }
     });
   }
@@ -79,12 +129,7 @@ export class YjsDiagramBridge {
   putNodes(nodes: FlowNode[]): void {
     this.transact(() => {
       for (const node of nodes) {
-        let itemMap = this.nodesMap.get(node.id);
-        if (!itemMap) {
-          itemMap = new Y.Map<unknown>();
-          this.nodesMap.set(node.id, itemMap);
-        }
-        this.writeNodeToYMap(itemMap, node);
+        this.upsertNode(node);
       }
     });
   }
@@ -97,18 +142,18 @@ export class YjsDiagramBridge {
       const itemMap = this.nodesMap.get(id);
       if (!itemMap) return;
 
-      if (patch.position !== undefined) itemMap.set('position', patch.position);
-      if (patch.type !== undefined) itemMap.set('type', patch.type);
-      if (patch.parentId !== undefined) itemMap.set('parentId', patch.parentId);
-      if (patch.extent !== undefined) itemMap.set('extent', patch.extent);
-      if (patch.width !== undefined) itemMap.set('width', patch.width);
-      if (patch.height !== undefined) itemMap.set('height', patch.height);
-      if (patch.zIndex !== undefined) itemMap.set('zIndex', patch.zIndex);
-      if (patch.style !== undefined) itemMap.set('style', patch.style);
-      if (patch.className !== undefined) itemMap.set('className', patch.className);
+      if (patch.position !== undefined) this.setField(itemMap, 'position', { x: patch.position.x, y: patch.position.y });
+      if (patch.type !== undefined) this.setField(itemMap, 'type', patch.type);
+      if (patch.parentId !== undefined) this.setField(itemMap, 'parentId', patch.parentId);
+      if (patch.extent !== undefined) this.setField(itemMap, 'extent', patch.extent);
+      if (patch.width !== undefined) this.setField(itemMap, 'width', patch.width);
+      if (patch.height !== undefined) this.setField(itemMap, 'height', patch.height);
+      if (patch.zIndex !== undefined) this.setField(itemMap, 'zIndex', patch.zIndex);
+      if (patch.style !== undefined) this.setField(itemMap, 'style', patch.style);
+      if (patch.className !== undefined) this.setField(itemMap, 'className', patch.className);
       if (patch.data !== undefined) {
         const existingData = (itemMap.get('data') as Record<string, unknown>) || {};
-        itemMap.set('data', { ...existingData, ...patch.data });
+        this.setJsonField(itemMap, 'data', { ...existingData, ...patch.data });
       }
     });
   }
@@ -158,12 +203,7 @@ export class YjsDiagramBridge {
   putEdges(edges: FlowEdge[]): void {
     this.transact(() => {
       for (const edge of edges) {
-        let edgeItem = this.edgesMap.get(edge.id);
-        if (!edgeItem) {
-          edgeItem = new Y.Map<unknown>();
-          this.edgesMap.set(edge.id, edgeItem);
-        }
-        this.writeEdgeToYMap(edgeItem, edge);
+        this.upsertEdge(edge);
       }
     });
   }
@@ -176,17 +216,17 @@ export class YjsDiagramBridge {
       const edgeItem = this.edgesMap.get(id);
       if (!edgeItem) return;
 
-      if (patch.source !== undefined) edgeItem.set('source', patch.source);
-      if (patch.target !== undefined) edgeItem.set('target', patch.target);
-      if (patch.sourceHandle !== undefined) edgeItem.set('sourceHandle', patch.sourceHandle);
-      if (patch.targetHandle !== undefined) edgeItem.set('targetHandle', patch.targetHandle);
-      if (patch.type !== undefined) edgeItem.set('type', patch.type);
-      if (patch.label !== undefined) edgeItem.set('label', patch.label);
-      if (patch.animated !== undefined) edgeItem.set('animated', patch.animated);
-      if (patch.style !== undefined) edgeItem.set('style', patch.style);
+      if (patch.source !== undefined) this.setField(edgeItem, 'source', patch.source);
+      if (patch.target !== undefined) this.setField(edgeItem, 'target', patch.target);
+      if (patch.sourceHandle !== undefined) this.setField(edgeItem, 'sourceHandle', patch.sourceHandle);
+      if (patch.targetHandle !== undefined) this.setField(edgeItem, 'targetHandle', patch.targetHandle);
+      if (patch.type !== undefined) this.setField(edgeItem, 'type', patch.type);
+      if (patch.label !== undefined) this.setField(edgeItem, 'label', patch.label);
+      if (patch.animated !== undefined) this.setField(edgeItem, 'animated', patch.animated);
+      if (patch.style !== undefined) this.setField(edgeItem, 'style', patch.style);
       if (patch.data !== undefined) {
         const existingData = (edgeItem.get('data') as Record<string, unknown>) || {};
-        edgeItem.set('data', { ...existingData, ...patch.data });
+        this.setJsonField(edgeItem, 'data', { ...existingData, ...patch.data });
       }
     });
   }
@@ -233,6 +273,7 @@ export class YjsDiagramBridge {
       nodes: sortedNodes,
       edges: validEdges,
       title: this.getTitle(),
+      themeId: this.getThemeId(),
     };
   }
 
@@ -275,32 +316,57 @@ export class YjsDiagramBridge {
     });
   }
 
+  private upsertNode(node: FlowNode): void {
+    let itemMap = this.nodesMap.get(node.id);
+    if (!itemMap) {
+      itemMap = new Y.Map<unknown>();
+      this.nodesMap.set(node.id, itemMap);
+    }
+    this.writeNodeToYMap(itemMap, node);
+  }
+
+  private upsertEdge(edge: FlowEdge): void {
+    let edgeItem = this.edgesMap.get(edge.id);
+    if (!edgeItem) {
+      edgeItem = new Y.Map<unknown>();
+      this.edgesMap.set(edge.id, edgeItem);
+    }
+    this.writeEdgeToYMap(edgeItem, edge);
+  }
+
+  /**
+   * 字段值未变化时跳过写入，undefined 视为删除
+   */
+  private setField(item: Y.Map<unknown>, key: string, value: unknown): void {
+    if (value === undefined) {
+      if (item.has(key)) item.delete(key);
+      return;
+    }
+    if (sameValue(item.get(key), value)) return;
+    item.set(key, value);
+  }
+
+  private setJsonField(item: Y.Map<unknown>, key: string, value: unknown): void {
+    if (value === undefined) {
+      if (item.has(key)) item.delete(key);
+      return;
+    }
+    if (sameValue(item.get(key), value)) return;
+    item.set(key, clonePlain(value));
+  }
+
   private writeNodeToYMap(item: Y.Map<unknown>, node: FlowNode): void {
-    item.set('id', node.id);
-    item.set('type', node.type);
-    item.set('position', { x: node.position.x, y: node.position.y });
-    item.set('data', JSON.parse(JSON.stringify(node.data)));
-
-    if (node.parentId !== undefined) item.set('parentId', node.parentId);
-    else item.delete('parentId');
-
-    if (node.extent !== undefined) item.set('extent', node.extent);
-    else item.delete('extent');
-
-    if (node.width !== undefined) item.set('width', node.width);
-    else item.delete('width');
-
-    if (node.height !== undefined) item.set('height', node.height);
-    else item.delete('height');
-
-    if (node.zIndex !== undefined) item.set('zIndex', node.zIndex);
-    else item.delete('zIndex');
-
-    if (node.style !== undefined) item.set('style', node.style);
-    else item.delete('style');
-
-    if (node.className !== undefined) item.set('className', node.className);
-    else item.delete('className');
+    this.setField(item, 'id', node.id);
+    this.setField(item, 'type', node.type);
+    this.setField(item, 'position', { x: node.position.x, y: node.position.y });
+    this.setJsonField(item, 'data', node.data);
+    this.setField(item, 'parentId', node.parentId);
+    this.setField(item, 'extent', node.extent);
+    this.setField(item, 'width', node.width);
+    this.setField(item, 'height', node.height);
+    this.setField(item, 'zIndex', node.zIndex);
+    this.setField(item, 'style', node.style);
+    this.setField(item, 'className', node.className);
   }
 
   private readNodeFromYMap(item: Y.Map<unknown>, fallbackId: string): FlowNode | null {
@@ -343,30 +409,16 @@ export class YjsDiagramBridge {
   }
 
   private writeEdgeToYMap(item: Y.Map<unknown>, edge: FlowEdge): void {
-    item.set('id', edge.id);
-    item.set('source', edge.source);
-    item.set('target', edge.target);
-
-    if (edge.sourceHandle !== undefined) item.set('sourceHandle', edge.sourceHandle);
-    else item.delete('sourceHandle');
-
-    if (edge.targetHandle !== undefined) item.set('targetHandle', edge.targetHandle);
-    else item.delete('targetHandle');
-
-    if (edge.type !== undefined) item.set('type', edge.type);
-    else item.delete('type');
-
-    if (edge.label !== undefined) item.set('label', edge.label);
-    else item.delete('label');
-
-    if (edge.animated !== undefined) item.set('animated', edge.animated);
-    else item.delete('animated');
-
-    if (edge.style !== undefined) item.set('style', edge.style);
-    else item.delete('style');
-
-    if (edge.data !== undefined) item.set('data', JSON.parse(JSON.stringify(edge.data)));
-    else item.delete('data');
+    this.setField(item, 'id', edge.id);
+    this.setField(item, 'source', edge.source);
+    this.setField(item, 'target', edge.target);
+    this.setField(item, 'sourceHandle', edge.sourceHandle);
+    this.setField(item, 'targetHandle', edge.targetHandle);
+    this.setField(item, 'type', edge.type);
+    this.setField(item, 'label', edge.label);
+    this.setField(item, 'animated', edge.animated);
+    this.setField(item, 'style', edge.style);
+    this.setJsonField(item, 'data', edge.data);
   }
 
   private readEdgeFromYMap(item: Y.Map<unknown>, fallbackId: string): FlowEdge | null {
@@ -422,3 +474,57 @@ export class YjsDiagramBridge {
     return [...parents, ...children];
   }
 }
+
+/**
+ * 在单一原子事务中将主题风格应用至 Y.Doc，支持保持手动自定义样式
+ */
+export function applyThemeToYDoc(
+  doc: Y.Doc,
+  theme: ThemePreset,
+  preserveManual: boolean = true,
+  origin?: string
+): void {
+  const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
+  const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+  const metaMap = doc.getMap<unknown>('meta');
+
+  doc.transact(() => {
+    metaMap.set('themeId', theme.id);
+
+    nodesMap.forEach((itemMap) => {
+      const type = itemMap.get('type') as string;
+      if (!type || type === 'group' || type === 'lane' || type === 'comment') return;
+
+      const rawData = itemMap.get('data') as Record<string, unknown> | undefined;
+      const data = rawData ? JSON.parse(JSON.stringify(rawData)) : { type, label: '' };
+      const style = (data.style as Record<string, unknown>) || {};
+
+      if (preserveManual && style.isManualCustom === true) {
+        return;
+      }
+
+      const computed = resolveNodeStyle(type, theme);
+      const nextStyle = {
+        ...style,
+        ...computed,
+        isManualCustom: false,
+      };
+
+      data.style = nextStyle;
+      if (type === 'pool' && computed.headerColor) {
+        data.headerColor = computed.headerColor;
+      }
+
+      itemMap.set('data', data);
+    });
+
+    edgesMap.forEach((edgeItem) => {
+      const currentStyle = (edgeItem.get('style') as Record<string, unknown>) || {};
+      edgeItem.set('style', {
+        ...currentStyle,
+        stroke: theme.tokens.edgeStroke,
+      });
+    });
+  }, origin);
+}
+

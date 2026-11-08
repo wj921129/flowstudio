@@ -6,5 +6,6 @@ dist
 *.tsbuildinfo
 .codegraph/
 *.sqlite*
+.superpowers/
 
 

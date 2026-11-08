@@ -44,6 +44,30 @@ describe('waypoint-path-utils: Orthogonal Edge Waypoints and Routing', () => {
     expect(pathRes.path).toBe('M 100 50 L 200 50 L 200 250 L 300 250');
   });
 
+  it('derives bend at mid Y for a vertically routed edge', () => {
+    const source = { x: 100, y: 50 };
+    const target = { x: 300, y: 250 };
+
+    const derived = deriveDefaultOrthogonalWaypoints(source, target, 'bottom', 'top');
+
+    expect(derived).toEqual([
+      { x: 100, y: 150 },
+      { x: 300, y: 150 },
+    ]);
+  });
+
+  it('derives a single corner when the two anchors lie on different axes', () => {
+    const source = { x: 100, y: 50 };
+    const target = { x: 300, y: 250 };
+
+    expect(deriveDefaultOrthogonalWaypoints(source, target, 'right', 'top')).toEqual([
+      { x: 300, y: 50 },
+    ]);
+    expect(deriveDefaultOrthogonalWaypoints(source, target, 'bottom', 'left')).toEqual([
+      { x: 100, y: 250 },
+    ]);
+  });
+
   it('handles empty waypoints list gracefully', () => {
     const source = { x: 0, y: 0 };
     const target = { x: 100, y: 100 };

@@ -105,9 +105,19 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     await app.register(fastifyStatic, {
       root: options.webDistPath,
       prefix: '/',
+      setHeaders: (res, pathName) => {
+        if (pathName.endsWith('.html')) {
+          res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.header('Pragma', 'no-cache');
+          res.header('Expires', '0');
+        }
+      },
     });
 
     app.setNotFoundHandler((_req, reply) => {
+      reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+      reply.header('Pragma', 'no-cache');
+      reply.header('Expires', '0');
       reply.sendFile('index.html');
     });
   }

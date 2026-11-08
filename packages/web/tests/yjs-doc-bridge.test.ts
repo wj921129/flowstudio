@@ -89,4 +89,40 @@ describe('YjsDiagramBridge', () => {
     expect(stateAfterRemove.nodes.map((n) => n.id)).toEqual(['n2']);
     expect(stateAfterRemove.edges.length).toBe(0);
   });
+
+  it('does not accumulate CRDT history when re-committing an unchanged graph', () => {
+    const node: FlowNode = {
+      id: 'n1',
+      type: 'process',
+      position: { x: 10, y: 10 },
+      data: { label: '处理', type: 'process' },
+    };
+    const edge: FlowEdge = { id: 'e1', source: 'n1', target: 'n1', data: { label: '', type: 'process' } };
+
+    bridgeA.setDiagram([node], [edge]);
+    const baseline = Y.encodeStateAsUpdate(docA).byteLength;
+
+    // 画布每次变更都全量提交，重复提交同一状态不应产生新的 CRDT 条目
+    for (let round = 0; round < 50; round++) {
+      bridgeA.setDiagram([node], [edge]);
+    }
+    expect(Y.encodeStateAsUpdate(docA).byteLength).toBe(baseline);
+
+    // 真实改动仍然同步
+    bridgeA.setDiagram([{ ...node, position: { x: 999, y: 999 } }], [edge]);
+    expect(bridgeB.toReactFlowState().nodes[0]?.position.x).toBe(999);
+  });
+
+  it('drops nodes and edges absent from the committed graph', () => {
+    const nodeA: FlowNode = { id: 'a', type: 'process', position: { x: 0, y: 0 }, data: { label: 'A', type: 'process' } };
+    const nodeB: FlowNode = { id: 'b', type: 'decision', position: { x: 1, y: 1 }, data: { label: 'B', type: 'decision' } };
+    const edge: FlowEdge = { id: 'e-ab', source: 'a', target: 'b', data: { label: '', type: 'process' } };
+
+    bridgeA.setDiagram([nodeA, nodeB], [edge]);
+    bridgeA.setDiagram([nodeA], []);
+
+    const state = bridgeB.toReactFlowState();
+    expect(state.nodes.map((n) => n.id)).toEqual(['a']);
+    expect(state.edges).toEqual([]);
+  });
 });

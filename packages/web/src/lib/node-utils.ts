@@ -1,13 +1,10 @@
 /**
  * @fileoverview 节点与图元工具函数
- * @description 提供节点工厂函数、唯一 ID 生成、网格对齐等通用逻辑
+ * @description 提供节点工厂函数与唯一 ID 生成等通用逻辑
  */
 
 import type { FlowNode, FlowNodeType } from '@flowstudio/shared';
-import {
-  DEFAULT_SNAP_GRID,
-  getNodeRegistryEntry,
-} from '@flowstudio/shared';
+import { getNodeRegistryEntry } from '@flowstudio/shared';
 
 /**
  * 生成全局唯一 ID
@@ -66,21 +63,5 @@ export function createNodeFromType(
       width,
       height,
     },
-  };
-}
-
-/**
- * 将坐标对齐至指定网格步长
- * @param position 原始坐标
- * @param snapGrid 网格步长 [gridX, gridY]
- */
-export function snapPositionToGrid(
-  position: { x: number; y: number },
-  snapGrid: [number, number] = DEFAULT_SNAP_GRID
-): { x: number; y: number } {
-  const [gridX, gridY] = snapGrid;
-  return {
-    x: Math.round(position.x / gridX) * gridX,
-    y: Math.round(position.y / gridY) * gridY,
   };
 }

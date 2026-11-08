@@ -16,17 +16,18 @@ if %errorlevel% neq 0 (
   exit /b 1
 )
 
-if not exist "packages\server\dist\index.js" set NEED_BUILD=1
-if not exist "packages\web\dist\index.html" set NEED_BUILD=1
+echo Building workspace packages to ensure latest code is deployed...
+call pnpm -r build
+if %errorlevel% neq 0 (
+  echo [Error] Monorepo build failed.
+  pause
+  exit /b 1
+)
 
-if defined NEED_BUILD (
-  echo First-time launch: building workspace packages, please wait...
-  call pnpm -r build
-  if %errorlevel% neq 0 (
-    echo [Error] Monorepo build failed.
-    pause
-    exit /b 1
-  )
+echo Checking port 3000 availability...
+netstat -ano | findstr :3000 >nul 2>nul
+if %errorlevel% equ 0 (
+  echo [Notice] Port 3000 is currently occupied. The server will attempt binding or report conflicts.
 )
 
 start "" /b cmd /c "ping 127.0.0.1 -n 3 >nul && start http://127.0.0.1:3000"

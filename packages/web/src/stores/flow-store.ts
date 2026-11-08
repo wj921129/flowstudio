@@ -19,6 +19,7 @@ import type {
   FlowNodeData,
   FlowEdgeData,
   FlowNodeType,
+  XYPosition,
 } from '@flowstudio/shared';
 import { DEFAULT_EDGE_TYPE } from '@flowstudio/shared';
 import { createNodeFromType, generateEdgeId, generateUniqueId } from '../lib/node-utils';
@@ -28,6 +29,11 @@ import {
   toWorldPosition,
   getNodeDimensions,
 } from '../features/canvas/utils/group-calculator';
+import {
+  computeDragAlignment,
+  resolveSnapThreshold,
+  type AlignGuide,
+} from '../features/canvas/utils/alignment-snap';
 import type { YjsDiagramBridge } from '../features/collaboration/yjs-doc-bridge';
 import type { CollaborativeUndoManager } from '../features/collaboration/undo-manager';
 
@@ -73,6 +79,12 @@ interface FlowStoreInternalState extends FlowStoreState {
   historyPast: DiagramSnapshot[];
   historyFuture: DiagramSnapshot[];
   isInteracting: boolean;
+  /** 拖拽中命中的智能对齐参考线 (仅本地瞬态，不写入协同文档) */
+  alignmentGuides: AlignGuide[];
+  /** 当前视口缩放比例，用于换算对齐感应半径 */
+  viewportZoom: number;
+  /** 智能对齐吸附开关 (按住 Alt 临时关闭) */
+  alignmentSnapEnabled: boolean;
 }
 
 /**
@@ -95,6 +107,10 @@ export interface FlowStoreActions {
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => void;
   /** 更新指定节点的宽高尺寸 (px) */
   updateNodeDimensions: (id: string, width: number, height: number) => void;
+  /** 开始中心锚定缩放：记录当前中心，后续尺寸变化时两侧等量扩展 */
+  startCenteredResize: (id: string) => void;
+  /** 结束中心锚定缩放并落库 */
+  finishCenteredResize: (id: string) => void;
   /** 批量更新多个节点的业务数据 */
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => void;
   /** 更新指定连线的业务数据 */
@@ -105,6 +121,10 @@ export interface FlowStoreActions {
   setSelectedEdge: (id: string | null) => void;
   /** 切换激活工具 */
   setActiveTool: (tool: ActiveTool) => void;
+  /** 记录视口缩放比例，供拖拽对齐感应半径换算 */
+  setViewportZoom: (zoom: number) => void;
+  /** 临时启停拖拽智能对齐吸附 */
+  setAlignmentSnapEnabled: (enabled: boolean) => void;
   /** 撤销操作 */
   undo: () => void;
   /** 重做操作 */
@@ -117,6 +137,8 @@ export interface FlowStoreActions {
   alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
   /** 批量均匀分布选中的多个节点 */
   distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => void;
+  /** 批量追加子图（节点与连线）至画布 */
+  appendSubgraph: (newNodes: FlowNode[], newEdges: FlowEdge[]) => void;
   /** 全量替换图表数据 */
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
   /** 设置当前图表标题 */
@@ -136,6 +158,12 @@ let activeBridge: YjsDiagramBridge | null = null;
 let activeUndoManager: CollaborativeUndoManager | null = null;
 let unsubscribeBridge: (() => void) | null = null;
 let unsubscribeUndoManager: (() => void) | null = null;
+
+/**
+ * 正在做中心锚定缩放的节点 → 缩放开始时的中心点。
+ * React Flow 的 resizer 只会锚定对角，这里按尺寸反算位置，实现"左右同步、上下同步"
+ */
+const centeredResizes = new Map<string, { x: number; y: number }>();
 
 function commitGraph(nodes: FlowNode[], edges: FlowEdge[]) {
   if (activeBridge) {
@@ -175,6 +203,21 @@ function pushHistorySnapshot(
   };
 }
 
+/**
+ * 读取 position change 中的落点与拖拽标记：React Flow 的类型把二者分散在子类型里，
+ * 这里收敛为一个结构，供智能对齐吸附复用
+ */
+function readPositionChange(
+  change: NodeChange
+): { id: string; position: XYPosition; dragging: boolean } | null {
+  if (change.type !== 'position') return null;
+
+  const raw = change as unknown as { position?: XYPosition; dragging?: boolean };
+  if (!raw.position || typeof raw.dragging !== 'boolean') return null;
+
+  return { id: change.id, position: raw.position, dragging: raw.dragging };
+}
+
 export const useFlowStore = create<FlowStore>((set, get) => ({
   nodes: [],
   edges: [],
@@ -187,14 +230,35 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   historyPast: [],
   historyFuture: [],
   isInteracting: false,
+  alignmentGuides: [],
+  viewportZoom: 1,
+  alignmentSnapEnabled: true,
 
   onNodesChange: (changes: NodeChange[]) => {
     if (changes.length === 0) return;
 
-    const { nodes, edges, historyPast, isInteracting } = get();
+    const {
+      nodes,
+      edges,
+      historyPast,
+      isInteracting,
+      alignmentGuides,
+      viewportZoom,
+      alignmentSnapEnabled,
+    } = get();
 
     const isSelectionOnly =
       changes.length > 0 && changes.every((c) => c.type === 'select');
+
+    // React Flow 对节点 DOM 尺寸的纯测量上报，只应在本地生效，见下方提交守卫
+    const isMeasureOnly = changes.every(
+      (c) =>
+        c.type === 'select' ||
+        (c.type === 'dimensions' &&
+          (c as unknown as { dimensions?: unknown }).dimensions !== undefined &&
+          (c as unknown as { setAttributes?: unknown }).setAttributes === undefined &&
+          (c as unknown as { resizing?: unknown }).resizing === undefined)
+    );
 
     let nextInteracting = isInteracting;
     let shouldPushHistory = false;
@@ -217,7 +281,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === false)
     );
 
-    if (!isSelectionOnly) {
+    if (!isSelectionOnly && !isMeasureOnly) {
       if (hasDragStart) {
         if (!isInteracting) {
           shouldPushHistory = true;
@@ -234,7 +298,55 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ? pushHistorySnapshot(historyPast, nodes, edges)
       : {};
 
-    const nextNodes = applyNodeChanges(changes as any, nodes) as FlowNode[];
+    /**
+     * 拖拽落点改写：拖动过程中与松手帧都叠加智能对齐偏移，否则松手帧会带回未吸附的
+     * 原始指针位置，节点在释放瞬间从对齐线上弹开。React Flow 每帧从指针重算落点、
+     * 不回读节点当前位置，因此这里的改写不会自我放大
+     */
+    let effectiveChanges: NodeChange[] = changes;
+    let nextGuides: AlignGuide[] = [];
+
+    const proposedPositions = new Map<string, XYPosition>();
+    for (const change of changes) {
+      const parsed = readPositionChange(change);
+      if (parsed) proposedPositions.set(parsed.id, parsed.position);
+    }
+
+    if (proposedPositions.size > 0 && alignmentSnapEnabled) {
+      const snapped = computeDragAlignment(
+        nodes,
+        proposedPositions,
+        resolveSnapThreshold(viewportZoom)
+      );
+
+      if (snapped.guides.length > 0) {
+        // 松手帧只保留落点修正，参考线随之撤除
+        nextGuides = hasDragEnd ? [] : snapped.guides;
+        effectiveChanges = effectiveChanges.map((change) => {
+          const parsed = readPositionChange(change);
+          if (!parsed) return change;
+          const position = snapped.positions.get(parsed.id);
+          return position ? ({ ...change, position } as NodeChange) : change;
+        });
+      }
+    }
+
+    let nextNodes = applyNodeChanges(effectiveChanges as any, nodes) as FlowNode[];
+
+    // 中心锚定缩放：React Flow 的 resizer 只锚定对角，这里按新尺寸把位置回算为 center - size/2。
+    // 刻意不做栅格吸附：吸附会让左右（上下）两侧位移不相等
+    if (centeredResizes.size > 0) {
+      nextNodes = nextNodes.map((n) => {
+        const center = centeredResizes.get(n.id);
+        if (!center) return n;
+
+        const { width, height } = getNodeDimensions(n);
+        return {
+          ...n,
+          position: { x: center.x - width / 2, y: center.y - height / 2 },
+        };
+      });
+    }
 
     const hasRemove = changes.some((c) => c.type === 'remove');
     let nextEdges = edges;
@@ -249,15 +361,22 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       .filter((n) => n.selected)
       .map((n) => n.id);
 
+    const guidesChanged = nextGuides.length > 0 || alignmentGuides.length > 0;
+
     set({
       nodes: nextNodes,
       edges: nextEdges,
       selectedNodeIds: nextSelectedNodeIds,
       isInteracting: nextInteracting,
+      ...(guidesChanged ? { alignmentGuides: nextGuides } : {}),
       ...historyUpdate,
     });
 
-    if (!isDraggingOnly && !isSelectionOnly) {
+    /*
+     * 纯测量变更若写入 Y.Doc，会触发桥回灌把 React Flow 的 handleBounds 清零，
+     * 连线拖拽与边渲染随之失效，因此这里与选中态一样不提交
+     */
+    if (!isDraggingOnly && !isSelectionOnly && !isMeasureOnly) {
       commitGraph(nextNodes, nextEdges);
     } else if (hasDragEnd) {
       commitGraph(nextNodes, nextEdges);
@@ -355,6 +474,30 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     });
 
     commitGraph(nextNodes, edges);
+  },
+
+  appendSubgraph: (newNodes: FlowNode[], newEdges: FlowEdge[]) => {
+    const { nodes, edges, historyPast } = get();
+    if (newNodes.length === 0 && newEdges.length === 0) return;
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    const newIds = newNodes.map((n) => n.id);
+
+    const nextNodes = [
+      ...nodes.map((n) => ({ ...n, selected: false })),
+      ...newNodes.map((n) => ({ ...n, selected: true })),
+    ];
+    const nextEdges = [...edges, ...newEdges];
+
+    set({
+      nodes: nextNodes,
+      edges: nextEdges,
+      selectedNodeIds: newIds,
+      selectedEdgeId: null,
+      ...historyUpdate,
+    });
+
+    commitGraph(nextNodes, nextEdges);
   },
 
   deleteSelected: () => {
@@ -468,6 +611,24 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     commitGraph(nextNodes, edges);
   },
 
+  startCenteredResize: (id: string) => {
+    const node = get().nodes.find((n) => n.id === id);
+    if (!node) return;
+
+    const { width, height } = getNodeDimensions(node);
+    centeredResizes.set(id, {
+      x: node.position.x + width / 2,
+      y: node.position.y + height / 2,
+    });
+  },
+
+  finishCenteredResize: (id: string) => {
+    if (!centeredResizes.delete(id)) return;
+
+    const { nodes, edges } = get();
+    commitGraph(nodes, edges);
+  },
+
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => {
     const { nodes, edges, historyPast } = get();
     if (updates.length === 0) return;
@@ -562,7 +723,17 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   setActiveTool: (tool: ActiveTool) => {
-    set({ activeTool: tool });
+    set({ activeTool: tool, alignmentGuides: [] });
+  },
+
+  setViewportZoom: (zoom: number) => {
+    set({ viewportZoom: zoom });
+  },
+
+  setAlignmentSnapEnabled: (enabled: boolean) => {
+    const { alignmentSnapEnabled } = get();
+    if (alignmentSnapEnabled === enabled) return;
+    set({ alignmentSnapEnabled: enabled, alignmentGuides: [] });
   },
 
   undo: () => {
@@ -978,15 +1149,28 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     if (unsubscribeBridge) unsubscribeBridge();
     unsubscribeBridge = bridge.subscribe((state) => {
-      const currentSelectedNodeIds = get().selectedNodeIds;
-      const currentSelectedEdgeId = get().selectedEdgeId;
-      const mergedNodes = state.nodes.map((n) => ({
-        ...n,
-        selected: currentSelectedNodeIds.includes(n.id),
-      }));
+      const { nodes: prevNodes, selectedNodeIds, selectedEdgeId } = get();
+      const prevMeasured = new Map(
+        prevNodes.map((n) => [
+          n.id,
+          (n as { measured?: { width?: number; height?: number } }).measured,
+        ])
+      );
+      const mergedNodes = state.nodes.map((n) => {
+        const measured = prevMeasured.get(n.id);
+        return {
+          ...n,
+          /*
+           * measured 由 React Flow 拥有：一旦回灌成缺失它的纯数据节点，
+           * adoptUserNodes 会清空 internals.handleBounds，连线与边渲染随即失效
+           */
+          ...(measured ? { measured } : {}),
+          selected: selectedNodeIds.includes(n.id),
+        };
+      });
       const mergedEdges = state.edges.map((e) => ({
         ...e,
-        selected: e.id === currentSelectedEdgeId,
+        selected: e.id === selectedEdgeId,
       }));
       set({
         nodes: mergedNodes,

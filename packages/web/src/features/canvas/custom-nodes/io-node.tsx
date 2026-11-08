@@ -16,8 +16,9 @@ export const IONode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   return (
     <BaseNodeWrapper {...props} className="!bg-transparent !border-transparent">
       <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100">
+        {/* 斜切收窄至 10 单位：左右连接桩按 6% 内缩对齐斜边，倾角过大会拉大端点空隙 */}
         <polygon
-          points="15,1 99,1 85,99 1,99"
+          points="11,1 99,1 89,99 1,99"
           fill={fillColor}
           stroke={strokeColor}
           strokeWidth={strokeWidth}

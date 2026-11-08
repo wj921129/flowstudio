@@ -82,6 +82,8 @@ export const apiClient = {
 
 /**
  * 根据当前图表节点与连线计算包围盒并生成紧凑的轻量级 SVG 缩略图
+ * @description 泳道/分组的 position 是相对父容器的，这里先换算为绝对坐标；连线先画、盒子后画，
+ * 使线段看起来从边界进出而无需求交点
  */
 export function generateMiniSvgThumbnail(nodes: FlowNode[], edges: FlowEdge[]): string {
   if (nodes.length === 0) {
@@ -91,19 +93,35 @@ export function generateMiniSvgThumbnail(nodes: FlowNode[], edges: FlowEdge[]): 
     </svg>`;
   }
 
-  // 计算节点包围盒
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const absOf = (node: FlowNode): { x: number; y: number } => {
+    const parentId = node.parentId ?? (node.data as { parentId?: string } | undefined)?.parentId;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    if (!parent) return { x: node.position.x, y: node.position.y };
+
+    const base = absOf(parent);
+    return { x: base.x + node.position.x, y: base.y + node.position.y };
+  };
+  const sizeOf = (node: FlowNode) => ({
+    w: node.width ?? (typeof node.style?.width === 'number' ? node.style.width : 120),
+    h: node.height ?? (typeof node.style?.height === 'number' ? node.style.height : 60),
+  });
+
+  const boxes = nodes.map((n) => {
+    const { x, y } = absOf(n);
+    const { w, h } = sizeOf(n);
+    return { node: n, x, y, w, h };
+  });
+
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-
-  for (const node of nodes) {
-    const w = node.width || 120;
-    const h = node.height || 60;
-    minX = Math.min(minX, node.position.x);
-    minY = Math.min(minY, node.position.y);
-    maxX = Math.max(maxX, node.position.x + w);
-    maxY = Math.max(maxY, node.position.y + h);
+  for (const b of boxes) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
   }
 
   const padding = 20;
@@ -112,15 +130,28 @@ export function generateMiniSvgThumbnail(nodes: FlowNode[], edges: FlowEdge[]): 
   const viewBoxW = Math.max(maxX - minX + padding * 2, 100);
   const viewBoxH = Math.max(maxY - minY + padding * 2, 60);
 
-  const rects = nodes
-    .map((n) => {
-      const w = n.width || 120;
-      const h = n.height || 60;
-      const fill = n.type === 'comment' ? '#fef3c7' : '#e0e7ff';
-      const stroke = n.type === 'comment' ? '#f59e0b' : '#6366f1';
-      return `<rect x="${n.position.x}" y="${n.position.y}" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+  const centerOf = new Map(boxes.map((b) => [b.node.id, { x: b.x + b.w / 2, y: b.y + b.h / 2 }]));
+  const lines = edges
+    .map((e) => {
+      const s = centerOf.get(e.source);
+      const t = centerOf.get(e.target);
+      if (!s || !t) return '';
+      return `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="#94a3b8" stroke-width="1.5"/>`;
     })
     .join('');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}" width="100%" height="100%">${rects}</svg>`;
+  // 容器先画（半透明），普通图元后画，保证子节点可见
+  const isContainer = (t: string) => t === 'pool' || t === 'lane' || t === 'group';
+  const rects = [...boxes]
+    .sort((a, b) => Number(isContainer(a.node.type)) - Number(isContainer(b.node.type)))
+    .map((b) => {
+      const type = b.node.type;
+      const fill = type === 'comment' ? '#fef3c7' : '#e0e7ff';
+      const stroke = type === 'comment' ? '#f59e0b' : '#6366f1';
+      const opacity = isContainer(type) ? 0.45 : 1;
+      return `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="6" fill="${fill}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="1.5"/>`;
+    })
+    .join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}" width="100%" height="100%">${lines}${rects}</svg>`;
 }

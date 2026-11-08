@@ -14,9 +14,8 @@ import {
   Redo2,
   Trash2,
 } from 'lucide-react';
-import { DEFAULT_SNAP_GRID, getDefaultNodeSize } from '@flowstudio/shared';
+import { getDefaultNodeSize } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
-import { snapPositionToGrid } from '../../lib/node-utils';
 import { ToolbarButton } from './toolbar-button';
 
 export interface FloatingToolbarProps {
@@ -64,9 +63,8 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
       x: flowPos.x - defaultSize.width / 2,
       y: flowPos.y - defaultSize.height / 2,
     };
-    const snappedPos = snapPositionToGrid(centeredPos, DEFAULT_SNAP_GRID);
 
-    const newNode = addNode('comment', snappedPos);
+    const newNode = addNode('comment', centeredPos);
     if (newNode?.id) {
       setSelectedNodes([newNode.id]);
       setSelectedEdge(null);

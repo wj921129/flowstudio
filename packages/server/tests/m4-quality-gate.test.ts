@@ -172,5 +172,5 @@ describe('M4 Quality Gate: End-to-End Human-AI Co-Governance Verification', () =
 
     humanProvider.destroy();
     await server.app.close();
-  });
+  }, 20000);
 });

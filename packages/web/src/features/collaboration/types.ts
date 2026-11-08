@@ -6,4 +6,5 @@ export interface DiagramBridgeState {
   nodes: FlowNode[];
   edges: FlowEdge[];
   title: string;
+  themeId?: string;
 }
