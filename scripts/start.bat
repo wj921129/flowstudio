@@ -1,23 +1,45 @@
 @echo off
-chcp 65001 >nul
-title FlowStudio - 在线协作画图平台
+setlocal enabledelayedexpansion
+title FlowStudio - Collaborative Diagram Platform
+
+cd /d "%~dp0\.."
 
 echo ========================================================
-echo   FlowStudio 正在启动服务...
+echo   FlowStudio - Collaborative Diagram Platform
+echo   Starting server...
 echo ========================================================
 
-rem 检查服务端产物是否存在
-if not exist "packages\server\dist\index.js" (
-  echo 正在执行工程编译，请稍候...
-  call pnpm -r build
+where node >nul 2>nul
+if %errorlevel% neq 0 (
+  echo [Error] Node.js is not found in PATH. Please install Node.js 20+ first.
+  pause
+  exit /b 1
 )
 
-rem 启动服务端并在后台打开默认浏览器
-start "" http://127.0.0.1:3000
+if not exist "packages\server\dist\index.js" set NEED_BUILD=1
+if not exist "packages\web\dist\index.html" set NEED_BUILD=1
+
+if defined NEED_BUILD (
+  echo First-time launch: building workspace packages, please wait...
+  call pnpm -r build
+  if %errorlevel% neq 0 (
+    echo [Error] Monorepo build failed.
+    pause
+    exit /b 1
+  )
+)
+
+start "" /b cmd /c "ping 127.0.0.1 -n 3 >nul && start http://127.0.0.1:3000"
 
 echo.
-echo 服务启动中，请勿关闭本窗口...
+echo Server is launching. Browser will open at http://127.0.0.1:3000 shortly...
+echo (Close this window to stop the server)
 echo.
 
 node packages/server/dist/index.js
-pause
+
+if %errorlevel% neq 0 (
+  echo.
+  echo [Error] Server stopped with error code: %errorlevel%
+  pause
+)
