@@ -4,6 +4,7 @@
   "private": true,
   "description": "FlowStudio collaborative diagramming platform monorepo",
   "scripts": {
+    "start": "scripts\\start.bat",
     "dev": "pnpm -C packages/web dev",
     "dev:web": "pnpm -C packages/web dev",
     "dev:server": "pnpm -C packages/server dev",

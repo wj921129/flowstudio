@@ -38,7 +38,7 @@ export function getLocalNetworkIp(): string {
 async function main() {
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '0.0.0.0';
-  const dbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'flowstudio.sqlite');
+  const dbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'data', 'flowstudio.sqlite');
   const webDistPath = process.env.WEB_DIST || path.resolve(__dirname, '../../web/dist');
 
   const { app } = await buildServer({ dbPath, webDistPath });

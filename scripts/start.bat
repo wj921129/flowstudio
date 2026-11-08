@@ -37,6 +37,8 @@ echo Server is launching. Browser will open at http://127.0.0.1:3000 shortly...
 echo (Close this window to stop the server)
 echo.
 
+if not exist "data" mkdir data
+
 node packages/server/dist/index.js
 
 if %errorlevel% neq 0 (

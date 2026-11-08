@@ -1,6 +1,14 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
 
-export function initDatabase(dbPath: string = 'flowstudio.sqlite'): Database.Database {
+export function initDatabase(dbPath: string = 'data/flowstudio.sqlite'): Database.Database {
+  if (dbPath !== ':memory:') {
+    const dir = path.dirname(dbPath);
+    if (dir && !fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
   const db = new Database(dbPath);
 
   // 启用 WAL 模式提高并发性能，设置 busy 超时与外键约束

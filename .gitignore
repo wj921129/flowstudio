@@ -6,6 +6,8 @@ dist
 *.tsbuildinfo
 .codegraph/
 *.sqlite*
+data/*.sqlite*
+!data/.gitkeep
 .superpowers/
 
 
