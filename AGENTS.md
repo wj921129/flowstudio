@@ -52,5 +52,5 @@ flowstudio/
 
 ### 6. Git 分支管理与自动化交付流水线 (Git Branching & Auto-Sync)
 - **dev 分支日常开发**：日常功能开发、改码与问题排查均在 `dev` 分支进行；
-- **修改即自动 Commit & Push（全自动交付）**：每次修改完代码后，必须自动执行 `git commit` 与 `git push origin dev`，确保 `dev` 环境时刻保持最新状态。提交信息严格遵循 Conventional Commits 规范（如 `feat:`、`fix:`、`refactor:` 等），并简要清晰陈述改动内容；
+- **修改即自动 Commit & Push（全自动交付）**：每次修改完代码后，必须自动执行 `git commit` 与 `git push origin dev`，确保 `dev` 环境时刻保持最新状态。提交信息严格遵循 Conventional Commits 规范（如 `feat:`、`fix:`、`refactor:`、`docs:` 等），且 **Title 必须使用中文简述当次修改内容**（示例：`feat: 支持泳道拖拽自适应撑开`、`fix: 修复节点撤回冲突判定`）；
 - **重大里程碑主干合并建议**：当产生**大功能新增**、**重大架构改造**或**影响重大的核心 Bug 修复**时，严禁直接或静默合并 master，必须主动向老板提出合入 `master` 分支的建议与发布风险提示，待老板明确授权后再行执行合并操作。
