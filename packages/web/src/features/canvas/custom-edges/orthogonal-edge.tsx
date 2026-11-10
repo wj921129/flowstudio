@@ -9,6 +9,8 @@ import {
   EdgeLabelRenderer,
   getSmoothStepPath,
   useReactFlow,
+  Position,
+  MarkerType,
   type EdgeProps,
   type Edge,
 } from '@xyflow/react';
@@ -18,6 +20,70 @@ import { useFlowStore } from '../../../stores/flow-store';
 
 /** 折点手柄命中区边长 (px)：明显大于可视圆点，保证缩放后仍可稳定点中 */
 const WAYPOINT_HIT_SIZE = 22;
+
+/**
+ * 连线终端箭头停靠间距 (px)：
+ * 略微缩进 2.5px，使箭头尖端刚好停留在图元边框外沿与焦点环外圈之间，
+ * 既杜绝了尖端被图元实色填充、边框或高亮选择环遮挡，又避免了悬空过远的不自然感
+ */
+export const TERMINAL_ARROW_DOCKING_GAP = 2.5;
+
+/**
+ * 计算终点停靠端点坐标，根据目标锚点方位沿法线方向反向偏移
+ */
+export function getDockingEndpoint(
+  x: number,
+  y: number,
+  position: Position | string | undefined,
+  offset: number = TERMINAL_ARROW_DOCKING_GAP
+): XYPosition {
+  switch (position) {
+    case Position.Top:
+    case 'top':
+      return { x, y: y - offset };
+    case Position.Bottom:
+    case 'bottom':
+      return { x, y: y + offset };
+    case Position.Left:
+    case 'left':
+      return { x: x - offset, y };
+    case Position.Right:
+    case 'right':
+      return { x: x + offset, y };
+    default:
+      return { x, y };
+  }
+}
+
+/**
+ * 动态计算 SmoothStep 折角步进偏移，防止近距离（< 40px）两图元间走线回折与过度前突
+ */
+export function calcStepOffset(
+  sX: number,
+  sY: number,
+  sPos: Position | string | undefined,
+  tX: number,
+  tY: number,
+  tPos: Position | string | undefined
+): number {
+  const isVertical =
+    (sPos === Position.Top || sPos === Position.Bottom || sPos === 'top' || sPos === 'bottom') &&
+    (tPos === Position.Top || tPos === Position.Bottom || tPos === 'top' || tPos === 'bottom');
+  const isHorizontal =
+    (sPos === Position.Left || sPos === Position.Right || sPos === 'left' || sPos === 'right') &&
+    (tPos === Position.Left || tPos === Position.Right || tPos === 'left' || tPos === 'right');
+
+  const dist = isVertical
+    ? Math.abs(tY - sY)
+    : isHorizontal
+    ? Math.abs(tX - sX)
+    : Math.min(Math.abs(tX - sX), Math.abs(tY - sY));
+
+  if (dist > 0 && dist < 40) {
+    return Math.max(4, Math.floor(dist / 2));
+  }
+  return 20;
+}
 
 /** 拖拽中的折点暂存态：仅存于本地，避免每帧写历史与 Yjs 造成手柄闪烁 */
 interface WaypointDragState {
@@ -50,34 +116,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const hasWaypoints = Array.isArray(waypoints) && waypoints.length > 0;
   const isDragging = dragWaypoints !== null;
 
-  let edgePath: string;
-  let labelX: number;
-  let labelY: number;
-
-  if (hasWaypoints) {
-    const res = buildWaypointPath(
-      { x: sourceX, y: sourceY },
-      { x: targetX, y: targetY },
-      waypoints
-    );
-    edgePath = res.path;
-    labelX = res.labelPosition.x;
-    labelY = res.labelPosition.y;
-  } else {
-    const [path, lx, ly] = getSmoothStepPath({
-      sourceX,
-      sourceY,
-      sourcePosition,
-      targetX,
-      targetY,
-      targetPosition,
-      borderRadius: 0,
-    });
-    edgePath = path;
-    labelX = lx;
-    labelY = ly;
-  }
-
   const edgeStyleData = data?.style;
   const strokeColor = selected
     ? 'var(--fs-selection-ring)'
@@ -91,6 +129,76 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     strokeDasharray,
     ...style,
   };
+
+  // 确保 markerEnd 颜色与连线完全一致（含选中高亮色及自定义描边色）
+  const resolvedMarkerEnd = markerEnd
+    ? typeof markerEnd === 'object'
+      ? {
+          ...markerEnd,
+          color: (markerEnd as any).color || strokeColor,
+        }
+      : markerEnd
+    : {
+        type: MarkerType.ArrowClosed,
+        color: strokeColor,
+      };
+
+  const resolvedMarkerStart = markerStart
+    ? typeof markerStart === 'object'
+      ? {
+          ...markerStart,
+          color: (markerStart as any).color || strokeColor,
+        }
+      : markerStart
+    : undefined;
+
+  // 停靠端点修正：有箭头时沿目标方向回缩微小间距，露出完整箭头尖端且间距平滑
+  const hasMarkerEnd = Boolean(resolvedMarkerEnd);
+  const dockTarget = hasMarkerEnd
+    ? getDockingEndpoint(targetX, targetY, targetPosition, TERMINAL_ARROW_DOCKING_GAP)
+    : { x: targetX, y: targetY };
+
+  const hasMarkerStart = Boolean(resolvedMarkerStart);
+  const dockSource = hasMarkerStart
+    ? getDockingEndpoint(sourceX, sourceY, sourcePosition, TERMINAL_ARROW_DOCKING_GAP)
+    : { x: sourceX, y: sourceY };
+
+  let edgePath: string;
+  let labelX: number;
+  let labelY: number;
+
+  if (hasWaypoints) {
+    const res = buildWaypointPath(
+      dockSource,
+      dockTarget,
+      waypoints
+    );
+    edgePath = res.path;
+    labelX = res.labelPosition.x;
+    labelY = res.labelPosition.y;
+  } else {
+    const stepOffset = calcStepOffset(
+      dockSource.x,
+      dockSource.y,
+      sourcePosition,
+      dockTarget.x,
+      dockTarget.y,
+      targetPosition
+    );
+    const [path, lx, ly] = getSmoothStepPath({
+      sourceX: dockSource.x,
+      sourceY: dockSource.y,
+      sourcePosition,
+      targetX: dockTarget.x,
+      targetY: dockTarget.y,
+      targetPosition,
+      borderRadius: 0,
+      offset: stepOffset,
+    });
+    edgePath = path;
+    labelX = lx;
+    labelY = ly;
+  }
 
   // 添加初始折点
   const handleAddDefaultWaypoint = useCallback(

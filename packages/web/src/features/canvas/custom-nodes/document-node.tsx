@@ -16,9 +16,9 @@ export const DocumentNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => 
   return (
     <BaseNodeWrapper {...props} className="!bg-transparent !border-transparent">
       <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100">
-        {/* 波浪基线取 94、最低点触达 99，使底部连接桩正好落在纸面上沿而非悬在波形之下 */}
+        {/* 底部波浪：中心 (x=50) 处对齐 y=98，与底部连接桩及其他图元底边保持一致停靠间距 */}
         <path
-          d="M 1,1 L 99,1 L 99,94 Q 75,84 50,94 Q 25,104 1,94 Z"
+          d="M 1,1 L 99,1 L 99,92 Q 75,84 50,98 Q 25,106 1,92 Z"
           fill={fillColor}
           stroke={strokeColor}
           strokeWidth={strokeWidth}

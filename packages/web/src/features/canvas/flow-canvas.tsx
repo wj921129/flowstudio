@@ -522,6 +522,7 @@ export const FlowCanvas: React.FC = () => {
           type: 'orthogonal',
           markerEnd: { type: MarkerType.ArrowClosed },
         }}
+        elevateEdgesOnSelect={true}
         fitView
         minZoom={0.1}
         maxZoom={2.5}

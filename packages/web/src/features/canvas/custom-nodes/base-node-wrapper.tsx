@@ -67,6 +67,21 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const showHandles = isConnecting || activeTool === 'connect' || selected;
   const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
 
+  // 提取接入当前节点的连线目标 Handle 集合（避免无关连线更新触发本组件多余重渲）
+  const incomingHandleKeys = useFlowStore((s) => {
+    const set = new Set<string>();
+    for (const edge of s.edges) {
+      if (edge.target === id && edge.targetHandle) {
+        set.add(edge.targetHandle);
+      }
+    }
+    return Array.from(set).sort().join(',');
+  });
+  const incomingHandles = React.useMemo(
+    () => new Set(incomingHandleKeys ? incomingHandleKeys.split(',') : []),
+    [incomingHandleKeys]
+  );
+
   // 当外部 data.label 变更且非编辑态时同步
   useEffect(() => {
     if (!isEditing) {
@@ -172,6 +187,10 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         : definedHandles
       ).map((handle) => {
         const pos = POSITION_MAP[handle.position];
+        const hasIncomingEdge = incomingHandles.has(handle.id);
+        // 若该连接桩已有连线接入，且当前未处于拉线状态，则不渲染实心指示圆点，避免遮盖箭头
+        const showVisualIndicator = !hasIncomingEdge || isConnecting;
+
         return (
           <React.Fragment key={handle.id}>
             {/* Target 终点连接桩 */}
@@ -194,13 +213,15 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
                 showHandles ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >
-              <span
-                className={`rounded-full transition-all duration-150 pointer-events-none ${
-                  showHandles
-                    ? 'w-3 h-3 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.5)]'
-                    : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] border-2 border-[var(--fs-selection-ring,#2563eb)] group-hover/handle:w-3.5 group-hover/handle:h-3.5 group-hover/handle:bg-[var(--fs-selection-ring,#2563eb)] group-hover/handle:border-white shadow-xs group-hover/handle:shadow-[0_0_0_3px_rgba(37,99,235,0.35)]'
-                }`}
-              />
+              {showVisualIndicator && (
+                <span
+                  className={`rounded-full transition-all duration-150 pointer-events-none ${
+                    showHandles
+                      ? 'w-3 h-3 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.5)]'
+                      : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] border-2 border-[var(--fs-selection-ring,#2563eb)] group-hover/handle:w-3.5 group-hover/handle:h-3.5 group-hover/handle:bg-[var(--fs-selection-ring,#2563eb)] group-hover/handle:border-white shadow-xs group-hover/handle:shadow-[0_0_0_3px_rgba(37,99,235,0.35)]'
+                  }`}
+                />
+              )}
             </Handle>
           </React.Fragment>
         );
