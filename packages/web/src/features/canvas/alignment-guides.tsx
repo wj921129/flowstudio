@@ -40,7 +40,7 @@ export const AlignmentGuides: React.FC = () => {
         <div
           key={`${guide.axis}-${guide.position}-${index}`}
           aria-hidden
-          className="pointer-events-none absolute rounded-full bg-fs-align-guide"
+          className="pointer-events-none absolute rounded-full bg-fs-align-guide shadow-[0_0_2px_rgba(244,63,94,0.6)]"
           style={{ ...guideStyle(guide, thickness), zIndex: 1001 }}
         />
       ))}

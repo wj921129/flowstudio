@@ -132,9 +132,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
   // 确保 markerEnd 颜色与连线完全一致（含选中高亮色及自定义描边色）
   const resolvedMarkerEnd = markerEnd
-    ? typeof markerEnd === 'object'
+    ? typeof markerEnd === 'object' && markerEnd !== null
       ? {
-          ...markerEnd,
+          ...(markerEnd as Record<string, unknown>),
           color: (markerEnd as any).color || strokeColor,
         }
       : markerEnd
@@ -144,9 +144,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       };
 
   const resolvedMarkerStart = markerStart
-    ? typeof markerStart === 'object'
+    ? typeof markerStart === 'object' && markerStart !== null
       ? {
-          ...markerStart,
+          ...(markerStart as Record<string, unknown>),
           color: (markerStart as any).color || strokeColor,
         }
       : markerStart

@@ -42,14 +42,17 @@ export interface DragAlignmentOutcome {
   guides: AlignGuide[];
 }
 
-/** 参考线感应半径 (屏幕像素)，按缩放反算为世界坐标阈值 */
-const ALIGN_SENSITIVITY_PX = 8;
+/** 参考线感应半径 (屏幕像素)，按缩放反算为世界坐标阈值。极窄像素吸附：基准 5px */
+export const ALIGN_SENSITIVITY_PX = 5;
 
-/** 世界坐标感应半径下限：避免高缩放比例下轻微靠近就强行吸附 */
-const MIN_THRESHOLD = 4;
+/** 世界坐标感应半径下限：避免高缩放比例下过大距离吸附 */
+export const MIN_THRESHOLD = 4;
 
-/** 世界坐标感应半径上限：避免低缩放比例下吸附跨过大半个画布 */
-const MAX_THRESHOLD = 20;
+/** 世界坐标感应半径上限：避免极低缩放比例下吸附跨过大半个画布 */
+export const MAX_THRESHOLD = 10;
+
+/** 最大对齐距离 (px)：超过此物理间距的图元不产生吸附，避免画布远端杂散干扰 */
+export const MAX_ALIGN_DISTANCE = 1500;
 
 /**
  * 容器类图元不作为吸附目标：其边线横跨整条泳道，会盖过邻近图元的对齐线索
@@ -61,7 +64,7 @@ const CONTAINER_NODE_TYPES: ReadonlySet<FlowNodeType> = new Set<FlowNodeType>([
 ]);
 
 /**
- * 将屏幕像素感应半径换算为当前缩放下的世界坐标阈值
+ * 将屏幕像素感应半径换算为当前缩放下的世界坐标阈值（极窄吸附控制在 4~5px 黄金区间）
  */
 export function resolveSnapThreshold(zoom: number): number {
   const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
@@ -69,17 +72,26 @@ export function resolveSnapThreshold(zoom: number): number {
 }
 
 /**
- * 竖直线候选：左边、右边、水平中心（边线优先于中心线参与择优）
+ * 竖直线候选：左边线/左四角/左Handle、右边线/右四角/右Handle、水平中心/上下Handle
  */
 function verticalAnchors(box: AlignBox): number[] {
   return [box.x, box.x + box.width, box.x + box.width / 2];
 }
 
 /**
- * 水平线候选：上边、下边、垂直中心
+ * 水平线候选：上边线/上四角/上Handle、下边线/下四角/下Handle、垂直中心/左右Handle
  */
 function horizontalAnchors(box: AlignBox): number[] {
   return [box.y, box.y + box.height, box.y + box.height / 2];
+}
+
+/**
+ * 计算两个包围盒之间的物理间隔距离 (px)
+ */
+function getBoxDistance(a: AlignBox, b: AlignBox): number {
+  const dx = Math.max(0, Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width)));
+  const dy = Math.max(0, Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height)));
+  return Math.hypot(dx, dy);
 }
 
 /**
@@ -96,7 +108,7 @@ function findBestDelta(
     for (const targetLine of targetLines) {
       const delta = targetLine - draggedLine;
       const absDelta = Math.abs(delta);
-      if (absDelta >= limit) continue;
+      if (absDelta > limit) continue;
       if (best && absDelta >= Math.abs(best.delta)) continue;
       best = { delta, position: targetLine };
     }
@@ -109,7 +121,7 @@ function findBestDelta(
  * 计算拖拽包围盒相对其他图元的对齐吸附量与参考线
  * @param dragged 拖拽集合的世界坐标包围盒
  * @param targets 可作为对齐目标的图元包围盒
- * @param threshold 世界坐标感应半径
+ * @param threshold 世界坐标感应半径（极窄像素 4~5px）
  */
 export function computeAlignmentSnap(
   dragged: AlignBox,
@@ -120,10 +132,16 @@ export function computeAlignmentSnap(
   let offsetX = 0;
   let offsetY = 0;
 
+  // 按物理空间距离升序排序，确保视觉临近图元优先吸附，杜绝远端孤立图元抢夺对齐线
+  const sortedTargets = [...targets].sort(
+    (a, b) => getBoxDistance(dragged, a) - getBoxDistance(dragged, b)
+  );
+
   let bestX: { delta: number; position: number; start: number; end: number } | null = null;
-  for (const target of targets) {
-    // 纵向投影不相交则不构成竖向对齐线索，否则会把图元从很远处磁吸过来
-    if (target.y >= dragged.y + dragged.height || dragged.y >= target.y + target.height) continue;
+  for (const target of sortedTargets) {
+    // 纵向间隔距离过大（> 1500px）时跳过，避免全画布无节制杂散吸附
+    const dy = Math.max(0, Math.max(target.y - (dragged.y + dragged.height), dragged.y - (target.y + target.height)));
+    if (dy > MAX_ALIGN_DISTANCE) continue;
 
     const found = findBestDelta(
       verticalAnchors(dragged),
@@ -141,14 +159,26 @@ export function computeAlignmentSnap(
 
   if (bestX) {
     offsetX = bestX.delta;
-    guides.push({ axis: 'vertical', position: bestX.position, start: bestX.start, end: bestX.end });
+    let start = bestX.start;
+    let end = bestX.end;
+    // 若有其他图元也落在同一竖直参考线上，将参考线延伸贯穿所有对齐图元
+    for (const target of targets) {
+      const anchors = verticalAnchors(target);
+      if (anchors.some((a) => Math.abs(a - bestX!.position) < 0.1)) {
+        start = Math.min(start, target.y);
+        end = Math.max(end, target.y + target.height);
+      }
+    }
+    guides.push({ axis: 'vertical', position: bestX.position, start, end });
   }
 
   const shifted: AlignBox = { ...dragged, x: dragged.x + offsetX };
 
   let bestY: { delta: number; position: number; start: number; end: number } | null = null;
-  for (const target of targets) {
-    if (target.x >= shifted.x + shifted.width || shifted.x >= target.x + target.width) continue;
+  for (const target of sortedTargets) {
+    // 横向间隔距离过大（> 1500px）时跳过
+    const dx = Math.max(0, Math.max(target.x - (shifted.x + shifted.width), shifted.x - (target.x + target.width)));
+    if (dx > MAX_ALIGN_DISTANCE) continue;
 
     const found = findBestDelta(
       horizontalAnchors(shifted),
@@ -166,7 +196,17 @@ export function computeAlignmentSnap(
 
   if (bestY) {
     offsetY = bestY.delta;
-    guides.push({ axis: 'horizontal', position: bestY.position, start: bestY.start, end: bestY.end });
+    let start = bestY.start;
+    let end = bestY.end;
+    // 若有其他图元也落在同一水平参考线上，将参考线延伸贯穿所有对齐图元
+    for (const target of targets) {
+      const anchors = horizontalAnchors(target);
+      if (anchors.some((a) => Math.abs(a - bestY!.position) < 0.1)) {
+        start = Math.min(start, target.x);
+        end = Math.max(end, target.x + target.width);
+      }
+    }
+    guides.push({ axis: 'horizontal', position: bestY.position, start, end });
   }
 
   return { offset: { x: offsetX, y: offsetY }, guides };

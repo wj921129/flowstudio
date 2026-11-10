@@ -33,11 +33,11 @@ function makeNode(
 describe('alignment-snap: 自由拖拽智能对齐', () => {
   describe('resolveSnapThreshold', () => {
     it('按缩放比例反算感应半径并夹紧到上下限', () => {
-      expect(resolveSnapThreshold(1)).toBe(8);
+      expect(resolveSnapThreshold(1)).toBe(5);
       expect(resolveSnapThreshold(2)).toBe(4);
-      expect(resolveSnapThreshold(0.1)).toBe(20);
+      expect(resolveSnapThreshold(0.1)).toBe(10);
       expect(resolveSnapThreshold(8)).toBe(4);
-      expect(resolveSnapThreshold(Number.NaN)).toBe(8);
+      expect(resolveSnapThreshold(Number.NaN)).toBe(5);
     });
   });
 
@@ -46,14 +46,14 @@ describe('alignment-snap: 自由拖拽智能对齐', () => {
       const dragged = makeBox(0, 0, 160, 80);
       const target = makeBox(3, 10, 160, 80);
 
-      const result = computeAlignmentSnap(dragged, [target], 8);
+      const result = computeAlignmentSnap(dragged, [target], 5);
 
       expect(result.offset).toEqual({ x: 3, y: 0 });
       expect(result.guides).toEqual([{ axis: 'vertical', position: 3, start: 0, end: 90 }]);
     });
 
     it('超出感应阈值时不产生吸附与参考线', () => {
-      const result = computeAlignmentSnap(makeBox(0, 0, 160, 80), [makeBox(20, 10, 160, 80)], 8);
+      const result = computeAlignmentSnap(makeBox(0, 0, 160, 80), [makeBox(20, 10, 160, 80)], 5);
 
       expect(result.offset).toEqual({ x: 0, y: 0 });
       expect(result.guides).toHaveLength(0);
@@ -63,7 +63,7 @@ describe('alignment-snap: 自由拖拽智能对齐', () => {
       const dragged = makeBox(0, 0, 160, 80);
       const targets = [makeBox(6, 10, 160, 80), makeBox(2, 10, 160, 80)];
 
-      const result = computeAlignmentSnap(dragged, targets, 8);
+      const result = computeAlignmentSnap(dragged, targets, 5);
 
       expect(result.offset.x).toBe(2);
       expect(result.guides).toHaveLength(1);
@@ -74,27 +74,70 @@ describe('alignment-snap: 自由拖拽智能对齐', () => {
       const dragged = makeBox(0, 0, 100, 100);
       const target = makeBox(-15, 20, 130, 40);
 
-      const result = computeAlignmentSnap(dragged, [target], 8);
+      const result = computeAlignmentSnap(dragged, [target], 5);
 
       expect(result.offset).toEqual({ x: 0, y: 0 });
       expect(result.guides).toEqual([{ axis: 'vertical', position: 50, start: 0, end: 100 }]);
     });
 
-    it('纵向投影不相交的图元不构成竖向对齐线索', () => {
+    it('纵向非重叠但同列图元支持极窄吸附与参考线，助力垂直直线走线', () => {
       const dragged = makeBox(0, 0, 100, 100);
       const target = makeBox(2, 500, 100, 100);
 
-      const result = computeAlignmentSnap(dragged, [target], 8);
+      const result = computeAlignmentSnap(dragged, [target], 5);
+
+      expect(result.offset).toEqual({ x: 2, y: 0 });
+      expect(result.guides).toEqual([{ axis: 'vertical', position: 2, start: 0, end: 600 }]);
+    });
+
+    it('横向非重叠但同行图元支持极窄吸附与参考线，助力水平直线走线', () => {
+      const dragged = makeBox(0, 0, 100, 100);
+      const target = makeBox(400, 2, 100, 100);
+
+      const result = computeAlignmentSnap(dragged, [target], 5);
+
+      expect(result.offset).toEqual({ x: 0, y: 2 });
+      expect(result.guides).toEqual([{ axis: 'horizontal', position: 2, start: 0, end: 500 }]);
+    });
+
+    it('距离过远（> 1500px）的非相关图元不产生吸附，避免大画布远端杂散干扰', () => {
+      const dragged = makeBox(0, 0, 100, 100);
+      const distantTarget = makeBox(2, 3000, 100, 100);
+
+      const result = computeAlignmentSnap(dragged, [distantTarget], 5);
 
       expect(result.offset).toEqual({ x: 0, y: 0 });
       expect(result.guides).toHaveLength(0);
+    });
+
+    it('支持中心点与连线锚点 Handle 关键点吸附（不同尺寸图元中心对齐）', () => {
+      // dragged: width 160 (center at 80)
+      // target: width 100 (center at 50, x at 32 -> center at 82, delta = 2)
+      const dragged = makeBox(0, 0, 160, 80);
+      const target = makeBox(32, 200, 100, 80);
+
+      const result = computeAlignmentSnap(dragged, [target], 5);
+
+      expect(result.offset).toEqual({ x: 2, y: 0 });
+      expect(result.guides).toEqual([{ axis: 'vertical', position: 82, start: 0, end: 280 }]);
+    });
+
+    it('支持四角关键点对齐吸附（左上、右上、左下、右下）', () => {
+      // dragged: (0, 0, 100, 100)
+      // target: (103, 102, 100, 100) -> 左右相邻吸附 (delta 3), 上下相邻吸附 (delta 2)
+      const dragged = makeBox(0, 0, 100, 100);
+      const target = makeBox(103, 102, 100, 100);
+
+      const result = computeAlignmentSnap(dragged, [target], 5);
+
+      expect(result.offset).toEqual({ x: 3, y: 2 });
     });
 
     it('横竖两轴同时命中时输出两条参考线', () => {
       const dragged = makeBox(0, 0, 100, 100);
       const target = makeBox(3, -2, 100, 100);
 
-      const result = computeAlignmentSnap(dragged, [target], 8);
+      const result = computeAlignmentSnap(dragged, [target], 5);
 
       expect(result.offset).toEqual({ x: 3, y: -2 });
       expect(result.guides).toEqual([
