@@ -10,6 +10,7 @@ import { useAwareness, type AwarenessUserState } from './use-awareness.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
+import { bindCommentsYjs } from '../comments/index.js';
 
 export interface CollaborationContextValue {
   diagramId: string;
@@ -90,6 +91,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     p.on('synced', handleSynced);
 
     const unbindStore = useFlowStore.getState().bindCollaboration(b, u);
+    const unbindComments = bindCommentsYjs(d, currentUser.clientId);
     const unbindTheme = b.subscribe((state) => {
       if (state.themeId) {
         useSidebarStore.getState().setActiveThemeId(state.themeId);
@@ -102,6 +104,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       p.off('status', handleStatus);
       p.off('synced', handleSynced);
       unbindStore();
+      unbindComments();
       unbindTheme();
       p.destroy();
       b.destroy();

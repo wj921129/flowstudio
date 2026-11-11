@@ -29,6 +29,7 @@ import { AlignmentGuides } from './alignment-guides';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
+import { CommentsLayer, ReviewDrawer } from '../comments';
 import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
@@ -981,6 +982,12 @@ export const FlowCanvas: React.FC = () => {
 
         {/* 底部居中悬浮主工具栏 */}
         <FloatingToolbar />
+
+        {/* 画布协同批注图钉层与评论讨论串 */}
+        <CommentsLayer />
+
+        {/* 评审模式右侧顺序跳转抽屉 */}
+        <ReviewDrawer />
       </ReactFlow>
     </div>
   );
