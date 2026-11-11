@@ -150,6 +150,37 @@ describe('DocumentWriter 与 CRDT 增量合并落库', () => {
     db.close();
   });
 
+  it('computeSnapshotRestoreUpdate 拒绝跨图快照且不写入当前文档', () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const writer = new DocumentWriter(repo);
+
+    const diagA = repo.createDiagram({ title: '图A' });
+    const diagB = repo.createDiagram({ title: '图B' });
+    const docA = loadDoc(repo, diagA.id);
+    addNode(docA, 'a-node', 'A 节点');
+    repo.saveYDocState(diagA.id, Y.encodeStateAsUpdate(docA));
+    const docB = loadDoc(repo, diagB.id);
+    addNode(docB, 'b-node', 'B 节点');
+    repo.saveYDocState(diagB.id, Y.encodeStateAsUpdate(docB));
+
+    const snapA = repo.createSnapshot(diagA.id, 'A 快照', 'manual')!;
+    const cross = writer.computeSnapshotRestoreUpdate(diagB.id, snapA.id);
+    expect(cross.success).toBe(false);
+    expect(cross.error).toContain('不属于当前图表');
+    expect(cross.update).toBeUndefined();
+
+    const missing = writer.computeSnapshotRestoreUpdate(diagA.id, 'snap-not-exist');
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain('快照不存在');
+
+    const afterB = loadDoc(repo, diagB.id);
+    expect(afterB.getMap('nodes').has('b-node')).toBe(true);
+    expect(afterB.getMap('nodes').has('a-node')).toBe(false);
+
+    db.close();
+  });
+
   it('恢复不存在的快照返回明确失败而非抛异常', async () => {
     const db = initDatabase(tmpDbPath);
     const repo = new DiagramRepository(db);

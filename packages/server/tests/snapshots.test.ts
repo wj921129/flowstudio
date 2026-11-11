@@ -131,4 +131,71 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
 
     await server.app.close();
   });
+
+  it('delta 模式仅返回差量不应用，客户端本地应用一次即还原快照且可重复应用', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+
+    const createRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/diagrams',
+      payload: { title: '差量恢复图' },
+    });
+    const diagId = createRes.json().id;
+
+    const v1 = new Y.Doc();
+    Y.applyUpdate(v1, server.repo.getYDocState(diagId)!);
+    for (const id of ['node-1', 'node-2']) {
+      const node = new Y.Map();
+      node.set('id', id);
+      node.set('type', 'process');
+      v1.getMap('nodes').set(id, node);
+    }
+    server.repo.saveYDocState(diagId, Y.encodeStateAsUpdate(v1));
+    const snap = server.repo.createSnapshot(diagId, 'V1 基线', 'manual')!;
+
+    const v2 = new Y.Doc();
+    Y.applyUpdate(v2, server.repo.getYDocState(diagId)!);
+    v2.getMap('nodes').delete('node-2');
+    const n3 = new Y.Map();
+    n3.set('id', 'node-3');
+    n3.set('type', 'process');
+    v2.getMap('nodes').set('node-3', n3);
+    server.repo.saveYDocState(diagId, Y.encodeStateAsUpdate(v2));
+
+    const deltaRes = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diagId}/snapshots/${snap.id}/restore`,
+      payload: { mode: 'delta' },
+    });
+    expect(deltaRes.statusCode).toBe(200);
+    const delta = deltaRes.json();
+    expect(delta.success).toBe(true);
+    expect(delta.mode).toBe('delta');
+    expect(typeof delta.update).toBe('string');
+    expect(delta.update.length).toBeGreaterThan(0);
+
+    const persisted = new Y.Doc();
+    Y.applyUpdate(persisted, server.repo.getYDocState(diagId)!);
+    expect(persisted.getMap('nodes').has('node-2')).toBe(false);
+    expect(persisted.getMap('nodes').has('node-3')).toBe(true);
+
+    const clientDoc = new Y.Doc();
+    Y.applyUpdate(clientDoc, server.repo.getYDocState(diagId)!);
+    const update = new Uint8Array(Buffer.from(delta.update, 'base64'));
+    clientDoc.transact(() => {
+      Y.applyUpdate(clientDoc, update);
+    }, `snapshot-restore:${snap.id}`);
+
+    expect(clientDoc.getMap('nodes').has('node-1')).toBe(true);
+    expect(clientDoc.getMap('nodes').has('node-2')).toBe(true);
+    expect(clientDoc.getMap('nodes').has('node-3')).toBe(false);
+
+    clientDoc.transact(() => {
+      Y.applyUpdate(clientDoc, update);
+    }, `snapshot-restore:${snap.id}`);
+    expect(clientDoc.getMap('nodes').has('node-2')).toBe(true);
+    expect(clientDoc.getMap('nodes').has('node-3')).toBe(false);
+
+    await server.app.close();
+  }, 20000);
 });

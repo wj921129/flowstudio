@@ -203,6 +203,42 @@ export class DocumentWriter {
   }
 
   /**
+   * 仅计算快照恢复差量：不写入当前文档，供发起客户端本地事务应用并纳入撤销栈
+   */
+  computeSnapshotRestoreUpdate(
+    diagramId: string,
+    snapshotId: string,
+  ): { success: boolean; update?: Uint8Array; error?: string } {
+    const targetState = this.repo.getSnapshotState(snapshotId);
+    if (!targetState) return { success: false, error: '目标快照不存在' };
+    if (!this.repo.getDiagramById(diagramId)) {
+      return { success: false, error: '目标图表不存在' };
+    }
+    if (this.repo.getSnapshotDiagramId(snapshotId) !== diagramId) {
+      return { success: false, error: '该快照不属于当前图表，禁止跨图恢复' };
+    }
+
+    const live = this.getLiveDocument(diagramId);
+    const currentState = live
+      ? Y.encodeStateAsUpdate(live)
+      : this.repo.getYDocState(diagramId);
+    if (!currentState) return { success: false, error: '当前图表状态不存在' };
+
+    const snapDoc = new Y.Doc();
+    Y.applyUpdate(snapDoc, targetState);
+    const clone = new Y.Doc();
+    Y.applyUpdate(clone, currentState);
+    try {
+      const stateVector = Y.encodeStateVector(clone);
+      applySnapshotDelta(clone, snapDoc);
+      return { success: true, update: Y.encodeStateAsUpdate(clone, stateVector) };
+    } finally {
+      clone.destroy();
+      snapDoc.destroy();
+    }
+  }
+
+  /**
    * 无损差异快照恢复：将目标快照与当前文档的差量作为一次普通协同事务写回
    */
   async restoreSnapshot(
