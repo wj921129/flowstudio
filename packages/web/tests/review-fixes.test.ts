@@ -621,9 +621,101 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       // group-1 内部有 full 锁定的子节点，父容器 group-1 和锁定子节点都安全保留
       expect(latestNodes.some((n) => n.id === 'group-1')).toBe(true);
       expect(latestNodes.some((n) => n.id === 'g-child-locked')).toBe(true);
+      expect(latestNodes.some((n) => n.id === 'g-child-normal')).toBe(true);
       // 锁定子节点的 parentId 没有悬挂！
       const lockedNode = latestNodes.find((n) => n.id === 'g-child-locked')!;
       expect(lockedNode.parentId).toBe('group-1');
+    });
+
+    it('P1-2: 选中含 full 锁子节点的泳道 deleteSelected，泳道及所有后代(含未锁定节点)整体保留', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const lane: FlowNode = { id: 'lane-p1', type: 'lane', position: { x: 0, y: 0 }, width: 700, height: 240, data: { label: '泳道' } };
+      const lockedChild: FlowNode = { id: 'child-lock', type: 'process', parentId: 'lane-p1', position: { x: 50, y: 50 }, data: { label: '锁定', lockMode: 'full' } };
+      const freeChild1: FlowNode = { id: 'child-free-1', type: 'process', parentId: 'lane-p1', position: { x: 250, y: 50 }, data: { label: '自由1' } };
+      const freeChild2: FlowNode = { id: 'child-free-2', type: 'process', parentId: 'lane-p1', position: { x: 450, y: 50 }, data: { label: '自由2' } };
+
+      store.setDiagram([lane, lockedChild, freeChild1, freeChild2], []);
+      store.setSelectedNodes(['lane-p1']);
+      store.deleteSelected();
+
+      const latestNodes = useFlowStore.getState().nodes;
+      expect(latestNodes.some((n) => n.id === 'lane-p1')).toBe(true);
+      expect(latestNodes.some((n) => n.id === 'child-lock')).toBe(true);
+      expect(latestNodes.some((n) => n.id === 'child-free-1')).toBe(true);
+      expect(latestNodes.some((n) => n.id === 'child-free-2')).toBe(true);
+    });
+
+    it('铁律③: onNodesChange 严格过滤锁定泳道与容器的 dimensions 变更', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const laneLocked: FlowNode = {
+        id: 'lane-locked-dim',
+        type: 'lane',
+        position: { x: 0, y: 0 },
+        width: 700,
+        height: 240,
+        data: { label: '锁定泳道', lockMode: 'position' },
+      };
+
+      store.setDiagram([laneLocked], []);
+      store.onNodesChange([
+        {
+          type: 'dimensions',
+          id: 'lane-locked-dim',
+          dimensions: { width: 999, height: 888 },
+          resizing: true,
+          setAttributes: true,
+        } as any,
+      ]);
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const target = latestNodes.find((n) => n.id === 'lane-locked-dim')!;
+      expect(target.width).toBe(700);
+      expect(target.height).toBe(240);
+    });
+
+    it('铁律③: handleNodeDragNesting 拖拽子节点越界时锁定泳道与池尺寸冻结不被自动撑开', async () => {
+      const { handleNodeDragNesting } = await import('../src/features/canvas/utils/lane-nesting-manager.js');
+
+      const pool: FlowNode = {
+        id: 'pool-lock',
+        type: 'pool',
+        position: { x: 50, y: 50 },
+        width: 800,
+        height: 400,
+        data: { label: '池', orientation: 'horizontal', lockMode: 'position' },
+      };
+      const lane: FlowNode = {
+        id: 'lane-lock',
+        type: 'lane',
+        parentId: 'pool-lock',
+        position: { x: 0, y: 40 },
+        width: 800,
+        height: 200,
+        data: { label: '锁定泳道', lockMode: 'position' },
+      };
+      const child: FlowNode = {
+        id: 'child-moving',
+        type: 'process',
+        parentId: 'lane-lock',
+        position: { x: 950, y: 350 },
+        width: 160,
+        height: 80,
+        data: { label: '越界子节点' },
+      };
+
+      const res = handleNodeDragNesting('child-moving', [pool, lane, child]);
+
+      const resLane = res.nextNodes.find((n) => n.id === 'lane-lock')!;
+      const resPool = res.nextNodes.find((n) => n.id === 'pool-lock')!;
+
+      expect(resLane.width).toBe(800);
+      expect(resLane.height).toBe(200);
+      expect(resPool.width).toBe(800);
+      expect(resPool.height).toBe(400);
     });
 
     it('B11: applyMermaidOps 泳道内增量节点横向排列且连线端点校验', async () => {

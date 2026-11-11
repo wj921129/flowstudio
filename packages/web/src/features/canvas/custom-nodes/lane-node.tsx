@@ -101,7 +101,7 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         isHorizontal ? 'flex-row border-b-2' : 'flex-col border-r-2'
       } ${selected ? 'ring-2 ring-[var(--fs-selection-ring)]/50 !border-[var(--fs-selection-ring)]/60' : ''}`}
     >
-      {selected && (
+      {selected && !isNodeLocked(props as any, 'position') && (
         <NodeResizer
           minWidth={isHorizontal ? 400 : 160}
           minHeight={isHorizontal ? 120 : 300}

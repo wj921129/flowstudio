@@ -307,7 +307,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     }
 
     const safeChanges = changes.filter((c) => {
-      if (c.type === 'position') {
+      if (c.type === 'position' || c.type === 'dimensions') {
         if (lockedNodeIds.has(c.id) || lockedContainers.has(c.id)) {
           return false;
         }
@@ -615,6 +615,17 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
           );
           if (hasLockedChild) {
             nodeIdsToDelete.delete(n.id);
+            const unmarkDescendants = (parentId: string) => {
+              for (const child of nodes) {
+                if (child.parentId === parentId) {
+                  if (nodeIdsToDelete.has(child.id)) {
+                    nodeIdsToDelete.delete(child.id);
+                    unmarkDescendants(child.id);
+                  }
+                }
+              }
+            };
+            unmarkDescendants(n.id);
             hasProtectedNodes = true;
           }
         }
@@ -1419,7 +1430,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
             // 撑开池高度
             const requiredPoolH = newLaneY + 200;
-            if ((currentPool.height ?? 0) < requiredPoolH) {
+            if ((currentPool.height ?? 0) < requiredPoolH && !isNodeLocked(currentPool, 'position')) {
               const updatedPool: FlowNode = {
                 ...currentPool,
                 height: requiredPoolH,

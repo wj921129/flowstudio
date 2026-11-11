@@ -10,6 +10,7 @@ import type { FlowNodeData } from '@flowstudio/shared';
 import { Columns3, Rows3, Plus, ArrowLeftRight } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { useFlowStore } from '../../../stores/flow-store';
+import { isNodeLocked } from '../utils/node-lock-manager';
 
 export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected } = props;
@@ -130,7 +131,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         selected ? 'ring-2 ring-[var(--fs-selection-ring)] shadow-md' : 'hover:border-[var(--fs-border)]'
       }`}
     >
-      {selected && (
+      {selected && !isNodeLocked(props as any, 'position') && (
         <NodeResizer
           minWidth={500}
           minHeight={300}

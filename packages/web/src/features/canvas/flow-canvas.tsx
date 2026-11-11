@@ -724,10 +724,20 @@ export const FlowCanvas: React.FC = () => {
           useFlowStore.getState();
 
         const hasFullLocked = curNodes.some(
-          (n) => curSel.includes(n.id) && n.data?.lockMode === 'full'
+          (n) => curSel.includes(n.id) && isNodeLocked(n, 'delete')
         );
+        const hasProtectedContainer = curNodes.some((n) => {
+          if (!curSel.includes(n.id) || !['pool', 'lane', 'group'].includes(n.type ?? '')) return false;
+          const findLockedDescendant = (parentId: string): boolean => {
+            return curNodes.some((child) => child.parentId === parentId && (isNodeLocked(child, 'delete') || findLockedDescendant(child.id)));
+          };
+          return findLockedDescendant(n.id);
+        });
+
         if (hasFullLocked) {
           useFlowStore.getState().showToast('选中的节点已完全锁定，禁止删除');
+        } else if (hasProtectedContainer) {
+          useFlowStore.getState().showToast('该泳道内包含锁定的节点，禁止删除');
         }
 
         if (e.shiftKey) {

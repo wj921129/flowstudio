@@ -5,6 +5,7 @@
 
 import type { FlowNode, XYPosition } from '@flowstudio/shared';
 import { getNodeDimensions } from './group-calculator';
+import { isNodeLocked } from './node-lock-manager';
 
 /**
  * 计算任意节点在画布上的全局世界绝对坐标
@@ -166,8 +167,7 @@ export function handleNodeDragNesting(
     const neededLaneW = Math.max(currentLaneW, maxChildRight + padding);
     const neededLaneH = Math.max(currentLaneH, maxChildBottom + padding);
 
-    if (neededLaneW > currentLaneW || neededLaneH > currentLaneH) {
-      // 扩充泳道尺寸
+    if (!isNodeLocked(targetLane, 'position') && (neededLaneW > currentLaneW || neededLaneH > currentLaneH)) {
       nextNodes = nextNodes.map((n) => {
         if (n.id === targetLane!.id) {
           return {
@@ -180,10 +180,9 @@ export function handleNodeDragNesting(
         return n;
       });
 
-      // 同步扩充所属 Pool 尺寸
       if (targetLane.parentId) {
         const pool = nextNodes.find((n) => n.id === targetLane!.parentId);
-        if (pool) {
+        if (pool && !isNodeLocked(pool, 'position')) {
           const poolLanes = nextNodes.filter((n) => n.parentId === pool.id);
           const isHorizontal = (pool.data?.orientation ?? 'horizontal') === 'horizontal';
 
