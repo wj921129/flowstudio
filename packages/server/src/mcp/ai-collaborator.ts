@@ -63,6 +63,8 @@ function computeSwimlanePlacement(params: {
   laneIds: string[];
   children: SwimlaneChild[];
   globalPositions: Map<string, LayoutPoint>;
+  /** 锁定泳道保持原几何，但仍占据实际区间，后续泳道顺延避让 */
+  fixedFrames?: Map<string, { x: number; y: number; width: number; height: number }>;
 }): SwimlanePlacement {
   const laneChildren = new Map<string, Array<SwimlaneChild & { pos: LayoutPoint }>>();
   for (const laneId of params.laneIds) laneChildren.set(laneId, []);
@@ -109,6 +111,19 @@ function computeSwimlanePlacement(params: {
       innerMaxX = Math.max(innerMaxX, item.pos.x + item.width);
       innerMinY = Math.min(innerMinY, item.pos.y);
       innerMaxY = Math.max(innerMaxY, item.pos.y + item.height);
+    }
+
+    const fixed = params.fixedFrames?.get(laneId);
+    if (fixed) {
+      laneFrames.set(laneId, { ...fixed });
+      if (params.horizontal) {
+        offset = Math.max(offset, fixed.y + fixed.height);
+        crossExtent = Math.max(crossExtent, fixed.width);
+      } else {
+        offset = Math.max(offset, fixed.x + fixed.width);
+        crossExtent = Math.max(crossExtent, fixed.height);
+      }
+      continue;
     }
 
     let width: number;
@@ -374,6 +389,42 @@ export class AiCollaborator {
       }
     }
 
+    const existingById = new Map(existing.nodes.map((node) => [node.id, node]));
+    const removableNodeIds = new Set(
+      existing.nodes.filter((node) => !node.fullLocked).map((node) => node.id),
+    );
+
+    // 全锁节点保留，但若其所属泳道/泳池容器将被重建，必须转为浮动节点：
+    // 清空 parentId 并按祖先链把局部坐标换算成世界坐标，
+    // 否则会留下悬挂 parentId，前端会把泳道局部坐标当世界坐标渲染错位。
+    const floatingPatches = new Map<string, LayoutPoint>();
+    for (const nodeId of keptNodeIds) {
+      const node = existingById.get(nodeId);
+      const parentId = node?.snapshot.parentId;
+      if (typeof parentId !== 'string') continue;
+      if (!removableNodeIds.has(parentId) && existingById.has(parentId)) continue;
+
+      const ownPos = (node?.snapshot.position as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+      let world: LayoutPoint = { x: ownPos.x, y: ownPos.y };
+      let cursor: string | undefined = parentId;
+      const visited = new Set<string>();
+      while (typeof cursor === 'string' && !visited.has(cursor)) {
+        visited.add(cursor);
+        const ancestor = existingById.get(cursor);
+        if (!ancestor) {
+          warnings.push(`节点 ${nodeId} 的父容器 ${cursor} 已不存在，已转为浮动节点`);
+          break;
+        }
+        const ancestorPos = (ancestor.snapshot.position as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+        world = { x: world.x + ancestorPos.x, y: world.y + ancestorPos.y };
+        cursor = ancestor.snapshot.parentId as string | undefined;
+      }
+      floatingPatches.set(nodeId, world);
+      warnings.push(
+        `节点 ${nodeId} 已被人类完全锁定，但所属泳道/泳池将被重建，已转为浮动节点并换算世界坐标`,
+      );
+    }
+
     const hasLanes = Boolean(input.lanes && input.lanes.length > 0);
     const poolId = hasLanes ? this.newEntityId('pool') : undefined;
     const laneIds = hasLanes
@@ -387,6 +438,18 @@ export class AiCollaborator {
       : [];
     const placeableLaneIds = new Set(laneIds);
 
+    const inputNodeIds = new Set(input.nodes.map((node) => node.id));
+    const layoutEdges: Array<{ id: string; sources: string[]; targets: string[] }> = [];
+    input.edges.forEach((edge, idx) => {
+      if (!inputNodeIds.has(edge.source) || !inputNodeIds.has(edge.target)) {
+        warnings.push(
+          `连线端点 ${edge.source} -> ${edge.target} 未纳入本次骨架布局（可能已被人类锁定或不存在），布局阶段忽略`,
+        );
+        return;
+      }
+      layoutEdges.push({ id: `e-${idx}`, sources: [edge.source], targets: [edge.target] });
+    });
+
     const layoutResult = await elkInstance.layout({
       id: 'root',
       layoutOptions: {
@@ -396,7 +459,7 @@ export class AiCollaborator {
         'elk.layered.spacing.nodeNodeBetweenLayers': '80',
       },
       children: input.nodes.map((n) => ({ id: n.id, width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT })),
-      edges: input.edges.map((e, idx) => ({ id: `e-${idx}`, sources: [e.source], targets: [e.target] })),
+      edges: layoutEdges,
     });
 
     const posMap = new Map<string, { x: number; y: number }>();
@@ -457,6 +520,26 @@ export class AiCollaborator {
           afterState: null,
         });
         nodesMap.delete(node.id);
+      }
+
+      // 容器已被清理的锁定节点：脱离原泳道，position 已是世界坐标
+      for (const [nodeId, worldPos] of floatingPatches) {
+        const nodeMap = nodesMap.get(nodeId);
+        if (!nodeMap) continue;
+        const before = snapshotMap(nodeMap);
+        nodeMap.set('position', worldPos);
+        nodeMap.delete('parentId');
+        nodeMap.delete('extent');
+        const after = snapshotMap(nodeMap);
+        if (!deepEqual(before, after)) {
+          diffs.push({
+            entityId: nodeId,
+            entityType: 'node',
+            opType: 'update',
+            beforeState: before,
+            afterState: after,
+          });
+        }
       }
       for (const edge of existing.edges) {
         const keepForLocked = Boolean(
@@ -909,15 +992,57 @@ export class AiCollaborator {
             }
 
             const direction = op.direction ?? 'RIGHT';
-            const sourcePos = (sourceMap.get('position') as { x: number; y: number }) || { x: 0, y: 0 };
-            const targetPos = (targetMap.get('position') as { x: number; y: number }) || { x: 0, y: 0 };
-            const laneId =
-              op.node.laneId ?? (sourceMap.get('parentId') as string | undefined);
 
-            const newNodePos =
+            // 沿 parentId 链累加容器坐标：节点 world = 自身局部坐标 + 各祖先 position
+            const getWorldOrigin = (nodeMap: Y.Map<unknown>): LayoutPoint => {
+              let origin: LayoutPoint = { x: 0, y: 0 };
+              let current: Y.Map<unknown> | undefined = nodeMap;
+              const visited = new Set<Y.Map<unknown>>();
+              while (current && !visited.has(current)) {
+                visited.add(current);
+                const parentId = current.get('parentId');
+                if (typeof parentId !== 'string') break;
+                const parent = nodesMap.get(parentId);
+                if (!parent) break;
+                const parentPos = (parent.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+                origin = { x: origin.x + parentPos.x, y: origin.y + parentPos.y };
+                current = parent;
+              }
+              return origin;
+            };
+            const getWorldPosition = (nodeMap: Y.Map<unknown>): LayoutPoint => {
+              const pos = (nodeMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+              const origin = getWorldOrigin(nodeMap);
+              return { x: pos.x + origin.x, y: pos.y + origin.y };
+            };
+
+            const sourceWorld = getWorldPosition(sourceMap);
+            const targetWorld = getWorldPosition(targetMap);
+
+            let laneId = op.node.laneId ?? (sourceMap.get('parentId') as string | undefined);
+            if (typeof laneId === 'string') {
+              const laneMap = nodesMap.get(laneId);
+              if (!laneMap || laneMap.get('type') !== 'lane') {
+                warnings.push(`目标泳道 ${laneId} 不存在，节点按浮动坐标创建`);
+                laneId = undefined;
+              }
+            }
+            const laneOrigin = typeof laneId === 'string'
+              ? getWorldPosition(nodesMap.get(laneId)!)
+              : { x: 0, y: 0 };
+
+            // 落点统一在世界坐标系计算，再换算回目标泳道局部坐标；
+            // 跨泳道插入时局部坐标不得为负，按泳道内边距收敛。
+            const newNodeWorld: LayoutPoint =
               direction === 'DOWN'
-                ? { x: sourcePos.x, y: sourcePos.y + DEFAULT_NODE_HEIGHT + INSERT_GAP }
-                : { x: sourcePos.x + DEFAULT_NODE_WIDTH + INSERT_GAP, y: sourcePos.y };
+                ? { x: sourceWorld.x, y: sourceWorld.y + DEFAULT_NODE_HEIGHT + INSERT_GAP }
+                : { x: sourceWorld.x + DEFAULT_NODE_WIDTH + INSERT_GAP, y: sourceWorld.y };
+            const newNodePos: LayoutPoint = typeof laneId === 'string'
+              ? {
+                  x: Math.max(LAYOUT_PADDING, newNodeWorld.x - laneOrigin.x),
+                  y: Math.max(LAYOUT_PADDING, newNodeWorld.y - laneOrigin.y),
+                }
+              : newNodeWorld;
 
             createNodeMap({
               id: nodeId,
@@ -968,28 +1093,35 @@ export class AiCollaborator {
               op.downstreamLabel ?? op.edgeLabel,
             );
 
-            // 下游同流向局部顺推
+            // 下游同流向局部顺推（先建一次邻接索引，避免 BFS 内逐节点全量扫边）
+            const outgoing = new Map<string, string[]>();
+            edgesMap.forEach((edgeMap) => {
+              const source = edgeMap.get('source');
+              const target = edgeMap.get('target');
+              if (typeof source !== 'string' || typeof target !== 'string') return;
+              const bucket = outgoing.get(source);
+              if (bucket) bucket.push(target);
+              else outgoing.set(source, [target]);
+            });
+
             const downstream = new Set<string>();
             const queue = [op.target];
             while (queue.length > 0) {
               const currentId = queue.shift()!;
               if (downstream.has(currentId)) continue;
               downstream.add(currentId);
-              edgesMap.forEach((edgeMap) => {
-                if (edgeMap.get('source') === currentId) {
-                  const nextId = edgeMap.get('target') as string;
-                  if (nextId && nextId !== nodeId && nextId !== op.source && !downstream.has(nextId)) {
-                    queue.push(nextId);
-                  }
+              for (const nextId of outgoing.get(currentId) ?? []) {
+                if (nextId && nextId !== nodeId && nextId !== op.source && !downstream.has(nextId)) {
+                  queue.push(nextId);
                 }
-              });
+              }
             }
 
             const minTargetMain =
               direction === 'DOWN'
-                ? newNodePos.y + DEFAULT_NODE_HEIGHT + INSERT_GAP
-                : newNodePos.x + DEFAULT_NODE_WIDTH + INSERT_GAP;
-            const currentMain = direction === 'DOWN' ? targetPos.y : targetPos.x;
+                ? newNodeWorld.y + DEFAULT_NODE_HEIGHT + INSERT_GAP
+                : newNodeWorld.x + DEFAULT_NODE_WIDTH + INSERT_GAP;
+            const currentMain = direction === 'DOWN' ? targetWorld.y : targetWorld.x;
             const shift = minTargetMain - currentMain;
 
             if (shift > 0) {
@@ -1006,12 +1138,14 @@ export class AiCollaborator {
                   continue;
                 }
                 const before = snapshotMap(nodeMap);
-                const pos = (nodeMap.get('position') as { x: number; y: number }) || { x: 0, y: 0 };
+                // 推挤量按世界坐标累加，再换算回该节点所属泳道的局部坐标
+                const world = getWorldPosition(nodeMap);
+                const origin = getWorldOrigin(nodeMap);
                 nodeMap.set(
                   'position',
                   direction === 'DOWN'
-                    ? { x: pos.x, y: pos.y + shift }
-                    : { x: pos.x + shift, y: pos.y },
+                    ? { x: world.x - origin.x, y: world.y + shift - origin.y }
+                    : { x: world.x + shift - origin.x, y: world.y - origin.y },
                 );
                 recordUpdate('node', downstreamId, before, snapshotMap(nodeMap));
               }
@@ -1035,65 +1169,105 @@ export class AiCollaborator {
               }
             }
 
+            // 一次扫描收集受影响泳道的子节点边界，避免逐泳道全量遍历
+            const laneChildExtents = new Map<string, { right: number; bottom: number }>();
+            nodesMap.forEach((childMap, childId) => {
+              const parentId = childMap.get('parentId');
+              if (typeof parentId !== 'string' || !affectedLaneIds.has(parentId)) return;
+              if (childId === parentId) return;
+              const childType = childMap.get('type');
+              if (childType === 'pool' || childType === 'lane') return;
+              const pos = (childMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+              const size = getMapDimensions(childMap);
+              const extent = laneChildExtents.get(parentId) ?? { right: 0, bottom: 0 };
+              extent.right = Math.max(extent.right, pos.x + size.width);
+              extent.bottom = Math.max(extent.bottom, pos.y + size.height);
+              laneChildExtents.set(parentId, extent);
+            });
+
             for (const affectedLaneId of affectedLaneIds) {
               const laneMap = nodesMap.get(affectedLaneId);
-              if (!laneMap) continue;
-
-              let maxChildRight = 0;
-              let maxChildBottom = 0;
-              nodesMap.forEach((childMap, childId) => {
-                if (childId === affectedLaneId) return;
-                if (childMap.get('parentId') !== affectedLaneId) return;
-                const childType = childMap.get('type');
-                if (childType === 'pool' || childType === 'lane') return;
-                const pos = (childMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
-                const size = getMapDimensions(childMap);
-                maxChildRight = Math.max(maxChildRight, pos.x + size.width);
-                maxChildBottom = Math.max(maxChildBottom, pos.y + size.height);
-              });
+              const extent = laneChildExtents.get(affectedLaneId);
+              if (!laneMap || !extent) continue;
 
               const beforeLane = snapshotMap(laneMap);
               const laneSize = getMapDimensions(laneMap);
-              const nextLaneW = Math.max(laneSize.width, maxChildRight + LAYOUT_PADDING);
-              const nextLaneH = Math.max(laneSize.height, maxChildBottom + LAYOUT_PADDING);
+              const nextLaneW = Math.max(laneSize.width, extent.right + LAYOUT_PADDING);
+              const nextLaneH = Math.max(laneSize.height, extent.bottom + LAYOUT_PADDING);
               if (nextLaneW !== laneSize.width || nextLaneH !== laneSize.height) {
                 bumpSize(laneMap, nextLaneW, nextLaneH);
                 recordUpdate('node', affectedLaneId, beforeLane, snapshotMap(laneMap));
               }
+            }
 
-              const poolId = laneMap.get('parentId');
-              if (typeof poolId !== 'string') continue;
+            // 撑开泳道后按 laneOrder 重新堆叠同池兄弟泳道，避免与相邻泳道重叠
+            const touchedPoolIds = new Set<string>();
+            for (const affectedLaneId of affectedLaneIds) {
+              const poolId = nodesMap.get(affectedLaneId)?.get('parentId');
+              if (typeof poolId === 'string' && nodesMap.get(poolId)?.get('type') === 'pool') {
+                touchedPoolIds.add(poolId);
+              }
+            }
+
+            for (const poolId of touchedPoolIds) {
               const poolMap = nodesMap.get(poolId);
-              if (!poolMap || poolMap.get('type') !== 'pool') continue;
+              if (!poolMap) continue;
 
               const poolData = (poolMap.get('data') as Record<string, unknown> | undefined) ?? {};
               const isHorizontal = (poolData.orientation ?? 'horizontal') !== 'vertical';
-              const siblingLanes: Y.Map<unknown>[] = [];
-              nodesMap.forEach((map) => {
+              const headerSize = typeof poolData.headerSize === 'number'
+                ? poolData.headerSize
+                : LANE_HEADER_SIZE;
+
+              const siblingLanes: Array<{ id: string; map: Y.Map<unknown> }> = [];
+              nodesMap.forEach((map, id) => {
                 if (map.get('type') === 'lane' && map.get('parentId') === poolId) {
-                  siblingLanes.push(map);
+                  siblingLanes.push({ id, map });
                 }
               });
+              const laneOrder = orderLaneIds(
+                Array.isArray(poolData.laneOrder) ? (poolData.laneOrder as string[]) : undefined,
+                siblingLanes.map((lane) => ({
+                  id: lane.id,
+                  position: (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
+                })),
+                isHorizontal,
+              );
+
+              let offset = headerSize;
+              let crossExtent = 0;
+              for (const orderedLaneId of laneOrder) {
+                const lane = siblingLanes.find((item) => item.id === orderedLaneId);
+                if (!lane) continue;
+                const size = getMapDimensions(lane.map);
+                const currentPos = (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+                const locked = getNodeLockMode(lane.map) !== 'none';
+
+                if (locked) {
+                  // 锁定泳道保持原位，但占据实际区间，后续泳道顺延避让
+                  offset = Math.max(
+                    offset,
+                    isHorizontal ? currentPos.y + size.height : currentPos.x + size.width,
+                  );
+                } else {
+                  const nextPos = isHorizontal ? { x: 0, y: offset } : { x: offset, y: 0 };
+                  if (currentPos.x !== nextPos.x || currentPos.y !== nextPos.y) {
+                    const beforeLane = snapshotMap(lane.map);
+                    lane.map.set('position', nextPos);
+                    recordUpdate('node', orderedLaneId, beforeLane, snapshotMap(lane.map));
+                  }
+                  offset = Math.max(
+                    offset,
+                    isHorizontal ? nextPos.y + size.height : nextPos.x + size.width,
+                  );
+                }
+                crossExtent = Math.max(crossExtent, isHorizontal ? size.width : size.height);
+              }
 
               const beforePool = snapshotMap(poolMap);
               const poolSize = getMapDimensions(poolMap);
-              let nextPoolW = poolSize.width;
-              let nextPoolH = poolSize.height;
-              if (isHorizontal) {
-                nextPoolW = Math.max(nextPoolW, nextLaneW);
-                const totalLaneHeights = siblingLanes.reduce(
-                  (sum, lane) => sum + getMapDimensions(lane).height,
-                  0,
-                );
-                nextPoolH = Math.max(nextPoolH, totalLaneHeights + LANE_HEADER_SIZE);
-              } else {
-                nextPoolH = Math.max(nextPoolH, nextLaneH);
-                const totalLaneWidths = siblingLanes.reduce(
-                  (sum, lane) => sum + getMapDimensions(lane).width,
-                  0,
-                );
-                nextPoolW = Math.max(nextPoolW, totalLaneWidths + LANE_HEADER_SIZE);
-              }
+              const nextPoolW = Math.max(poolSize.width, isHorizontal ? crossExtent : offset);
+              const nextPoolH = Math.max(poolSize.height, isHorizontal ? offset : crossExtent);
               if (nextPoolW !== poolSize.width || nextPoolH !== poolSize.height) {
                 bumpSize(poolMap, nextPoolW, nextPoolH);
                 recordUpdate('node', poolId, beforePool, snapshotMap(poolMap));
@@ -1147,12 +1321,14 @@ export class AiCollaborator {
       const children: Array<{
         id: string;
         parentId?: string;
+        position: LayoutPoint;
         width: number;
         height: number;
         locked: boolean;
       }> = [];
       const pools: Array<{
         id: string;
+        position: LayoutPoint;
         width: number;
         height: number;
         horizontal: boolean;
@@ -1175,6 +1351,7 @@ export class AiCollaborator {
           const data = (nodeMap.get('data') as Record<string, unknown> | undefined) ?? {};
           pools.push({
             id,
+            position: (nodeMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
             width: size.width,
             height: size.height,
             horizontal: (data.orientation ?? 'horizontal') !== 'vertical',
@@ -1197,6 +1374,7 @@ export class AiCollaborator {
         children.push({
           id,
           parentId: nodeMap.get('parentId') as string | undefined,
+          position: (nodeMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
           width: size.width,
           height: size.height,
           locked: getNodeLockMode(nodeMap) !== 'none',
@@ -1231,6 +1409,22 @@ export class AiCollaborator {
 
     const lockedIds = new Set(graph.children.filter((c) => c.locked).map((c) => c.id));
 
+    // 锁定子节点实际坐标不会移动，泳道 sizing 必须用其实际世界坐标约束，
+    // 否则会按 ELK 虚拟落点留出错误空档或与移动后的兄弟节点重叠。
+    const laneById = new Map(graph.lanes.map((lane) => [lane.id, lane]));
+    const poolById = new Map(graph.pools.map((pool) => [pool.id, pool]));
+    const sizingPositions = new Map(globalPositions);
+    for (const child of graph.children) {
+      if (!child.locked || !child.parentId) continue;
+      const lane = laneById.get(child.parentId);
+      if (!lane) continue;
+      const pool = lane.parentId ? poolById.get(lane.parentId) : undefined;
+      sizingPositions.set(child.id, {
+        x: child.position.x + lane.position.x + (pool?.position.x ?? 0),
+        y: child.position.y + lane.position.y + (pool?.position.y ?? 0),
+      });
+    }
+
     // 预先计算容器几何与子节点局部坐标，mutate 回调内只做同步 Yjs 写入
     const poolUpdates = new Map<string, { width: number; height: number }>();
     const laneUpdates = new Map<string, { x: number; y: number; width: number; height: number }>();
@@ -1252,6 +1446,19 @@ export class AiCollaborator {
       const laneChildren = graph.children.filter(
         (child) => child.parentId && laneIds.includes(child.parentId),
       );
+      const fixedLaneFrames = new Map<
+        string,
+        { x: number; y: number; width: number; height: number }
+      >();
+      for (const lane of poolLanes) {
+        if (!lane.locked) continue;
+        fixedLaneFrames.set(lane.id, {
+          x: lane.position.x,
+          y: lane.position.y,
+          width: lane.width,
+          height: lane.height,
+        });
+      }
       const placement = computeSwimlanePlacement({
         horizontal: pool.horizontal,
         laneIds,
@@ -1261,7 +1468,8 @@ export class AiCollaborator {
           width: child.width,
           height: child.height,
         })),
-        globalPositions,
+        globalPositions: sizingPositions,
+        fixedFrames: fixedLaneFrames,
       });
       poolUpdates.set(pool.id, placement.poolSize);
 
@@ -1296,7 +1504,7 @@ export class AiCollaborator {
       let minY = Infinity;
       let maxY = -Infinity;
       for (const child of laneChildren) {
-        const pos = globalPositions.get(child.id);
+        const pos = sizingPositions.get(child.id);
         if (!pos) continue;
         minX = Math.min(minX, pos.x);
         maxX = Math.max(maxX, pos.x + child.width);
@@ -1312,7 +1520,7 @@ export class AiCollaborator {
         height: Math.max(lane.height, maxY - minY + LAYOUT_PADDING * 2),
       });
       for (const child of laneChildren) {
-        const pos = globalPositions.get(child.id);
+        const pos = sizingPositions.get(child.id);
         if (!pos) continue;
         childPositions.set(child.id, {
           x: Math.max(LAYOUT_PADDING, pos.x - minX + LAYOUT_PADDING),
@@ -1325,7 +1533,7 @@ export class AiCollaborator {
     for (const child of graph.children) {
       if (childPositions.has(child.id)) continue;
       if (child.parentId && graph.lanes.some((lane) => lane.id === child.parentId)) continue;
-      const pos = globalPositions.get(child.id);
+      const pos = sizingPositions.get(child.id);
       if (pos) childPositions.set(child.id, pos);
     }
 
