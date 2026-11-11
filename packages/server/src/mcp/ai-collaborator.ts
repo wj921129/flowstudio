@@ -7,6 +7,7 @@
 import * as Y from 'yjs';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { AiBatchEntityDiff } from '@flowstudio/shared';
+import { getNodeRegistryEntry } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import { DocumentWriter } from '../collaboration/document-writer.js';
@@ -26,6 +27,11 @@ const LAYOUT_PADDING = 40;
 const LANE_HEADER_SIZE = 40;
 
 type LayoutPoint = { x: number; y: number };
+
+function getRegistrySize(type: string): { width: number; height: number } {
+  const entry = getNodeRegistryEntry(type as never);
+  return entry?.defaultSize ?? { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
+}
 
 function getMapDimensions(map: Y.Map<unknown>): { width: number; height: number } {
   return {
@@ -481,7 +487,10 @@ export class AiCollaborator {
       },
       children: input.nodes
         .filter((node) => !keptNodeIds.has(node.id))
-        .map((n) => ({ id: n.id, width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT })),
+        .map((n) => {
+          const size = getRegistrySize(n.type);
+          return { id: n.id, width: size.width, height: size.height };
+        }),
       edges: layoutEdges,
     });
 
@@ -503,12 +512,15 @@ export class AiCollaborator {
                 && placeableLaneIds.has(node.laneId)
                 && !keptNodeIds.has(node.id),
             )
-            .map((node) => ({
-              id: node.id,
-              laneId: node.laneId!,
-              width: DEFAULT_NODE_WIDTH,
-              height: DEFAULT_NODE_HEIGHT,
-            })),
+            .map((node) => {
+              const size = getRegistrySize(node.type);
+              return {
+                id: node.id,
+                laneId: node.laneId!,
+                width: size.width,
+                height: size.height,
+              };
+            }),
           globalPositions: posMap,
         })
       : null;
@@ -523,8 +535,9 @@ export class AiCollaborator {
         .filter((node) => !placement?.childPositions.has(node.id))
         .sort((a, b) => (posMap.get(a.id)?.x ?? 0) - (posMap.get(b.id)?.x ?? 0));
       floatingNodes.forEach((node, index) => {
+        const size = getRegistrySize(node.type);
         floatingPositions.set(node.id, {
-          x: poolOrigin.x + index * (DEFAULT_NODE_WIDTH + INSERT_GAP),
+          x: poolOrigin.x + index * (size.width + INSERT_GAP),
           y: poolOrigin.y + poolHeight + 100,
         });
       });
@@ -628,8 +641,9 @@ export class AiCollaborator {
             ?? posMap.get(node.id)
             ?? { x: 50, y: 50 },
         );
-        nodeMap.set('width', DEFAULT_NODE_WIDTH);
-        nodeMap.set('height', DEFAULT_NODE_HEIGHT);
+        const regSize = getRegistrySize(node.type || 'process');
+        nodeMap.set('width', regSize.width);
+        nodeMap.set('height', regSize.height);
         if (node.laneId && placeableLaneIds.has(node.laneId)) {
           nodeMap.set('parentId', node.laneId);
           nodeMap.set('extent', 'parent');

@@ -10,7 +10,7 @@ const positionSchema = z.object({ x: z.number(), y: z.number() });
 const styleSchema = z.record(z.string(), z.unknown());
 
 /**
- * 允许 AI 创建的 9 种流程节点类型。
+ * 允许 AI 创建的流程 / 形状 / UML / 架构节点类型。
  * pool / lane 是容器结构，只能通过 scaffold_diagram 的 lanes 或 add_lane 创建，
  * 严禁经 add_node / insert_between / scaffold nodes 伪造，否则会破坏「pool → lane → 节点」层级。
  */
@@ -24,6 +24,16 @@ const flowNodeTypeSchema = z.enum([
   'database',
   'comment',
   'group',
+  'uml-lifeline',
+  'uml-activation',
+  'uml-message',
+  'arch-microservice',
+  'arch-gateway',
+  'arch-db-shard',
+  'arch-cache',
+  'arch-k8s-pod',
+  'arch-docker',
+  'rich-card',
 ]);
 
 export const mcpOpSchema = z.discriminatedUnion('op', [

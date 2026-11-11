@@ -29,6 +29,13 @@ export const flowNodeDataSchema = z.object({
   headerSize: z.number().optional(),
   style: z.record(z.string(), z.unknown()).optional(),
   description: z.string().optional(),
+  envTag: z.string().max(32).optional(),
+  protocol: z.string().max(32).optional(),
+  health: z.enum(['ok', 'warn', 'error']).optional(),
+  markdown: z.string().max(20000).optional(),
+  cardStatus: z.enum(['draft', 'wip', 'done']).optional(),
+  owner: z.string().max(64).optional(),
+  messageKind: z.enum(['sync', 'async', 'return']).optional(),
 }).passthrough();
 
 export const flowNodeSchema = z.object({

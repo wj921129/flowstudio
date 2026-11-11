@@ -18,10 +18,20 @@ export const FlowNodeTypeEnum = {
   Group: 'group',
   Pool: 'pool',
   Lane: 'lane',
+  UmlLifeline: 'uml-lifeline',
+  UmlActivation: 'uml-activation',
+  UmlMessage: 'uml-message',
+  ArchMicroservice: 'arch-microservice',
+  ArchGateway: 'arch-gateway',
+  ArchDbShard: 'arch-db-shard',
+  ArchCache: 'arch-cache',
+  ArchK8sPod: 'arch-k8s-pod',
+  ArchDocker: 'arch-docker',
+  RichCard: 'rich-card',
 } as const;
 
 /**
- * 流程图节点类型联合类型（含流程节点与泳道容器）
+ * 流程图节点类型联合类型（含流程节点、泳道容器、UML 图元、架构图元与富文本卡片）
  */
 export type FlowNodeType =
   | 'start-end'
@@ -34,7 +44,17 @@ export type FlowNodeType =
   | 'comment'
   | 'group'
   | 'pool'
-  | 'lane';
+  | 'lane'
+  | 'uml-lifeline'
+  | 'uml-activation'
+  | 'uml-message'
+  | 'arch-microservice'
+  | 'arch-gateway'
+  | 'arch-db-shard'
+  | 'arch-cache'
+  | 'arch-k8s-pod'
+  | 'arch-docker'
+  | 'rich-card';
 
 /**
  * 所有支持的节点类型列表（只读元组）
@@ -51,7 +71,42 @@ export const FLOW_NODE_TYPES: readonly FlowNodeType[] = [
   'group',
   'pool',
   'lane',
+  'uml-lifeline',
+  'uml-activation',
+  'uml-message',
+  'arch-microservice',
+  'arch-gateway',
+  'arch-db-shard',
+  'arch-cache',
+  'arch-k8s-pod',
+  'arch-docker',
+  'rich-card',
 ] as const;
+
+/**
+ * 节点资产库侧边栏分组分类
+ */
+export type NodeCategory = '流程' | '泳道' | '架构' | 'UML' | '形状';
+
+export const NODE_CATEGORIES: readonly NodeCategory[] = ['流程', '泳道', '架构', 'UML', '形状'];
+
+/**
+ * UML 消息箭头类型
+ * - 'sync': 同步消息（实线实心箭头）
+ * - 'async': 异步消息（实线开放箭头）
+ * - 'return': 返回消息（虚线开放箭头）
+ */
+export type UmlMessageKind = 'sync' | 'async' | 'return';
+
+/**
+ * 架构图元健康度指示
+ */
+export type NodeHealth = 'ok' | 'warn' | 'error';
+
+/**
+ * 富文本卡片状态标签
+ */
+export type RichCardStatus = 'draft' | 'wip' | 'done';
 
 /**
  * 坐标位置
@@ -173,6 +228,20 @@ export interface FlowNodeData {
   style?: NodeStyleData;
   /** 节点详细描述说明 */
   description?: string;
+  /** 架构图元：环境标签 (Prod / Staging / Dev) */
+  envTag?: string;
+  /** 架构图元：调用协议 (HTTP / gRPC / Kafka 等) */
+  protocol?: string;
+  /** 架构图元：健康度指示点 */
+  health?: NodeHealth;
+  /** 富文本卡片：Markdown 内容 */
+  markdown?: string;
+  /** 富文本卡片：状态标签 */
+  cardStatus?: RichCardStatus;
+  /** 富文本卡片：负责人昵称（头像气泡） */
+  owner?: string;
+  /** UML 消息箭头类型（仅 uml-message） */
+  messageKind?: UmlMessageKind;
   /** 扩展属性 */
   [key: string]: unknown;
 }
@@ -299,6 +368,8 @@ export interface NodeRegistryEntry {
   defaultSize: Dimensions;
   /** 预定义连接桩集合 */
   handles: NodeHandleDef[];
+  /** 节点资产库侧边栏分组分类 */
+  category: NodeCategory;
   /** MCP / AI Agent 交互描述（用于语义化提示与生成） */
   mcpDescription: string;
 }

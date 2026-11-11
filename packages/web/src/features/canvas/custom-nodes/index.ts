@@ -15,6 +15,16 @@ import { CommentNode } from './comment-node';
 import { GroupNode } from './group-node';
 import { PoolNode } from './pool-node';
 import { LaneNode } from './lane-node';
+import { UmlLifelineNode, UmlActivationNode, UmlMessageNode } from './uml-nodes';
+import {
+  ArchMicroserviceNode,
+  ArchGatewayNode,
+  ArchDbShardNode,
+  ArchCacheNode,
+  ArchK8sPodNode,
+  ArchDockerNode,
+} from './arch-nodes';
+import { RichCardNode } from './rich-card-node';
 
 export const nodeTypes: NodeTypes = {
   'start-end': StartEndNode,
@@ -28,6 +38,16 @@ export const nodeTypes: NodeTypes = {
   group: GroupNode,
   pool: PoolNode,
   lane: LaneNode,
+  'uml-lifeline': UmlLifelineNode,
+  'uml-activation': UmlActivationNode,
+  'uml-message': UmlMessageNode,
+  'arch-microservice': ArchMicroserviceNode,
+  'arch-gateway': ArchGatewayNode,
+  'arch-db-shard': ArchDbShardNode,
+  'arch-cache': ArchCacheNode,
+  'arch-k8s-pod': ArchK8sPodNode,
+  'arch-docker': ArchDockerNode,
+  'rich-card': RichCardNode,
 };
 
 export {
@@ -42,4 +62,14 @@ export {
   GroupNode,
   PoolNode,
   LaneNode,
+  UmlLifelineNode,
+  UmlActivationNode,
+  UmlMessageNode,
+  ArchMicroserviceNode,
+  ArchGatewayNode,
+  ArchDbShardNode,
+  ArchCacheNode,
+  ArchK8sPodNode,
+  ArchDockerNode,
+  RichCardNode,
 };
