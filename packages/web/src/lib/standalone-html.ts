@@ -170,7 +170,23 @@ const renderEdge = (e: FlowEdge, nodes: FlowNode[]): string => {
   );
 };
 
-export function buildStandaloneHtml(title: string, nodes: FlowNode[], edges: FlowEdge[]): string {
+export function buildStandaloneHtml(
+  a: string | FlowNode[],
+  b?: FlowNode[] | FlowEdge[],
+  c?: FlowEdge[] | string
+): string {
+  let title = 'FlowStudio 流程图';
+  let nodes: FlowNode[] = [];
+  let edges: FlowEdge[] = [];
+  if (typeof a === 'string') {
+    title = a;
+    nodes = (b as FlowNode[]) || [];
+    edges = (c as FlowEdge[]) || [];
+  } else {
+    nodes = a || [];
+    edges = (b as FlowEdge[]) || [];
+    title = (c as string) || 'FlowStudio 流程图';
+  }
   const graphNodes = JSON.stringify(nodes).replace(/</g, '\\u003c');
   const graphEdges = JSON.stringify(edges).replace(/</g, '\\u003c');
   const shapesSvg = edges.map((e) => renderEdge(e, nodes)).join('\n') + '\n' + nodes.map((n) => renderNode(n)).join('\n');

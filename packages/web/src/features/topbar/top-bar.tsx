@@ -180,31 +180,63 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     }
   };
 
-  const handleImportJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const content = event.target?.result as string;
-      const res = validateAndParseDiagramJson(content);
-      if (!res.success) {
-        showToast(res.error || 'JSON 解析失败');
-        return;
-      }
+      const lowerName = file.name.toLowerCase();
 
-      if (nodes.length > 0) {
-        const ok = window.confirm(
-          `当前画布已有 ${nodes.length} 个节点。\n点击「确定」将覆盖当前画布内容并导入；点击「取消」中止操作。`
-        );
-        if (!ok) return;
-      }
+      try {
+        if (lowerName.endsWith('.drawio') || /<mxfile|<mxGraphModel/i.test(content)) {
+          const res = await parseDrawioXml(content);
+          if (nodes.length > 0) {
+            const ok = window.confirm(
+              `当前画布已有 ${nodes.length} 个节点。\n点击「确定」将覆盖当前画布内容；点击「取消」中止操作。`
+            );
+            if (!ok) return;
+          }
+          setDiagram(res.nodes, res.edges);
+          showToast(`已成功从 Draw.io 导入 ${res.nodes.length} 个节点`);
+          return;
+        }
 
-      setDiagram(res.nodes || [], res.edges || []);
-      if (res.title) {
-        setDiagramTitle(res.title);
+        if (lowerName.endsWith('.bpmn') || (/<(?:bpmn:)?definitions/i.test(content) && /<process/i.test(content))) {
+          const res = parseBpmnXml(content);
+          if (nodes.length > 0) {
+            const ok = window.confirm(
+              `当前画布已有 ${nodes.length} 个节点。\n点击「确定」将覆盖当前画布内容；点击「取消」中止操作。`
+            );
+            if (!ok) return;
+          }
+          setDiagram(res.nodes, res.edges);
+          showToast(`已成功从 BPMN 导入 ${res.nodes.length} 个节点`);
+          return;
+        }
+
+        const res = validateAndParseDiagramJson(content);
+        if (res.success) {
+          if (nodes.length > 0) {
+            const ok = window.confirm(
+              `当前画布已有 ${nodes.length} 个节点。\n点击「确定」将覆盖当前画布内容并导入；点击「取消」中止操作。`
+            );
+            if (!ok) return;
+          }
+
+          setDiagram(res.nodes || [], res.edges || []);
+          if (res.title) {
+            setDiagramTitle(res.title);
+          }
+          showToast('已成功导入图表工程');
+          return;
+        }
+
+        showToast(res.error || '未识别的文件格式，仅支持 JSON / Draw.io / BPMN 2.0');
+      } catch (err: any) {
+        showToast(`导入失败: ${err?.message || '文件解析错误'}`);
       }
-      showToast('已成功导入图表工程');
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -243,7 +275,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     };
   }, []);
 
-  const handleExport = async (format: 'png' | 'svg' | 'json') => {
+  const handleExport = async (format: 'png' | 'svg' | 'json' | 'bpmn' | 'html') => {
     setIsExportOpen(false);
 
     try {
@@ -257,6 +289,14 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         showToast('正在生成 Retina 超清 PNG...');
         await exportToPng(nodes, edges, storeTitle, 2);
         showToast('已成功导出高清 PNG 图片');
+      } else if (format === 'bpmn') {
+        const xml = diagramToBpmnXml(nodes, edges, storeTitle);
+        downloadFile(`${storeTitle || 'diagram'}.bpmn`, xml, 'application/xml');
+        showToast('已成功导出 BPMN 2.0 规范 XML');
+      } else if (format === 'html') {
+        const html = buildStandaloneHtml(nodes, edges, storeTitle);
+        downloadFile(`${storeTitle || 'diagram'}.html`, html, 'text/html');
+        showToast('已成功导出单文件交互式离线 HTML');
       }
     } catch (error: any) {
       console.error('[TopBar] 导出失败:', error);
@@ -528,10 +568,32 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
                   <span className="text-[10px] text-fs-text-muted">完整画布工程文件</span>
                 </div>
               </button>
+              <button
+                type="button"
+                onClick={() => handleExport('bpmn')}
+                className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <FileOutput className="w-4 h-4 text-fs-text-muted shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-medium">导出为 BPMN 2.0</span>
+                  <span className="text-[10px] text-fs-text-muted">标准流程建模 XML</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('html')}
+                className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <Globe className="w-4 h-4 text-fs-text-muted shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-medium">导出离线 HTML</span>
+                  <span className="text-[10px] text-fs-text-muted">单文件交互式独立查看</span>
+                </div>
+              </button>
 
               <div className="h-px bg-fs-border my-1" />
 
-              {/* 导入外部 JSON */}
+              {/* 导入外部图表 */}
               <button
                 type="button"
                 onClick={() => {
@@ -542,21 +604,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
               >
                 <Upload className="w-4 h-4 text-fs-primary shrink-0" />
                 <div className="flex flex-col">
-                  <span className="font-medium text-fs-primary">导入 JSON 工程</span>
-                  <span className="text-[10px] text-fs-text-muted">恢复或覆盖当前画布</span>
+                  <span className="font-medium text-fs-primary">导入外部图表</span>
+                  <span className="text-[10px] text-fs-text-muted">支持 JSON / Draw.io / BPMN</span>
                 </div>
               </button>
             </div>
           )}
         </div>
 
-        {/* 隐藏的 JSON 文件选择器 */}
+        {/* 隐藏的文件选择器 */}
         <input
           ref={jsonFileInputRef}
           type="file"
-          accept=".json"
+          accept=".json,.drawio,.bpmn,.xml"
           className="hidden"
-          onChange={handleImportJsonFile}
+          onChange={handleImportFile}
         />
 
         <div className="h-4 w-px bg-fs-border" />

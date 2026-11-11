@@ -78,7 +78,7 @@ const readDiWaypoints = (doc: XmlNode): Map<string, XYPosition[]> => {
 
 export function parseBpmnXml(xml: string): BpmnImportResult {
   const warnings: string[] = [];
-  if (!/<definitions/i.test(xml) || !/<process/i.test(xml)) {
+  if (!/<[a-zA-Z0-9_:]*definitions/i.test(xml) || !/<[a-zA-Z0-9_:]*process/i.test(xml)) {
     throw new Error('不是有效的 BPMN 2.0 文件（缺少 definitions/process）');
   }
   const doc = parseXml(xml);
@@ -211,7 +211,7 @@ export function parseBpmnXml(xml: string): BpmnImportResult {
     };
 
     for (const el of process.children) {
-      const tag = el.tag;
+      const tag = el.tag.includes(':') ? el.tag.split(':')[1] : el.tag;
       if (tag === 'laneSet') continue;
       if (EVENT_TAGS.has(tag) || CHILD_TASK_TAGS.has(tag) || GATEWAY_TAGS.has(tag) || DATA_TAGS.has(tag)) {
         addNode(el, tag, laneOf(el.attrs.id || ''));

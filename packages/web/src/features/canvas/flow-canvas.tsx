@@ -20,6 +20,9 @@ import {
   getDefaultNodeSize,
   type FlowNode,
   type FlowEdge,
+  diffMermaidToOps,
+  parseDrawioXml,
+  parseBpmnXml,
 } from '@flowstudio/shared';
 import { generateUniqueId, createNodeFromType } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
@@ -819,6 +822,54 @@ export const FlowCanvas: React.FC = () => {
     setSpotlightTarget,
     isReadOnly,
   ]);
+
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      if (isReadOnly) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('input, textarea, [contenteditable="true"]'))) return;
+      if (clipboardRef.current && clipboardRef.current.length > 0) return;
+      const text = e.clipboardData?.getData('text/plain')?.trim();
+      if (!text) return;
+      if (/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram)\b/i.test(text) || (text.includes('-->') && (text.includes('subgraph') || text.includes('[')))) {
+        try {
+          const curNodes = useFlowStore.getState().nodes;
+          const curEdges = useFlowStore.getState().edges;
+          const diffResult = diffMermaidToOps(text, curNodes, curEdges);
+          if (diffResult.ops.length > 0) {
+            e.preventDefault();
+            const { addedNodes, addedEdges } = useFlowStore.getState().applyMermaidOps(diffResult.ops);
+            useFlowStore.getState().showToast(`剪贴板已智能识别 Mermaid：新增 ${addedNodes} 节点、${addedEdges} 连线`);
+            return;
+          }
+        } catch {}
+      }
+      if (/<mxfile|<mxGraphModel/i.test(text)) {
+        try {
+          e.preventDefault();
+          const res = await parseDrawioXml(text);
+          if (res.nodes.length > 0) {
+            useFlowStore.getState().appendSubgraph(res.nodes, res.edges);
+            useFlowStore.getState().showToast(`剪贴板已智能识别 Draw.io：导入 ${res.nodes.length} 个节点`);
+            return;
+          }
+        } catch {}
+      }
+      if (/<(?:bpmn:)?definitions/i.test(text) && /<process/i.test(text)) {
+        try {
+          e.preventDefault();
+          const res = parseBpmnXml(text);
+          if (res.nodes.length > 0) {
+            useFlowStore.getState().appendSubgraph(res.nodes, res.edges);
+            useFlowStore.getState().showToast(`剪贴板已智能识别 BPMN：导入 ${res.nodes.length} 个节点`);
+            return;
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [isReadOnly]);
 
   // 获取当前正在跟随的主讲人信息
   const followingUser = useMemo(() => {
