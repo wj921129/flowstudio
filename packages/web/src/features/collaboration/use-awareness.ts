@@ -40,7 +40,9 @@ function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): bo
       item.spotlightTargetId === other.spotlightTargetId &&
       joinIds(item.spotlightNodeIds) === joinIds(other.spotlightNodeIds) &&
       item.isAi === other.isAi &&
-      item.agentName === other.agentName
+      item.agentName === other.agentName &&
+      item.aiPlanning?.isPlanning === other.aiPlanning?.isPlanning &&
+      item.aiPlanning?.prompt === other.aiPlanning?.prompt
     );
   });
 }
@@ -69,21 +71,19 @@ export function useAwareness({
   const spotlightNodeIdsRef = useRef(spotlightNodeIds);
   spotlightNodeIdsRef.current = spotlightNodeIds;
 
+  const aiPlanningRef = useRef<{ isPlanning: boolean; prompt?: string } | undefined>(undefined);
+
   const providerRef = useRef(provider);
   providerRef.current = provider;
 
-  // 广播本地用户状态（引用恒定稳定）
   const broadcastLocalState = useCallback(
-    (cursor?: { x: number; y: number } | null, viewport?: { x: number; y: number; zoom: number }) => {
+    (cursor?: { x: number; y: number } | null, viewport?: { x: number; y: number; zoom: number }, aiPlanning?: { isPlanning: boolean; prompt?: string }) => {
       const p = providerRef.current;
       if (!p || !p.awareness) return;
 
-      if (cursor !== undefined) {
-        cursorRef.current = cursor;
-      }
-      if (viewport !== undefined) {
-        viewportRef.current = viewport;
-      }
+      if (cursor !== undefined) cursorRef.current = cursor;
+      if (viewport !== undefined) viewportRef.current = viewport;
+      if (aiPlanning !== undefined) aiPlanningRef.current = aiPlanning;
 
       const curUser = currentUserRef.current;
       const localState: AwarenessUserState = {
@@ -95,6 +95,7 @@ export function useAwareness({
         viewport: viewportRef.current,
         spotlightTargetId: spotlightTargetIdRef.current,
         spotlightNodeIds: spotlightNodeIdsRef.current,
+        aiPlanning: aiPlanningRef.current,
       };
 
       p.awareness.setLocalStateField('user', localState);
@@ -119,6 +120,13 @@ export function useAwareness({
       }
       lastViewportBroadcastRef.current = now;
       broadcastLocalState(cursorRef.current, viewport);
+    },
+    [broadcastLocalState]
+  );
+
+  const broadcastAiPlanning = useCallback(
+    (isPlanning: boolean, prompt?: string) => {
+      broadcastLocalState(cursorRef.current, viewportRef.current, { isPlanning, prompt });
     },
     [broadcastLocalState]
   );
@@ -162,5 +170,6 @@ export function useAwareness({
     remoteUsers,
     broadcastCursor,
     broadcastViewport,
+    broadcastAiPlanning,
   };
 }

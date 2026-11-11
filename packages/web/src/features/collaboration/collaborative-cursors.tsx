@@ -42,6 +42,12 @@ export const CollaborativeCursors: React.FC = () => {
             >
               {user.nickname}
             </span>
+            {user.aiPlanning?.isPlanning && (
+              <span className="flex items-center gap-1 text-[10px] font-bold text-white px-2 py-0.5 rounded-full shadow-lg bg-gradient-to-r from-purple-600 to-indigo-600 animate-pulse whitespace-nowrap border border-white/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                AI 正在规划
+              </span>
+            )}
           </div>
         );
       })}

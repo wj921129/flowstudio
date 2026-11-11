@@ -357,6 +357,7 @@ export interface AwarenessUserState {
   isAi?: boolean;
   /** AI 协作者名称（如 Agent / 模型名） */
   agentName?: string;
+  aiPlanning?: { isPlanning: boolean; prompt?: string };
 }
 
 /**

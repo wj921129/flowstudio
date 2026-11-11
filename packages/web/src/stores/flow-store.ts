@@ -101,6 +101,7 @@ interface FlowStoreInternalState extends FlowStoreState {
   aiReviewBatchId: string | null;
   /** Mermaid 代码抽屉是否展开 */
   mermaidDrawerOpen: boolean;
+  copilotOpen: boolean;
   /** 全局浮动轻提示消息 */
   toastMessage: string | null;
 }
@@ -175,6 +176,7 @@ export interface FlowStoreActions {
   setAiReviewMode: (active: boolean, batchId?: string | null) => void;
   /** 开关 Mermaid 代码抽屉 */
   setMermaidDrawerOpen: (open: boolean) => void;
+  setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   /** 应用 Mermaid 增量融合产生的操作集合 */
   applyMermaidOps: (ops: MermaidBridgeOp[]) => { addedNodes: number; addedEdges: number };
   /** 弹出全局轻提示 Toast */
@@ -277,6 +279,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   aiReviewActive: false,
   aiReviewBatchId: null,
   mermaidDrawerOpen: false,
+  copilotOpen: false,
   toastMessage: null,
 
   onNodesChange: (changes: NodeChange[]) => {
@@ -1295,6 +1298,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       aiReviewActive: false,
       aiReviewBatchId: null,
       mermaidDrawerOpen: false,
+      copilotOpen: false,
       toastMessage: null,
     });
   },
@@ -1346,6 +1350,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setMermaidDrawerOpen: (open: boolean) => {
     set({ mermaidDrawerOpen: open });
+  },
+
+  setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => {
+    set((s) => ({ copilotOpen: typeof open === 'function' ? open(s.copilotOpen) : open }));
   },
 
   showToast: (message: string, duration = 3000) => {

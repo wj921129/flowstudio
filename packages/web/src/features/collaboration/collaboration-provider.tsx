@@ -24,6 +24,7 @@ export interface CollaborationContextValue {
   updateNickname: (name: string) => void;
   broadcastCursor: (cursor: { x: number; y: number } | null) => void;
   broadcastViewport?: (viewport: { x: number; y: number; zoom: number }) => void;
+  broadcastAiPlanning?: (isPlanning: boolean, prompt?: string) => void;
 }
 
 interface CollaborationSession {
@@ -119,7 +120,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   }, [currentUser.isFirstVisit]);
 
   // 协同感知 Hook
-  const { remoteUsers, broadcastCursor, broadcastViewport } = useAwareness({
+  const { remoteUsers, broadcastCursor, broadcastViewport, broadcastAiPlanning } = useAwareness({
     provider: session?.provider ?? null,
     currentUser,
     selectedNodeIds,
@@ -146,6 +147,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       updateNickname: handleUpdateNickname,
       broadcastCursor,
       broadcastViewport,
+      broadcastAiPlanning,
     };
   }, [
     session,
@@ -157,6 +159,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     handleUpdateNickname,
     broadcastCursor,
     broadcastViewport,
+    broadcastAiPlanning,
   ]);
 
   return (

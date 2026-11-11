@@ -18,6 +18,7 @@ import {
   Compass,
   Upload,
   Code2,
+  Bot,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -52,6 +53,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const toggleSpotlightMode = useFlowStore((s) => s.toggleSpotlightMode);
   const mermaidDrawerOpen = useFlowStore((s) => s.mermaidDrawerOpen);
   const setMermaidDrawerOpen = useFlowStore((s) => s.setMermaidDrawerOpen);
+  const copilotOpen = useFlowStore((s) => s.copilotOpen);
+  const setCopilotOpen = useFlowStore((s) => s.setCopilotOpen);
 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -301,6 +304,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         >
           <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
           <span>{isLayouting ? '排版中...' : '自动排版'}</span>
+        </button>
+
+        {/* AI Copilot 交互面板开关 */}
+        <button
+          type="button"
+          onClick={() => setCopilotOpen(!copilotOpen)}
+          title="打开画布内置 AI Copilot 对话交互面板 (Cmd/Ctrl+J)"
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+            copilotOpen
+              ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
+              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
+          }`}
+        >
+          <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
+          <span>AI Copilot</span>
         </button>
 
         {/* </> Mermaid 双向同频抽屉开关 */}

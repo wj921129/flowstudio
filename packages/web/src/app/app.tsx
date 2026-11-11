@@ -17,6 +17,7 @@ import { useSidebarStore } from '../features/sidebar/sidebar-store';
 import { getThemePreset, type ThemePreset } from '../features/sidebar/styles/theme-presets';
 import { instantiateTemplate, type DiagramTemplate } from '../features/sidebar/templates';
 import { TemplateConfirmModal } from '../features/sidebar/components/template-confirm-modal';
+import { CopilotPanel } from '../features/copilot/copilot-panel';
 
 /**
  * 协同编辑器内容工作区
@@ -118,6 +119,7 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
           <FlowCanvas />
         </main>
         <PropertyPanel />
+        <CopilotPanel />
       </div>
 
       <TemplateConfirmModal
