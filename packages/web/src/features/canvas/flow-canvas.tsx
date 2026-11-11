@@ -24,7 +24,7 @@ import {
 import { generateUniqueId, createNodeFromType } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
 import { nodeTypes } from './custom-nodes';
-import { edgeTypes } from './custom-edges';
+import { edgeTypes, EdgeRoutingManager } from './custom-edges';
 import { AlignmentGuides } from './alignment-guides';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
@@ -77,6 +77,10 @@ export const FlowCanvas: React.FC = () => {
   const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
   const setAlignmentSnapEnabled = useFlowStore((s) => s.setAlignmentSnapEnabled);
+
+  useEffect(() => {
+    EdgeRoutingManager.getInstance().updateNodes(nodes);
+  }, [nodes]);
 
   // 拖拽悬停至连线附近的断键预览态状态
   const [hoveredEdgeForInsert, setHoveredEdgeForInsert] = useState<{

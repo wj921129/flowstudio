@@ -1,10 +1,9 @@
-/**
- * @fileoverview 自定义连线组件注册表
- * @description 统一导出 edgeTypes 映射表，将 orthogonal 注册为标准 90° 正交折线
- */
-
 import type { EdgeTypes } from '@xyflow/react';
 import { OrthogonalEdge } from './orthogonal-edge';
+export { EdgeRoutingManager } from './edge-routing-manager';
+export { findObstacleAvoidingPath, findSafeLabelPosition, computeOptimalHandles } from './obstacle-avoidance-router';
+export { buildBridgeJumpPath, extractHorizontalSegments } from './bridge-jump-utils';
+export { buildWaypointPath, deriveDefaultOrthogonalWaypoints } from './waypoint-path-utils';
 
 export const edgeTypes: EdgeTypes = {
   orthogonal: OrthogonalEdge,
