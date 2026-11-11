@@ -1,13 +1,7 @@
-/**
- * @fileoverview 90° 正交直角连线组件 (OrthogonalEdge)
- * @description 支持自动直角走线与用户手动调节折点 (Waypoints)，选中时呈现交互折点手柄
- */
-
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
   useReactFlow,
   Position,
   MarkerType,
@@ -15,22 +9,13 @@ import {
   type Edge,
 } from '@xyflow/react';
 import type { FlowEdgeData, XYPosition } from '@flowstudio/shared';
-import { buildWaypointPath, deriveDefaultOrthogonalWaypoints } from './waypoint-path-utils';
+import { buildWaypointPath, deriveDefaultOrthogonalWaypoints, type EdgeAnchorDirection } from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
+import { EdgeRoutingManager } from './edge-routing-manager';
 
-/** 折点手柄命中区边长 (px)：明显大于可视圆点，保证缩放后仍可稳定点中 */
 const WAYPOINT_HIT_SIZE = 22;
-
-/**
- * 连线终端箭头停靠间距 (px)：
- * 略微缩进 2.5px，使箭头尖端刚好停留在图元边框外沿与焦点环外圈之间，
- * 既杜绝了尖端被图元实色填充、边框或高亮选择环遮挡，又避免了悬空过远的不自然感
- */
 export const TERMINAL_ARROW_DOCKING_GAP = 2.5;
 
-/**
- * 计算终点停靠端点坐标，根据目标锚点方位沿法线方向反向偏移
- */
 export function getDockingEndpoint(
   x: number,
   y: number,
@@ -55,9 +40,6 @@ export function getDockingEndpoint(
   }
 }
 
-/**
- * 动态计算 SmoothStep 折角步进偏移，防止近距离（< 40px）两图元间走线回折与过度前突
- */
 export function calcStepOffset(
   sX: number,
   sY: number,
@@ -85,7 +67,6 @@ export function calcStepOffset(
   return 20;
 }
 
-/** 拖拽中的折点暂存态：仅存于本地，避免每帧写历史与 Yjs 造成手柄闪烁 */
 interface WaypointDragState {
   index: number;
   points: XYPosition[];
@@ -94,6 +75,8 @@ interface WaypointDragState {
 
 export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -130,7 +113,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     ...style,
   };
 
-  // 确保 markerEnd 颜色与连线完全一致（含选中高亮色及自定义描边色）
   const resolvedMarkerEnd = markerEnd
     ? typeof markerEnd === 'object' && markerEnd !== null
       ? {
@@ -152,7 +134,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       : markerStart
     : undefined;
 
-  // 停靠端点修正：有箭头时沿目标方向回缩微小间距，露出完整箭头尖端且间距平滑
   const hasMarkerEnd = Boolean(resolvedMarkerEnd);
   const dockTarget = hasMarkerEnd
     ? getDockingEndpoint(targetX, targetY, targetPosition, TERMINAL_ARROW_DOCKING_GAP)
@@ -163,59 +144,58 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     ? getDockingEndpoint(sourceX, sourceY, sourcePosition, TERMINAL_ARROW_DOCKING_GAP)
     : { x: sourceX, y: sourceY };
 
-  let edgePath: string;
-  let labelX: number;
-  let labelY: number;
-
-  if (hasWaypoints) {
-    const res = buildWaypointPath(
-      dockSource,
-      dockTarget,
-      waypoints
-    );
-    edgePath = res.path;
-    labelX = res.labelPosition.x;
-    labelY = res.labelPosition.y;
-  } else {
-    const stepOffset = calcStepOffset(
-      dockSource.x,
-      dockSource.y,
-      sourcePosition,
-      dockTarget.x,
-      dockTarget.y,
-      targetPosition
-    );
-    const [path, lx, ly] = getSmoothStepPath({
-      sourceX: dockSource.x,
-      sourceY: dockSource.y,
-      sourcePosition,
-      targetX: dockTarget.x,
-      targetY: dockTarget.y,
-      targetPosition,
-      borderRadius: 0,
-      offset: stepOffset,
-    });
-    edgePath = path;
-    labelX = lx;
-    labelY = ly;
+  const manager = EdgeRoutingManager.getInstance();
+  if (manager.getObstacles().length === 0) {
+    const currentNodes = useFlowStore.getState().nodes;
+    if (currentNodes.length > 0) manager.updateNodes(currentNodes);
   }
 
-  // 添加初始折点
+  const computedRoute = useMemo(() => {
+    return manager.routeEdge({
+      id,
+      source: dockSource,
+      target: dockTarget,
+      sourcePosition: sourcePosition as EdgeAnchorDirection,
+      targetPosition: targetPosition as EdgeAnchorDirection,
+      sourceNodeId: source,
+      targetNodeId: target,
+      manualWaypoints: waypoints,
+      label: data?.label,
+    });
+  }, [
+    id,
+    dockSource.x,
+    dockSource.y,
+    dockTarget.x,
+    dockTarget.y,
+    sourcePosition,
+    targetPosition,
+    source,
+    target,
+    waypoints,
+    data?.label,
+  ]);
+
+  const edgePath = computedRoute.path;
+  const labelX = computedRoute.labelPosition.x;
+  const labelY = computedRoute.labelPosition.y;
+
   const handleAddDefaultWaypoint = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const initial = deriveDefaultOrthogonalWaypoints(
-        { x: sourceX, y: sourceY },
-        { x: targetX, y: targetY },
-        sourcePosition,
-        targetPosition
-      );
+      const initial = computedRoute?.waypoints?.length
+        ? computedRoute.waypoints
+        : deriveDefaultOrthogonalWaypoints(
+            { x: sourceX, y: sourceY },
+            { x: targetX, y: targetY },
+            sourcePosition as EdgeAnchorDirection,
+            targetPosition as EdgeAnchorDirection
+          );
       useFlowStore.getState().updateEdgeData(id, { waypoints: initial });
     },
-    [id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]
+    [id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, computedRoute]
   );
 
-  // 清除自定义折点（恢复自动直角走线）
   const handleResetWaypoints = useCallback(
     (e: React.MouseEvent | React.PointerEvent) => {
       e.stopPropagation();
@@ -225,10 +205,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     [id]
   );
 
-  /**
-   * 折点拖拽起始：位移全程由 screenToFlowPosition 反算画布坐标，缩放 ≠ 1 时手柄才会
-   * 与光标 1:1 同步；监听挂在 window 上，指针滑出手柄小圆点也不会丢事件
-   */
   const handleWaypointPointerDown = useCallback(
     (index: number, e: React.PointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
@@ -258,10 +234,8 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
       let detach = () => {};
 
-      // 松手（或指针被系统打断）时才一次性落库：一次拖拽只产生一条历史与一次协同提交
       const finish = () => {
         detach();
-
         const state = dragRef.current;
         dragRef.current = null;
         setDragWaypoints(null);
@@ -292,8 +266,10 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     [storedWaypoints, screenToFlowPosition, id]
   );
 
-  // 组件卸载（连线被删、图切换）时兜底摘除 window 监听
-  useEffect(() => () => dragEndRef.current(), []);
+  useEffect(() => () => {
+    dragEndRef.current();
+    manager.unregisterEdge(id);
+  }, [id]);
 
   return (
     <>
@@ -306,7 +282,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       />
 
       <EdgeLabelRenderer>
-        {/* 连线文字标签 */}
         {data?.label && (
           <div
             style={{
@@ -320,7 +295,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
           </div>
         )}
 
-        {/* 选中时的折点交互手柄 */}
         {selected && (
           <>
             {hasWaypoints ? (
