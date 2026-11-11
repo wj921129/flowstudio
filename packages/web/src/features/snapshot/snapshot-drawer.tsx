@@ -6,7 +6,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { History, X, Plus, RotateCcw, Sparkles, User, Clock, ShieldCheck } from 'lucide-react';
 import type { SnapshotSummary } from '@flowstudio/shared';
+import * as Y from 'yjs';
 import { apiClient } from '../../lib/api-client';
+import { useCollaboration } from '../collaboration/collaboration-provider';
 
 export interface SnapshotDrawerProps {
   isOpen: boolean;
@@ -26,6 +28,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
   const [newLabel, setNewLabel] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [revertingId, setRevertingId] = useState<string | null>(null);
+  const collab = useCollaboration();
 
   const loadSnapshots = useCallback(async () => {
     if (!diagramId) return;
@@ -65,20 +68,28 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
 
   const handleRestore = async (snapshotId: string, label: string) => {
     if (!diagramId || revertingId) return;
-
-    // 高危防误触二次确认护栏：恢复前确认并自动创建备份
-    const confirmed = window.confirm(
-      `确定要恢复至历史快照「${label}」吗？\n恢复前系统将自动为当前画布创建一份安全备份快照。`
-    );
+    const confirmed = window.confirm(`确定要恢复至历史快照「${label}」吗？\n恢复前系统将自动为当前画布创建一份安全备份快照。`);
     if (!confirmed) return;
 
     try {
       setRevertingId(snapshotId);
-      // 自动安全备份当前画布
       try {
         await apiClient.createSnapshot(diagramId, `[系统安全备份] 恢复「${label}」前`);
       } catch (err) {
         console.warn('[SnapshotDrawer] 自动备份快照失败:', err);
+      }
+
+      if (collab?.doc) {
+        const deltaRes = await apiClient.restoreSnapshot(diagramId, snapshotId, { mode: 'delta' });
+        if (deltaRes.success && deltaRes.update) {
+          const binary = Uint8Array.from(atob(deltaRes.update), (c) => c.charCodeAt(0));
+          collab.undoManager?.stopCapturing?.();
+          Y.applyUpdate(collab.doc, binary, `snapshot-restore:${snapshotId}`);
+          collab.undoManager?.stopCapturing?.();
+          onToast?.(`已成功恢复至「${label}」版本`);
+          onClose();
+          return;
+        }
       }
 
       const res = await apiClient.restoreSnapshot(diagramId, snapshotId);

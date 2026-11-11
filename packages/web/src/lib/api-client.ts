@@ -71,9 +71,11 @@ export const apiClient = {
     return res.json();
   },
 
-  async restoreSnapshot(diagramId: string, snapshotId: string): Promise<{ success: boolean; message?: string }> {
+  async restoreSnapshot(diagramId: string, snapshotId: string, options?: { mode?: 'apply' | 'delta' }): Promise<{ success: boolean; message?: string; mode?: 'apply' | 'delta'; update?: string }> {
     const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options ?? {}),
     });
     if (!res.ok) throw new Error(`恢复快照失败: ${res.statusText}`);
     return res.json();

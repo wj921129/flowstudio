@@ -296,6 +296,40 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       undoManager.destroy();
       doc.destroy();
     });
+
+    it('快照恢复二进制差量以 snapshot-restore:<id> origin 应用到 Y.Doc，被 CollaborativeUndoManager 捕获并成功 Ctrl+Z 撤销', () => {
+      const doc = new Y.Doc();
+      const undoManager = new CollaborativeUndoManager(doc, 'local-user');
+      const nodesMap = doc.getMap('nodes');
+
+      doc.transact(() => {
+        nodesMap.set('n1', { label: '初始1' });
+        nodesMap.set('n2', { label: '初始2' });
+        nodesMap.set('post', { label: '快照后新增' });
+      }, 'remote-or-initial');
+      undoManager.clear();
+      expect(undoManager.canUndo()).toBe(false);
+
+      const clone = new Y.Doc();
+      Y.applyUpdate(clone, Y.encodeStateAsUpdate(doc));
+      const vector = Y.encodeStateVector(clone);
+      clone.getMap('nodes').delete('post');
+      const deltaUpdate = Y.encodeStateAsUpdate(clone, vector);
+      clone.destroy();
+
+      undoManager.stopCapturing();
+      Y.applyUpdate(doc, deltaUpdate, 'snapshot-restore:snap-ac3');
+      undoManager.stopCapturing();
+
+      expect(nodesMap.has('post')).toBe(false);
+      expect(undoManager.canUndo()).toBe(true);
+
+      undoManager.undo();
+      expect(nodesMap.has('post')).toBe(true);
+
+      undoManager.destroy();
+      doc.destroy();
+    });
   });
 
   describe('F1 & F6: 协同生命周期与 Awareness 节流防风暴', () => {
