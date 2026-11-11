@@ -152,6 +152,50 @@ describe('Web AI Copilot Panel & Human-AI Co-Governance Engine', () => {
     expect(result.plan?.scaffold.edges.length).toBeGreaterThan(0);
   });
 
+  it('matches PRD 3.1 core phrase 帮我细化选中这三个节点的异常补偿逻辑 to planBranch with compensation nodes', () => {
+    const threeNodes: FlowNode[] = [
+      { id: 'n1', type: 'process', position: { x: 0, y: 0 }, data: { label: '步骤1' } },
+      { id: 'n2', type: 'process', position: { x: 100, y: 0 }, data: { label: '步骤2' } },
+      { id: 'n3', type: 'process', position: { x: 200, y: 0 }, data: { label: '步骤3' } },
+    ];
+    const result = planFromNaturalLanguage(
+      {
+        diagramId: 'test-diagram',
+        nodes: threeNodes,
+        edges: [],
+        selectedNodes: threeNodes,
+      },
+      '帮我细化选中这三个节点的异常补偿逻辑'
+    );
+
+    expect(result.plan).toBeDefined();
+    expect(result.plan?.tool).toBe('apply_ops');
+    const ops = result.plan!.ops!;
+    const decNodes = ops.filter((o) => o.op === 'add_node' && o.type === 'decision');
+    const failNodes = ops.filter((o) => o.op === 'add_node' && o.label.includes('异常补偿'));
+    expect(decNodes.length).toBe(3);
+    expect(failNodes.length).toBe(3);
+  });
+
+  it('correctly matches lane keyword when followed by comma', () => {
+    const prompt = '在订单支付节点后增加风控校验，放到风控泳道，若未通过则驳回至用户';
+    const result = planFromNaturalLanguage(
+      {
+        diagramId: 'test-diagram',
+        nodes: mockNodes,
+        edges: mockEdges,
+        selectedNodes: [mockNodes[0]],
+      },
+      prompt
+    );
+
+    expect(result.plan).toBeDefined();
+    const ops = result.plan!.ops!;
+    const addedDec = ops.find((o) => o.op === 'add_node' && o.label === '风控校验');
+    expect(addedDec).toBeDefined();
+    expect(addedDec?.laneId).toBe('lane-risk');
+  });
+
   it('executes apply_ops and scaffold_diagram via MCP JSON-RPC call and handles revert', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url === '/mcp') {

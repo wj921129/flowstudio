@@ -57,25 +57,42 @@ export const CollaboratorAvatars: React.FC = () => {
         {/* 远端用户头像（点击可开启/退出局域网带看跟随模式） */}
         {remoteUsers.slice(0, 4).map((user) => {
           const isFollowing = followingUserId === user.clientId;
+          const isPlanning = Boolean(user.aiPlanning?.isPlanning);
           return (
-            <button
-              key={user.clientId}
-              type="button"
-              onClick={() => setFollowingUser(isFollowing ? null : user.clientId)}
-              title={
-                isFollowing
-                  ? `正在跟随 ${user.nickname} 的视角 (点击退出跟随)`
-                  : `点击跟随 ${user.nickname} 的视角 (实时同步缩放与聚光灯链路)`
-              }
-              className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-xs font-bold border-2 transition-transform hover:scale-110 hover:z-10 cursor-pointer shadow-xs ${
-                isFollowing
-                  ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110 z-10'
-                  : 'border-white ring-1 ring-black/10'
-              }`}
-              style={{ backgroundColor: user.color }}
-            >
-              {user.nickname.slice(0, 1)}
-            </button>
+            <div key={user.clientId} className="relative inline-flex">
+              <button
+                type="button"
+                onClick={() => setFollowingUser(isFollowing ? null : user.clientId)}
+                title={
+                  isPlanning
+                    ? `${user.nickname} 正在调用 AI 规划中... (点击跟随视角)`
+                    : isFollowing
+                    ? `正在跟随 ${user.nickname} 的视角 (点击退出跟随)`
+                    : `点击跟随 ${user.nickname} 的视角 (实时同步缩放与聚光灯链路)`
+                }
+                className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-xs font-bold border-2 transition-transform hover:scale-110 hover:z-10 cursor-pointer shadow-xs ${
+                  isFollowing
+                    ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110 z-10'
+                    : isPlanning
+                    ? 'border-purple-400 ring-2 ring-purple-400/60 animate-pulse z-10'
+                    : 'border-white ring-1 ring-black/10'
+                }`}
+                style={{ backgroundColor: user.color }}
+              >
+                {user.nickname.slice(0, 1)}
+              </button>
+              {isPlanning && (
+                <span
+                  title={`${user.nickname} 正在使用 AI 规划中...`}
+                  className="absolute -top-1 -right-1 flex h-3 w-3 pointer-events-none z-20"
+                >
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-purple-600 text-[8px] text-white items-center justify-center font-bold">
+                    ✨
+                  </span>
+                </span>
+              )}
+            </div>
           );
         })}
 

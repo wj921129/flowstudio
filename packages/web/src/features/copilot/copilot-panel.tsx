@@ -38,6 +38,18 @@ export const CopilotPanel: React.FC = () => {
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
   const [includeSelection, setIncludeSelection] = useState(true);
 
+  const prevSelectedIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    if (selectedNodeIds.length > 0) {
+      const prev = prevSelectedIdsRef.current;
+      const isChanged = prev.length !== selectedNodeIds.length || selectedNodeIds.some((id) => !prev.includes(id));
+      if (isChanged) {
+        setIncludeSelection(true);
+      }
+    }
+    prevSelectedIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 

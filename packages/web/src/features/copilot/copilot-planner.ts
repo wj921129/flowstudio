@@ -112,58 +112,66 @@ export function generateTestCases(nodes: FlowNode[], edges: FlowEdge[]): string 
 }
 
 export function planBranch(ctx: PlanContext, promptText: string): PlanResult {
-  const targetNode = ctx.selectedNodes[0] || ctx.nodes.find((n) => n.type !== 'pool' && n.type !== 'lane');
-  if (!targetNode) {
+  const targetNodes = ctx.selectedNodes.length > 0
+    ? ctx.selectedNodes
+    : [ctx.nodes.find((n) => n.type !== 'pool' && n.type !== 'lane')].filter(Boolean) as FlowNode[];
+
+  if (targetNodes.length === 0) {
     return { text: '画布中尚无节点，请先创建节点后再为其补充异常分支。' };
   }
 
-  const targetLabel = getNodeLabel(targetNode);
-  const decisionLabel = `${targetLabel}校验`;
-  const failLabel = `${targetLabel}异常驳回`;
+  const isCompensation = promptText.includes('补偿');
+  const ops: any[] = [];
+  const details: string[] = [];
 
-  const decisionId = `node-ai-${Date.now()}-dec`;
-  const failId = `node-ai-${Date.now()}-fail`;
+  targetNodes.forEach((node, idx) => {
+    const label = getNodeLabel(node);
+    const decLabel = `${label}校验`;
+    const failLabel = isCompensation ? `${label}异常补偿` : `${label}异常驳回`;
+    const decId = `node-ai-${Date.now()}-${idx}-dec`;
+    const failId = `node-ai-${Date.now()}-${idx}-fail`;
 
-  const ops = [
-    {
-      op: 'add_node',
-      id: decisionId,
-      type: 'decision',
-      label: decisionLabel,
-      laneId: targetNode.parentId,
-    },
-    {
-      op: 'add_node',
-      id: failId,
-      type: 'process',
-      label: failLabel,
-      laneId: targetNode.parentId,
-    },
-    {
-      op: 'connect',
-      source: targetNode.id,
-      target: decisionId,
-    },
-    {
-      op: 'connect',
-      source: decisionId,
-      target: failId,
-      label: '校验未通过',
-    },
-  ];
+    ops.push(
+      {
+        op: 'add_node',
+        id: decId,
+        type: 'decision',
+        label: decLabel,
+        laneId: node.parentId,
+      },
+      {
+        op: 'add_node',
+        id: failId,
+        type: 'process',
+        label: failLabel,
+        laneId: node.parentId,
+      },
+      {
+        op: 'connect',
+        source: node.id,
+        target: decId,
+      },
+      {
+        op: 'connect',
+        source: decId,
+        target: failId,
+        label: '校验未通过',
+      }
+    );
 
+    details.push(
+      `+ 为「${label}」新增决策校验 [${decLabel}] 与${isCompensation ? '异常补偿' : '异常驳回'} [${failLabel}]`
+    );
+  });
+
+  const nodeNames = targetNodes.map(getNodeLabel).join('、');
   return {
-    text: `已为节点 **「${targetLabel}」** 规划异常校验与驳回分支。以下为增量操作意图预览：`,
+    text: `已为节点 **「${nodeNames}」** 细化规划异常校验与处理分支。以下为增量操作意图预览：`,
     plan: {
       id: `plan-${Date.now()}`,
       tool: 'apply_ops',
-      summary: `为「${targetLabel}」增加决策校验与异常驳回节点（新增 2 节点，新增 2 连线）`,
-      details: [
-        `+ 新增决策节点 [decision] ${decisionLabel}`,
-        `+ 新增异常处理节点 [process] ${failLabel}`,
-        `+ 新增连线 ${targetLabel} → ${decisionLabel}`,
-        `+ 新增连线 ${decisionLabel} → ${failLabel} [校验未通过]`,
-      ],
+      summary: `为 ${targetNodes.length} 个节点细化异常逻辑（新增 ${ops.filter((o) => o.op === 'add_node').length} 节点，新增 ${ops.filter((o) => o.op === 'connect').length} 连线）`,
+      details,
       ops,
     },
   };
@@ -229,7 +237,14 @@ export function planFromNaturalLanguage(ctx: PlanContext, prompt: string): PlanR
     return { text: generateTestCases(ctx.nodes, ctx.edges) };
   }
 
-  if (p.startsWith('/branch') || p.includes('异常分支') || p.includes('补充异常')) {
+  if (
+    p.startsWith('/branch') ||
+    p.includes('异常分支') ||
+    p.includes('补充异常') ||
+    p.includes('异常补偿') ||
+    p.includes('补偿逻辑') ||
+    p.includes('细化')
+  ) {
     return planBranch(ctx, p);
   }
 
@@ -316,9 +331,12 @@ export function planFromNaturalLanguage(ctx: PlanContext, prompt: string): PlanR
     const details: string[] = [];
 
     let targetLaneId: string | undefined = undefined;
-    const laneKeyword = p.match(/(?:放到|在|归入|泳道)\s*([^\s,，]+?)(?:泳道)?(?:\s|$)/);
+    const laneKeyword =
+      p.match(/(?:放到|在|归入|进入)?\s*([^\s,，]+?)泳道/) ||
+      p.match(/(?:放到|在|归入)\s*([^\s,，]+?)(?:泳道)?(?=[,，\s]|$)/);
     if (laneKeyword) {
-      const matchedLane = findLaneByKeyword(ctx.nodes, laneKeyword[1]);
+      const kw = laneKeyword[1] || laneKeyword[2];
+      const matchedLane = findLaneByKeyword(ctx.nodes, kw);
       if (matchedLane) targetLaneId = matchedLane.id;
     }
 
