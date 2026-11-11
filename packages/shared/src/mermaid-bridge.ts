@@ -395,6 +395,7 @@ export function diffMermaidToOps(
   }
 
   const existingLanes = existingNodes.filter((n) => n.type === 'lane');
+  const existingPools = existingNodes.filter((n) => n.type === 'pool');
 
   const resolvedIds = new Map<string, string>();
   const result: MermaidDiffResult = {
@@ -410,7 +411,10 @@ export function diffMermaidToOps(
 
   const laneResolve = new Map<string, string>();
   for (const lane of parsed.lanes) {
-    const matched = existingLanes.find(
+    const matchedLane = existingLanes.find(
+      (candidate) => candidate.id === lane.id || candidate.data?.label === lane.label,
+    );
+    const matched = matchedLane ?? existingPools.find(
       (candidate) => candidate.id === lane.id || candidate.data?.label === lane.label,
     );
     if (matched) {

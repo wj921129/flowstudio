@@ -223,6 +223,42 @@ describe('Mermaid 双向语义桥', () => {
     expect(result2.ops).toContainEqual({ op: 'disconnect', edgeId: 'e-ab' });
   });
 
+  it('含泳道池往返同步不产生幻影 add_lane，laneOrder 不被污染且幂等', () => {
+    const pool = makeNode('pool-1', 'pool', '业务泳道池', {
+      data: {
+        label: '业务泳道池',
+        type: 'pool',
+        orientation: 'horizontal',
+        laneOrder: ['lane-a', 'lane-b'],
+      },
+    });
+    const laneA = makeNode('lane-a', 'lane', '前端组', {
+      parentId: 'pool-1',
+      data: { label: '前端组', type: 'lane', laneTitle: '前端组' },
+    });
+    const laneB = makeNode('lane-b', 'lane', '后端组', {
+      parentId: 'pool-1',
+      data: { label: '后端组', type: 'lane', laneTitle: '后端组' },
+    });
+    const n1 = makeNode('n-1', 'start-end', '开始', { parentId: 'lane-a' });
+    const n2 = makeNode('n-2', 'process', '处理', { parentId: 'lane-b' });
+    const nodes = [pool, laneA, laneB, n1, n2];
+    const edges = [makeEdge('e-1', 'n-1', 'n-2')];
+
+    const text = diagramToMermaid(nodes, edges);
+    const diff = diffMermaidToOps(text, nodes, edges);
+    expect(diff.ops).toEqual([]);
+    expect(diff.addedLaneIds).toEqual([]);
+    expect(diff.addedNodeIds).toEqual([]);
+
+    const n3 = makeNode('n-3', 'process', '新增步骤', { parentId: 'lane-a' });
+    const text2 = diagramToMermaid([...nodes, n3], edges);
+    const diff2 = diffMermaidToOps(text2, nodes, edges);
+    expect(diff2.addedLaneIds).toEqual([]);
+    expect(diff2.ops.some((op) => op.op === 'add_lane')).toBe(false);
+    expect(diff2.addedNodeIds).toEqual(['n-3']);
+  });
+
   it('新增泳道产出 add_lane，并将新节点挂载到对应泳道', () => {
     const text = [
       'flowchart LR',

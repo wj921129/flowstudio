@@ -819,6 +819,46 @@ export class AiCollaborator {
         return edgeId;
       };
 
+      const findAddNodePosition = (laneId: string | undefined): LayoutPoint => {
+        const siblings: Array<{ x: number; y: number; width: number; height: number }> = [];
+        nodesMap.forEach((map) => {
+          const parentId = map.get('parentId');
+          if (laneId ? parentId !== laneId : typeof parentId === 'string') return;
+          const type = map.get('type');
+          if (type === 'pool' || type === 'lane') return;
+          const size = getMapDimensions(map);
+          const pos = (map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+          siblings.push({ x: pos.x, y: pos.y, width: size.width, height: size.height });
+        });
+        const container = laneId ? nodesMap.get(laneId) : undefined;
+        const containerSize = container ? getMapDimensions(container) : undefined;
+        const boundWidth = containerSize ? containerSize.width : Infinity;
+        const boundHeight = containerSize ? containerSize.height : Infinity;
+        const collides = (x: number, y: number) =>
+          siblings.some(
+            (r) =>
+              x < r.x + r.width + INSERT_GAP
+              && x + DEFAULT_NODE_WIDTH + INSERT_GAP > r.x
+              && y < r.y + r.height + INSERT_GAP
+              && y + DEFAULT_NODE_HEIGHT + INSERT_GAP > r.y,
+          );
+        const maxCols = boundWidth === Infinity
+          ? 50
+          : Math.max(1, Math.floor((boundWidth - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_WIDTH + INSERT_GAP)));
+        const maxRows = boundHeight === Infinity
+          ? 1
+          : Math.max(1, Math.floor((boundHeight - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_HEIGHT + INSERT_GAP)));
+        for (let row = 0; row < maxRows; row++) {
+          for (let col = 0; col < maxCols; col++) {
+            const x = LAYOUT_PADDING + col * (DEFAULT_NODE_WIDTH + INSERT_GAP);
+            const y = LAYOUT_PADDING + row * (DEFAULT_NODE_HEIGHT + INSERT_GAP);
+            if (!collides(x, y)) return { x, y };
+          }
+        }
+        const maxRight = siblings.reduce((max, r) => Math.max(max, r.x + r.width), LAYOUT_PADDING);
+        return { x: maxRight + INSERT_GAP, y: LAYOUT_PADDING };
+      };
+
       for (const op of input.ops) {
         switch (op.op) {
           case 'add_node': {
@@ -831,7 +871,7 @@ export class AiCollaborator {
               id: nodeId,
               type: op.type || 'process',
               label: op.label,
-              position: { x: 100 + appliedCount * 180, y: 100 },
+              position: findAddNodePosition(op.laneId),
               laneId: op.laneId,
               style: op.style,
             });

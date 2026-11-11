@@ -738,4 +738,75 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
 
     await server.app.close();
   }, 20000);
+
+  it('B: add_node 按空闲位落点，跨调用不与既有节点重叠且不越出泳道', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '新增落点图' });
+
+    const doc = new Y.Doc();
+    const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+    nodes.set(
+      'lane-a',
+      makeNode('lane-a', '泳道A', { x: 0, y: 0 }, { type: 'lane', width: 400, height: 600 }),
+    );
+    nodes.set('existing', makeNode('existing', '既有节点', { x: 40, y: 40 }, { parentId: 'lane-a' }));
+    server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+
+    const first = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'add_node', id: 'n-1', type: 'process', label: '新增一', laneId: 'lane-a' }],
+    });
+    expect(first.success).toBe(true);
+    const second = await callTool(server, 2, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'add_node', id: 'n-2', type: 'process', label: '新增二', laneId: 'lane-a' }],
+    });
+    expect(second.success).toBe(true);
+    const third = await callTool(server, 3, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [
+        { op: 'add_node', id: 'f-1', type: 'process', label: '浮动一' },
+        { op: 'add_node', id: 'f-2', type: 'process', label: '浮动二' },
+      ],
+    });
+    expect(third.success).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    const rectOf = (id: string) => {
+      const map = nextNodes.get(id)!;
+      const pos = map.get('position') as { x: number; y: number };
+      return {
+        x: pos.x,
+        y: pos.y,
+        width: map.get('width') as number,
+        height: map.get('height') as number,
+      };
+    };
+    const overlaps = (
+      a: { x: number; y: number; width: number; height: number },
+      b: { x: number; y: number; width: number; height: number },
+    ) =>
+      a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+    const laneRects = ['existing', 'n-1', 'n-2'].map(rectOf);
+    for (let i = 0; i < laneRects.length; i++) {
+      for (let j = i + 1; j < laneRects.length; j++) {
+        expect(overlaps(laneRects[i], laneRects[j])).toBe(false);
+      }
+    }
+    for (const rect of laneRects) {
+      expect(rect.x).toBeGreaterThanOrEqual(40);
+      expect(rect.y).toBeGreaterThanOrEqual(40);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(400);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(600);
+    }
+
+    const floating = ['f-1', 'f-2'].map(rectOf);
+    expect(overlaps(floating[0], floating[1])).toBe(false);
+    expect(nextNodes.get('n-1')!.get('parentId')).toBe('lane-a');
+    expect(nextNodes.get('n-2')!.get('parentId')).toBe('lane-a');
+
+    await server.app.close();
+  }, 20000);
 });
