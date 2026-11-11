@@ -126,6 +126,50 @@ export class AiBatchManager {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
 
+      // 预建 node → edge 邻接索引，避免逐节点全表扫边的 O(N·E) 开销
+      const edgesByNode = new Map<string, Set<string>>();
+      const indexEdge = (edgeId: string, source: unknown, target: unknown) => {
+        for (const endpoint of [source, target]) {
+          if (typeof endpoint !== 'string') continue;
+          let edgeIds = edgesByNode.get(endpoint);
+          if (!edgeIds) {
+            edgeIds = new Set<string>();
+            edgesByNode.set(endpoint, edgeIds);
+          }
+          edgeIds.add(edgeId);
+        }
+      };
+      const unindexEdge = (edgeId: string, source?: unknown, target?: unknown) => {
+        if (source !== undefined || target !== undefined) {
+          for (const endpoint of [source, target]) {
+            if (typeof endpoint === 'string') edgesByNode.get(endpoint)?.delete(edgeId);
+          }
+          return;
+        }
+        for (const edgeIds of edgesByNode.values()) edgeIds.delete(edgeId);
+      };
+      const deleteEdge = (edgeId: string) => {
+        const edgeMap = edgesMap.get(edgeId);
+        if (edgeMap) {
+          unindexEdge(edgeId, edgeMap.get('source'), edgeMap.get('target'));
+          edgesMap.delete(edgeId);
+        } else {
+          unindexEdge(edgeId);
+        }
+      };
+      const hasHumanAttachedEdge = (nodeId: string): boolean => {
+        const attached = edgesByNode.get(nodeId);
+        if (!attached) return false;
+        for (const edgeId of attached) {
+          if (!batchAddedEdgeIds.has(edgeId) && edgesMap.has(edgeId)) return true;
+        }
+        return false;
+      };
+
+      edgesMap.forEach((edgeMap, edgeId) => {
+        indexEdge(edgeId, edgeMap.get('source'), edgeMap.get('target'));
+      });
+
       // 逆序回放：同一实体多次修改时，先撤销最后一次
       for (const diff of [...targets].reverse()) {
         const map = diff.entityType === 'node' ? nodesMap : edgesMap;
@@ -147,19 +191,20 @@ export class AiBatchManager {
             continue;
           }
 
-          if (diff.entityType === 'node') {
-            const humanAttached = hasHumanAttachedEdge(edgesMap, diff.entityId, batchAddedEdgeIds);
-            if (humanAttached) {
-              skipped.push({
-                entityId: diff.entityId,
-                entityType: 'node',
-                reason: '该节点已被人工新增连线，安全跳过删除',
-              });
-              continue;
-            }
+          if (diff.entityType === 'node' && hasHumanAttachedEdge(diff.entityId)) {
+            skipped.push({
+              entityId: diff.entityId,
+              entityType: 'node',
+              reason: '该节点已被人工新增连线，安全跳过删除',
+            });
+            continue;
           }
 
-          map.delete(diff.entityId);
+          if (diff.entityType === 'edge') {
+            deleteEdge(diff.entityId);
+          } else {
+            map.delete(diff.entityId);
+          }
           revertedEntityIds.add(diff.entityId);
           processedDiffs.add(diff);
 
@@ -183,7 +228,7 @@ export class AiBatchManager {
                 continue;
               }
 
-              edgesMap.delete(edgeId);
+              deleteEdge(edgeId);
               processedDiffs.add(edgeDiff);
               revertedEntityIds.add(edgeId);
             }
@@ -210,8 +255,16 @@ export class AiBatchManager {
               reason: `字段 ${field} 已被人工修改，安全跳过`,
             });
           }
-          revertedEntityIds.add(diff.entityId);
-          processedDiffs.add(diff);
+
+          if (outcome.changed) {
+            revertedEntityIds.add(diff.entityId);
+            processedDiffs.add(diff);
+          } else if (outcome.skippedFields.length === 0) {
+            // 当前值本就等于 beforeState：无需改动，视为已完成撤回
+            revertedEntityIds.add(diff.entityId);
+            processedDiffs.add(diff);
+          }
+          // 全部字段都被人工改写时保持未撤回状态，避免与 skipped 双重计数
           continue;
         }
 
@@ -229,19 +282,19 @@ export class AiBatchManager {
           const restored = new Y.Map<unknown>();
           applyMapState(restored, diff.beforeState);
           map.set(diff.entityId, restored);
+          if (diff.entityType === 'edge') {
+            indexEdge(diff.entityId, restored.get('source'), restored.get('target'));
+          }
           revertedEntityIds.add(diff.entityId);
           processedDiffs.add(diff);
         }
       }
     });
 
-    const nextDiffs = batch.diffs.map((diff) => {
-      if (processedDiffs.has(diff)) return { ...diff, reverted: true };
-      if (revertedEntityIds.has(diff.entityId) && !diff.reverted) {
-        return { ...diff, reverted: true };
-      }
-      return diff;
-    });
+    // 仅认「本轮回放实际处理」的 Diff，全字段被人工跳过的 update 不得被同实体其他 Diff 连带标记
+    const nextDiffs = batch.diffs.map((diff) =>
+      processedDiffs.has(diff) ? { ...diff, reverted: true } : diff,
+    );
 
     const allReverted = nextDiffs.every((diff) => diff.reverted);
     // 存在被跳过的字段/实体时，批次只能算部分撤回，绝不能谎报为完全撤回
@@ -369,21 +422,4 @@ export class AiBatchManager {
       message,
     };
   }
-}
-
-function hasHumanAttachedEdge(
-  edgesMap: Y.Map<Y.Map<unknown>>,
-  nodeId: string,
-  batchAddedEdgeIds: Set<string>,
-): boolean {
-  let attached = false;
-  edgesMap.forEach((edgeMap, edgeId) => {
-    if (attached) return;
-    const source = edgeMap.get('source');
-    const target = edgeMap.get('target');
-    if ((source === nodeId || target === nodeId) && !batchAddedEdgeIds.has(edgeId)) {
-      attached = true;
-    }
-  });
-  return attached;
 }

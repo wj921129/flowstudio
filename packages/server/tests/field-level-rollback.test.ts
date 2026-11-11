@@ -179,4 +179,87 @@ describe('AI 批次字段级防冲突撤回', () => {
 
     db.close();
   });
+
+  it('全字段均被人工改写时不标记撤回、不虚报已撤项数量', async () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const batchManager = new AiBatchManager(repo);
+    const diag = repo.createDiagram({ title: '全跳过撤回图' });
+
+    const seed = new Y.Doc();
+    const node = new Y.Map<unknown>();
+    node.set('id', 'n-3');
+    node.set('type', 'process');
+    node.set('position', { x: 0, y: 0 });
+    node.set('data', {
+      label: '原始文案',
+      type: 'process',
+      style: { fillColor: '#FFFFFF' },
+    });
+    seed.getMap('nodes').set('n-3', node);
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(seed));
+
+    const before = snapshotMap(node);
+
+    // AI 写入文案与配色
+    const aiDoc = readDoc(repo, diag.id);
+    const aiNode = aiDoc.getMap<Y.Map<unknown>>('nodes').get('n-3')!;
+    aiNode.set('data', {
+      label: 'AI 文案',
+      type: 'process',
+      style: { fillColor: '#FF0000' },
+    });
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(aiDoc));
+    const after = snapshotMap(aiNode);
+
+    batchManager.recordBatch({
+      batchId: 'batch-field-3',
+      diagramId: diag.id,
+      summary: 'AI 优化文案与配色',
+      status: 'active',
+      diffs: [
+        {
+          entityId: 'n-3',
+          entityType: 'node',
+          opType: 'update',
+          beforeState: before,
+          afterState: after,
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    });
+
+    // 人类随后把文案与配色全部改成自己的版本
+    const humanDoc = readDoc(repo, diag.id);
+    humanDoc.getMap<Y.Map<unknown>>('nodes').get('n-3')!.set('data', {
+      label: '人工定稿文案',
+      type: 'process',
+      style: { fillColor: '#00FF00' },
+    });
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(humanDoc));
+
+    const res = await batchManager.revertBatch(diag.id, 'batch-field-3');
+    expect(res.success).toBe(true);
+    expect(res.reverted).toBe(false);
+    expect(res.revertedEntityIds).toEqual([]);
+    expect(res.skippedCount).toBe(2);
+    expect(res.skipped.map((item) => item.field).sort()).toEqual(['data.label', 'data.style']);
+    expect(res.status).toBe('partially_reverted');
+    expect(res.message).toContain('已撤回 0 项');
+
+    // 账本该 Diff 不应被误标为已撤回
+    const batch = batchManager.getBatches(diag.id)[0];
+    expect(batch.diffs[0].reverted).toBe(false);
+
+    // 人工内容原样保留
+    const revertedDoc = readDoc(repo, diag.id);
+    const data = revertedDoc.getMap<Y.Map<unknown>>('nodes').get('n-3')!.get('data') as {
+      label: string;
+      style: { fillColor: string };
+    };
+    expect(data.label).toBe('人工定稿文案');
+    expect(data.style.fillColor).toBe('#00FF00');
+
+    db.close();
+  });
 });

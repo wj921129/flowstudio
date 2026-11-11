@@ -8,11 +8,13 @@
 import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import { deepEqual } from './entity-state.js';
 
 export type DocumentOrigin =
   | `ai:${string}`
   | `ai-revert:${string}`
-  | `snapshot-restore:${string}`;
+  | `snapshot-restore:${string}`
+  | `system:${string}`;
 
 export interface MutateOutcome<T> {
   /** 事务回调的返回值 */
@@ -64,6 +66,12 @@ export class DocumentWriter {
    * - 在线：直接在 Live Y.Doc 的 `transact(fn, origin)` 中修改，Hocuspocus 自动广播差量；
    * - 冷文档：通过 `openDirectConnection` 加载后写入并触发防抖/立即落库；
    * - 无协同实例（单元测试/离线脚本）：从 SQLite 冷加载，事务后增量合并写回。
+   *
+   * 原子性契约（务必遵守）：
+   * 1. `fn` 只允许做纯 Yjs 本地修改，必须是同步函数，严禁返回 Promise；
+   * 2. 所有参数校验、IO、布局计算等可能失败的前置工作，必须在调用 `mutate` 之前完成；
+   * 3. `fn` 不得在修改中途抛错。引擎会用 UndoManager 对已发生的本地修改做防御性补偿回滚，
+   *    但补偿本身仍是一次广播事务，因此失败路径不应被业务依赖。
    */
   async mutate<T>(
     diagramId: string,
@@ -76,10 +84,7 @@ export class DocumentWriter {
 
     const live = this.getLiveDocument(diagramId);
     if (live) {
-      let result!: T;
-      live.transact(() => {
-        result = fn(live);
-      }, origin);
+      const result = this.applyTransaction(live, origin, fn);
       return { result, live: true };
     }
 
@@ -87,10 +92,7 @@ export class DocumentWriter {
       const direct = await this.hocuspocus.openDirectConnection(diagramId);
       try {
         const doc = direct.document as unknown as Y.Doc;
-        let result!: T;
-        doc.transact(() => {
-          result = fn(doc);
-        }, origin);
+        const result = this.applyTransaction(doc, origin, fn);
         return { result, live: false };
       } finally {
         // 立即落库并卸载，确保冷写入具备持久性
@@ -104,19 +106,72 @@ export class DocumentWriter {
 
     const doc = new Y.Doc();
     Y.applyUpdate(doc, state);
-    let result!: T;
-    doc.transact(() => {
-      result = fn(doc);
-    }, origin);
 
-    const metaTitle = doc.getMap('meta').get('title');
-    this.repo.saveYDocState(
-      diagramId,
-      Y.encodeStateAsUpdate(doc),
-      typeof metaTitle === 'string' ? metaTitle : undefined,
-    );
+    // 只捕获本次事务产生的增量，避免全量 encodeStateAsUpdate 的重编码开销
+    const increments: Uint8Array[] = [];
+    const collectUpdate = (update: Uint8Array) => {
+      increments.push(update);
+    };
+    doc.on('update', collectUpdate);
+
+    let result!: T;
+    try {
+      doc.transact(() => {
+        result = fn(doc);
+      }, origin);
+    } finally {
+      doc.off('update', collectUpdate);
+    }
+
+    if (increments.length > 0) {
+      const increment =
+        increments.length === 1 ? increments[0] : Y.mergeUpdates(increments);
+      const metaTitle = doc.getMap('meta').get('title');
+      this.repo.saveYDocState(
+        diagramId,
+        increment,
+        typeof metaTitle === 'string' ? metaTitle : undefined,
+      );
+    }
 
     return { result, live: false };
+  }
+
+  /**
+   * 在事务中执行回调，并在回调抛错时用 UndoManager 补偿回滚本次 origin 的本地修改
+   */
+  private applyTransaction<T>(
+    doc: Y.Doc,
+    origin: DocumentOrigin,
+    fn: (doc: Y.Doc) => T,
+  ): T {
+    const undoManager = new Y.UndoManager(
+      [doc.getMap('nodes'), doc.getMap('edges'), doc.getMap('meta')],
+      { trackedOrigins: new Set([origin]), captureTimeout: 0 },
+    );
+
+    try {
+      let result!: T;
+      doc.transact(() => {
+        result = fn(doc);
+      }, origin);
+
+      if (result && typeof (result as { then?: unknown }).then === 'function') {
+        // 统一交给 catch 回滚，避免重复 undo
+        throw new Error('DocumentWriter.mutate 回调必须同步执行，严禁返回 Promise');
+      }
+      return result;
+    } catch (error) {
+      // Yjs 事务在回调抛错时不会自动回滚，这里做防御性补偿，避免半截修改污染画布
+      try {
+        undoManager.undo();
+      } catch {
+        // 回滚失败不掩盖原始异常
+      }
+      throw error;
+    } finally {
+      undoManager.destroy();
+    }
   }
 
   /**
@@ -157,10 +212,13 @@ export function applySnapshotDelta(targetDoc: Y.Doc, snapDoc: Y.Doc): void {
   const currEdgesMap = targetDoc.getMap<Y.Map<unknown>>('edges');
   const currMetaMap = targetDoc.getMap<unknown>('meta');
 
-  const snapTitle = snapMetaMap.get('title');
-  if (typeof snapTitle === 'string') {
-    currMetaMap.set('title', snapTitle);
-  }
+  // meta 目前以 title 为唯一权威键；为向前兼容，快照中的所有 meta 键均做差量还原，
+  // 当前文档独有的扩展键保留，不做破坏性删除
+  snapMetaMap.forEach((value, key) => {
+    if (!deepEqual(currMetaMap.get(key), value)) {
+      currMetaMap.set(key, value);
+    }
+  });
 
   const targetNodeIds = new Set<string>();
   snapNodesMap.forEach((nodeMap, id) => {

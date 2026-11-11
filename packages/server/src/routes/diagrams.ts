@@ -63,6 +63,17 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     if (!updated) {
       return reply.status(404).send({ error: '图表不存在' });
     }
+
+    // 在线文档存在时同步写入 Live Doc，避免在线端标题短暂滞后；冷路径已由仓库完成落库同步
+    if (parsed.data.title !== undefined && opts.writer?.getLiveDocument(id)) {
+      await opts.writer.mutate(id, 'system:title-sync', (doc) => {
+        const meta = doc.getMap<unknown>('meta');
+        if (meta.get('title') !== updated.title) {
+          meta.set('title', updated.title);
+        }
+      });
+    }
+
     return updated;
   });
 
