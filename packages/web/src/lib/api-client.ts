@@ -61,6 +61,12 @@ export const apiClient = {
     return res.json();
   },
 
+  async getSnapshot(diagramId: string, snapshotId: string): Promise<{ id: string; diagramId: string; nodes: FlowNode[]; edges: FlowEdge[]; meta?: Record<string, unknown> }> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots/${encodeURIComponent(snapshotId)}`);
+    if (!res.ok) throw new Error(`获取快照详情失败: ${res.statusText}`);
+    return res.json();
+  },
+
   async createSnapshot(diagramId: string, label: string): Promise<SnapshotSummary> {
     const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots`, {
       method: 'POST',

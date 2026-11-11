@@ -12,4 +12,5 @@ export * from './mermaid-bridge.js';
 export * from './interop/xml-parser.js';
 export * from './interop/drawio-bridge.js';
 export * from './interop/bpmn-bridge.js';
+export * from './snapshot-diff.js';
 

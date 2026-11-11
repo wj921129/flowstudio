@@ -1,8 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
+import * as Y from 'yjs';
 import {
   createDiagramInputSchema,
   revertBatchItemsRequestSchema,
   updateDiagramInputSchema,
+  type FlowNode,
+  type FlowEdge,
 } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
@@ -107,6 +110,36 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
       return reply.status(404).send({ error: '图表不存在' });
     }
     return repo.listSnapshots(id);
+  });
+
+  fastify.get('/:id/snapshots/:snapshotId', async (request, reply) => {
+    const { id, snapshotId } = request.params as { id: string; snapshotId: string };
+    const diagram = repo.getDiagramById(id);
+    if (!diagram) return reply.status(404).send({ error: '图表不存在' });
+    const state = repo.getSnapshotState(snapshotId);
+    if (!state) return reply.status(404).send({ error: '快照不存在' });
+    if (repo.getSnapshotDiagramId(snapshotId) !== id) return reply.status(400).send({ error: '该快照不属于当前图表' });
+    const snapDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(snapDoc, state);
+      const snapNodesMap = snapDoc.getMap<Y.Map<unknown>>('nodes');
+      const snapEdgesMap = snapDoc.getMap<Y.Map<unknown>>('edges');
+      const snapMetaMap = snapDoc.getMap<unknown>('meta');
+      const nodes: FlowNode[] = [];
+      snapNodesMap.forEach((m) => {
+        if (m && typeof (m as any).toJSON === 'function') nodes.push((m as any).toJSON() as FlowNode);
+        else if (m && typeof m === 'object') nodes.push(m as unknown as FlowNode);
+      });
+      const edges: FlowEdge[] = [];
+      snapEdgesMap.forEach((m) => {
+        if (m && typeof (m as any).toJSON === 'function') edges.push((m as any).toJSON() as FlowEdge);
+        else if (m && typeof m === 'object') edges.push(m as unknown as FlowEdge);
+      });
+      const meta = snapMetaMap ? snapMetaMap.toJSON() : {};
+      return { id: snapshotId, diagramId: id, nodes, edges, meta };
+    } finally {
+      snapDoc.destroy();
+    }
   });
 
   // 创建新快照
