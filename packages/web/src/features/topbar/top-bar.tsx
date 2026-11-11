@@ -11,6 +11,8 @@ import {
   Image,
   FileCode,
   FileJson,
+  FileOutput,
+  Globe,
   Check,
   Share2,
   Sparkles,
@@ -20,7 +22,7 @@ import {
   Code2,
   Bot,
 } from 'lucide-react';
-import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
+import { DEFAULT_DIAGRAM_TITLE, parseDrawioXml, parseBpmnXml, diagramToBpmnXml } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
@@ -29,10 +31,12 @@ import { apiClient } from '../../lib/api-client';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
 import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
 import { MermaidDrawer } from '../mermaid/mermaid-drawer';
+import { buildStandaloneHtml } from '../../lib/standalone-html';
 import {
   exportToPng,
   exportToSvg,
   exportToJson,
+  downloadFile,
   validateAndParseDiagramJson,
 } from '../../lib/export-utils';
 

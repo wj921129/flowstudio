@@ -9,4 +9,7 @@ export * from './node-registry.js';
 export * from './constants.js';
 export * from './schemas/index.js';
 export * from './mermaid-bridge.js';
+export * from './interop/xml-parser.js';
+export * from './interop/drawio-bridge.js';
+export * from './interop/bpmn-bridge.js';
 
