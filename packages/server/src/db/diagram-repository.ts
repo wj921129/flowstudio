@@ -121,6 +121,7 @@ export class DiagramRepository {
   updateDiagram(
     id: string,
     input: { title?: string; description?: string; thumbnail?: string },
+    options: { syncYDocTitle?: boolean } = {},
   ): DiagramSummary | null {
     const existing = this.getDiagramById(id);
     if (!existing) return null;
@@ -137,8 +138,10 @@ export class DiagramRepository {
     `);
     stmt.run(title, description, thumbnail, now, id);
 
-    // 如果标题变动且存在 Y.Doc 二进制状态，同步更新内部 Y.Doc 的 meta.title
-    if (input.title !== undefined && input.title.trim() !== existing.title) {
+    // 如果标题变动且存在 Y.Doc 二进制状态，同步更新内部 Y.Doc 的 meta.title。
+    // 在线文档存在时必须由调用方经 DocumentWriter 写入 Live Doc，跳过此处冷写，
+    // 否则冷/热两份状态会并发 set 同名键，合并结果不可预期。
+    if (options.syncYDocTitle !== false && input.title !== undefined && input.title.trim() !== existing.title) {
       const rawState = this.getYDocState(id);
       if (rawState) {
         const doc = new Y.Doc();
@@ -270,7 +273,10 @@ export class DiagramRepository {
   }
 
   /**
-   * 为指定图表创建历史版本快照
+   * 为指定图表创建历史版本快照（冷文档路径，直接读取 SQLite 状态）
+   *
+   * 在线文档享有 500ms~2s 的落库防抖窗口，此时 SQLite 可能落后于 Live Doc。
+   * 服务端在线场景请改用 `DocumentWriter.createSnapshot`，由它优先截取 Live Doc 最新状态。
    */
   createSnapshot(
     diagramId: string,
@@ -279,7 +285,18 @@ export class DiagramRepository {
   ): SnapshotSummary | null {
     const currentState = this.getYDocState(diagramId);
     if (!currentState) return null;
+    return this.createSnapshotFromState(diagramId, currentState, label, triggerType);
+  }
 
+  /**
+   * 使用调用方提供的 Y.Doc 状态创建快照（供在线优先路径复用）
+   */
+  createSnapshotFromState(
+    diagramId: string,
+    state: Uint8Array,
+    label: string,
+    triggerType: 'manual' | 'ai_batch' | 'auto' = 'manual'
+  ): SnapshotSummary {
     const snapshotId = `snap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
     const cleanLabel = label.trim() || '版本快照';
@@ -288,7 +305,7 @@ export class DiagramRepository {
       INSERT INTO snapshots (id, diagram_id, ydoc_state, label, trigger_type, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(snapshotId, diagramId, Buffer.from(currentState), cleanLabel, triggerType, now);
+    stmt.run(snapshotId, diagramId, Buffer.from(state), cleanLabel, triggerType, now);
 
     return {
       id: snapshotId,
@@ -332,6 +349,17 @@ export class DiagramRepository {
   }
 
   /**
+   * 查询快照归属的图表 ID（跨图恢复校验）
+   */
+  getSnapshotDiagramId(snapshotId: string): string | null {
+    const stmt = this.db.prepare<[string], { diagram_id: string }>(`
+      SELECT diagram_id FROM snapshots WHERE id = ?
+    `);
+    const row = stmt.get(snapshotId);
+    return row?.diagram_id ?? null;
+  }
+
+  /**
    * 写入一条 AI 批次账本记录（已存在则覆盖）
    */
   insertAiBatch(record: AiBatchRecord): void {
@@ -357,6 +385,9 @@ export class DiagramRepository {
 
   /**
    * 查询指定图表最近的 AI 批次（含实体级 Diff 明细）
+   *
+   * 保留策略：账本表按图永久保留全部批次，查询端只取最近 `limit` 条；
+   * 历史行不会自动清理（撤回能力依赖账本），如需回收空间由运维按图/按时间归档。
    */
   listAiBatches(diagramId: string, limit = 20): AiBatchRecord[] {
     const stmt = this.db.prepare<[string, number], AiBatchRow>(`

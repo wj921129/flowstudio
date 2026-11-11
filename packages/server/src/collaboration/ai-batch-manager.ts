@@ -37,12 +37,38 @@ export interface LegacyBatchInput {
 
 export class AiBatchManager {
   private writer: DocumentWriter;
+  /** 按「图表:批次」串行化撤回，避免并发读改写账本导致标记丢失 */
+  private revertQueues = new Map<string, Promise<unknown>>();
 
   constructor(
     private repo: DiagramRepository,
     writer?: DocumentWriter,
   ) {
     this.writer = writer ?? new DocumentWriter(repo);
+  }
+
+  /**
+   * 同一批次的撤回请求串行执行。
+   *
+   * 撤回是「读账本 → await 写文档 → 写回账本」的异步读改写，若两个请求并发，
+   * 双方都会基于旧账本计算并覆盖对方标记。这里用 Promise 链按批次排队，
+   * 保证后一个请求读到前一个请求落库后的最新 diffs。
+   */
+  private runSerialized<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.revertQueues.get(key) ?? Promise.resolve();
+    const next = previous.then(task, task);
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.revertQueues.set(key, tail);
+    void tail.then(() => {
+      // 队列已排空时才移除，防止内存泄漏
+      if (this.revertQueues.get(key) === tail) {
+        this.revertQueues.delete(key);
+      }
+    });
+    return next;
   }
 
   /**
@@ -64,17 +90,19 @@ export class AiBatchManager {
    * 撤回指定的 AI 批次（全部未撤回项）
    */
   async revertBatch(diagramId: string, batchId: string): Promise<AiBatchRevertResult> {
-    const batch = this.repo.getAiBatch(diagramId, batchId);
-    if (!batch) {
-      return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
-    }
+    return this.runSerialized(`${diagramId}:${batchId}`, async () => {
+      const batch = this.repo.getAiBatch(diagramId, batchId);
+      if (!batch) {
+        return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
+      }
 
-    const targets = batch.diffs.filter((diff) => !diff.reverted);
-    if (targets.length === 0) {
-      return this.failure(diagramId, batchId, '该批次所有变更均已撤回');
-    }
+      const targets = batch.diffs.filter((diff) => !diff.reverted);
+      if (targets.length === 0) {
+        return this.failure(diagramId, batchId, '该批次所有变更均已撤回');
+      }
 
-    return this.performRevert(batch, targets);
+      return this.performRevert(batch, targets);
+    });
   }
 
   /**
@@ -85,21 +113,23 @@ export class AiBatchManager {
     batchId: string,
     entityIds: string[],
   ): Promise<AiBatchRevertResult> {
-    const batch = this.repo.getAiBatch(diagramId, batchId);
-    if (!batch) {
-      return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
-    }
+    return this.runSerialized(`${diagramId}:${batchId}`, async () => {
+      const batch = this.repo.getAiBatch(diagramId, batchId);
+      if (!batch) {
+        return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
+      }
 
-    const targetSet = new Set(entityIds);
-    const targets = batch.diffs.filter(
-      (diff) => targetSet.has(diff.entityId) && !diff.reverted,
-    );
+      const targetSet = new Set(entityIds);
+      const targets = batch.diffs.filter(
+        (diff) => targetSet.has(diff.entityId) && !diff.reverted,
+      );
 
-    if (targets.length === 0) {
-      return this.failure(diagramId, batchId, '指定实体不在该批次中或已撤回');
-    }
+      if (targets.length === 0) {
+        return this.failure(diagramId, batchId, '指定实体不在该批次中或已撤回');
+      }
 
-    return this.performRevert(batch, targets);
+      return this.performRevert(batch, targets);
+    });
   }
 
   private async performRevert(
@@ -161,7 +191,17 @@ export class AiBatchManager {
         const attached = edgesByNode.get(nodeId);
         if (!attached) return false;
         for (const edgeId of attached) {
-          if (!batchAddedEdgeIds.has(edgeId) && edgesMap.has(edgeId)) return true;
+          const edgeMap = edgesMap.get(edgeId);
+          if (!edgeMap) continue;
+
+          if (!batchAddedEdgeIds.has(edgeId)) return true;
+
+          // 同批次新增的连线若已被人工二次修改，等同于人工连线：
+          // 后续级联只认 afterState，无法删除它，若此时仍删除节点就会留下悬挂边。
+          const addedDiff = batchAddedEdgeDiffs.get(edgeId);
+          if (addedDiff?.afterState && !mapMatchesState(edgeMap, addedDiff.afterState)) {
+            return true;
+          }
         }
         return false;
       };
@@ -195,7 +235,7 @@ export class AiBatchManager {
             skipped.push({
               entityId: diff.entityId,
               entityType: 'node',
-              reason: '该节点已被人工新增连线，安全跳过删除',
+              reason: '该节点已被人工新增或修改连线，安全跳过删除',
             });
             continue;
           }
@@ -349,7 +389,9 @@ export class AiBatchManager {
       };
     }
 
-    // 旧版入参兼容：从当前冷文档补全实体级快照
+    // 旧版入参兼容路径：仅为历史调用方保留，新代码必须直接传 diffs。
+    // 该分支从冷文档补全 afterState，无法感知在线 Live Doc 的未落库编辑，
+    // 因此不适用于在线优先场景；待旧调用方全部迁移后可整体删除。
     const diffs: AiBatchEntityDiff[] = [];
     const state = this.repo.getYDocState(input.diagramId);
     const doc = state ? (() => {

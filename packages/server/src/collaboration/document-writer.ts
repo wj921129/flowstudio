@@ -7,6 +7,7 @@
 
 import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
+import type { SnapshotSummary } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import { deepEqual } from './entity-state.js';
 
@@ -57,7 +58,31 @@ export class DocumentWriter {
 
     const doc = new Y.Doc();
     Y.applyUpdate(doc, state);
-    return fn(doc);
+    try {
+      return fn(doc);
+    } finally {
+      doc.destroy();
+    }
+  }
+
+  /**
+   * 在线优先创建历史快照
+   *
+   * Live Doc 存在时直接编码内存最新状态，避免被 SQLite 的落库防抖窗口截断；
+   * 冷文档才回退到数据库状态。这是 `restoreSnapshot` 不丢失同事最新编辑的前提。
+   */
+  createSnapshot(
+    diagramId: string,
+    label: string,
+    triggerType: 'manual' | 'ai_batch' | 'auto' = 'manual',
+  ): SnapshotSummary | null {
+    if (!this.repo.getDiagramById(diagramId)) return null;
+
+    const live = this.getLiveDocument(diagramId);
+    const state = live ? Y.encodeStateAsUpdate(live) : this.repo.getYDocState(diagramId);
+    if (!state) return null;
+
+    return this.repo.createSnapshotFromState(diagramId, state, label, triggerType);
   }
 
   /**
@@ -145,6 +170,9 @@ export class DocumentWriter {
     origin: DocumentOrigin,
     fn: (doc: Y.Doc) => T,
   ): T {
+    // 注意：UndoManager 作用域必须显式覆盖所有会被服务端写入的顶层共享类型。
+    // 新增顶层 Y.Map/Y.Array（如 comments、attachments）时务必同步加入此数组，
+    // 否则该类型的写入在事务失败时不会被补偿回滚。
     const undoManager = new Y.UndoManager(
       [doc.getMap('nodes'), doc.getMap('edges'), doc.getMap('meta')],
       { trackedOrigins: new Set([origin]), captureTimeout: 0 },
@@ -187,6 +215,10 @@ export class DocumentWriter {
     }
     if (!this.repo.getDiagramById(diagramId)) {
       return { success: false, error: '目标图表不存在' };
+    }
+    // 快照与图表强绑定：禁止把 A 图快照恢复进 B 图，否则会静默清空 B 图内容
+    if (this.repo.getSnapshotDiagramId(snapshotId) !== diagramId) {
+      return { success: false, error: '该快照不属于当前图表，禁止跨图恢复' };
     }
 
     const snapDoc = new Y.Doc();

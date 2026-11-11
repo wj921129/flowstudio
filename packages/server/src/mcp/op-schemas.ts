@@ -9,10 +9,27 @@ const positionSchema = z.object({ x: z.number(), y: z.number() });
 
 const styleSchema = z.record(z.string(), z.unknown());
 
+/**
+ * 允许 AI 创建的 9 种流程节点类型。
+ * pool / lane 是容器结构，只能通过 scaffold_diagram 的 lanes 或 add_lane 创建，
+ * 严禁经 add_node / insert_between / scaffold nodes 伪造，否则会破坏「pool → lane → 节点」层级。
+ */
+const flowNodeTypeSchema = z.enum([
+  'start-end',
+  'process',
+  'decision',
+  'io',
+  'document',
+  'subprocess',
+  'database',
+  'comment',
+  'group',
+]);
+
 export const mcpOpSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add_node'),
-    type: z.string().min(1).optional(),
+    type: flowNodeTypeSchema.optional(),
     label: z.string().min(1),
     id: z.string().min(1).optional(),
     laneId: z.string().min(1).optional(),
@@ -69,7 +86,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     target: z.string().min(1),
     node: z.object({
       id: z.string().min(1).optional(),
-      type: z.string().min(1).optional(),
+      type: flowNodeTypeSchema.optional(),
       label: z.string().min(1),
       laneId: z.string().min(1).optional(),
       style: styleSchema.optional(),
@@ -96,7 +113,7 @@ export const scaffoldDiagramInputSchema = z.object({
   nodes: z.array(
     z.object({
       id: z.string().min(1),
-      type: z.string().min(1),
+      type: flowNodeTypeSchema,
       label: z.string().min(1),
       laneId: z.string().min(1).optional(),
     }),

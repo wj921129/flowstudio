@@ -59,14 +59,16 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
       });
     }
 
-    const updated = repo.updateDiagram(id, parsed.data);
+    // 在线文档存在时只经 Live Doc 同步标题，避免仓库对冷状态并发 set 同名键；
+    // 冷路径仍由仓库直接同步 Y.Doc 元数据。
+    const isLive = Boolean(opts.writer?.getLiveDocument(id));
+    const updated = repo.updateDiagram(id, parsed.data, { syncYDocTitle: !isLive });
     if (!updated) {
       return reply.status(404).send({ error: '图表不存在' });
     }
 
-    // 在线文档存在时同步写入 Live Doc，避免在线端标题短暂滞后；冷路径已由仓库完成落库同步
-    if (parsed.data.title !== undefined && opts.writer?.getLiveDocument(id)) {
-      await opts.writer.mutate(id, 'system:title-sync', (doc) => {
+    if (parsed.data.title !== undefined && isLive) {
+      await opts.writer!.mutate(id, 'system:title-sync', (doc) => {
         const meta = doc.getMap<unknown>('meta');
         if (meta.get('title') !== updated.title) {
           meta.set('title', updated.title);
@@ -111,7 +113,12 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
   fastify.post('/:id/snapshots', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = (request.body || {}) as { label?: string; triggerType?: 'manual' | 'ai_batch' | 'auto' };
-    const snapshot = repo.createSnapshot(id, body.label || '手动快照', body.triggerType || 'manual');
+    const label = body.label || '手动快照';
+    const triggerType = body.triggerType || 'manual';
+    // 在线优先：优先截取 Live Doc，避免漏掉落库防抖窗口内的最新协作编辑
+    const snapshot = opts.writer
+      ? opts.writer.createSnapshot(id, label, triggerType)
+      : repo.createSnapshot(id, label, triggerType);
     if (!snapshot) {
       return reply.status(404).send({ error: '图表不存在，无法创建快照' });
     }
