@@ -1,11 +1,12 @@
 /**
- * @fileoverview 图表商业级全格式导出工具 (PNG / SVG / JSON)
- * @description 支持无损矢量 SVG 生成、2x Retina 超清 PNG 栅格化导出与标准 JSON 工程文件备份
+ * @fileoverview 图表商业级全格式保真导出与导入工具 (PNG / SVG / JSON)
+ * @description 支持无损矢量 SVG 保真生成（9大专业节点几何形状 + 泳道嵌套）、2x Retina 超清 PNG 栅格化导出与标准 JSON 工程文件解析验证
  */
 
-import type { FlowNode, FlowEdge } from '@flowstudio/shared';
-import { computeBoundingBox, getNodeDimensions } from '../features/canvas/utils/group-calculator';
-import { sanitizeNodes, sanitizeEdges } from './storage';
+import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
+import { getNodeDimensions } from '../features/canvas/utils/group-calculator.js';
+import { getNodeWorldPosition } from '../features/canvas/utils/split-insert-manager.js';
+import { sanitizeNodes, sanitizeEdges } from './storage.js';
 
 /**
  * 触发浏览器本地下载二进制或文本文件
@@ -22,24 +23,81 @@ export function downloadFile(filename: string, content: Blob | string, mimeType:
   URL.revokeObjectURL(url);
 }
 
+function escapeXml(unsafe: string): string {
+  return String(unsafe || '').replace(/[<>&'"]/g, (c) => {
+    switch (c) {
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '&': return '&amp;';
+      case '\'': return '&apos;';
+      case '"': return '&quot;';
+      default: return c;
+    }
+  });
+}
+
 /**
- * 将图表生成为独立完整的纯矢量 SVG 字符串
+ * 计算节点连接桩 (Handle) 在世界坐标系下的端点
+ */
+function getHandleEndpoint(
+  node: FlowNode,
+  worldPos: XYPosition,
+  handleId?: string,
+  isSource = true
+): XYPosition {
+  const { width: w, height: h } = getNodeDimensions(node);
+  const side = handleId || (isSource ? 'right' : 'left');
+
+  switch (side) {
+    case 'top':
+      return { x: worldPos.x + w / 2, y: worldPos.y };
+    case 'bottom':
+      return { x: worldPos.x + w / 2, y: worldPos.y + h };
+    case 'left':
+      return { x: worldPos.x, y: worldPos.y + h / 2 };
+    case 'right':
+    default:
+      return { x: worldPos.x + w, y: worldPos.y + h / 2 };
+  }
+}
+
+/**
+ * 将图表生成为独立完整的保真纯矢量 SVG 字符串
  */
 export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: string): string {
   if (nodes.length === 0) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><text x="200" y="100" text-anchor="middle" fill="#94A3B8" font-size="14">空图表</text></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect width="400" height="200" fill="#FAFAFA"/><text x="200" y="100" text-anchor="middle" fill="#94A3B8" font-size="14" font-family="-apple-system, sans-serif">空图表</text></svg>`;
+  }
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const worldPosMap = new Map<string, XYPosition>();
+  for (const n of nodes) {
+    worldPosMap.set(n.id, getNodeWorldPosition(n, byId));
+  }
+
+  // 计算世界坐标包围盒
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const n of nodes) {
+    const wp = worldPosMap.get(n.id)!;
+    const { width: w, height: h } = getNodeDimensions(n);
+    minX = Math.min(minX, wp.x);
+    minY = Math.min(minY, wp.y);
+    maxX = Math.max(maxX, wp.x + w);
+    maxY = Math.max(maxY, wp.y + h);
   }
 
   const padding = 50;
-  const bounds = computeBoundingBox(nodes, padding);
-  const width = Math.max(bounds.width, 300);
-  const height = Math.max(bounds.height, 200);
-  const minX = bounds.x;
-  const minY = bounds.y;
+  const vx = Math.floor(minX - padding);
+  const vy = Math.floor(minY - padding);
+  const vw = Math.ceil(maxX - minX + padding * 2);
+  const vh = Math.ceil(maxY - minY + padding * 2);
 
-  // 1. Defs & Markers
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}" viewBox="${vx} ${vy} ${vw} ${vh}">
   <defs>
     <marker id="fs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#64748B" />
@@ -50,99 +108,184 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
   </defs>
 
   <!-- 背景底色 -->
-  <rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#FAFAFA" />
+  <rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="#FAFAFA" />
 
   <!-- 连线层 -->
   <g id="edges-layer">
 `;
 
-  // 2. 绘制连线
+  // 1. 绘制连线
   for (const edge of edges) {
-    const srcNode = nodes.find((n) => n.id === edge.source);
-    const tgtNode = nodes.find((n) => n.id === edge.target);
+    const srcNode = byId.get(edge.source);
+    const tgtNode = byId.get(edge.target);
     if (!srcNode || !tgtNode) continue;
 
-    const { width: sw, height: sh } = getNodeDimensions(srcNode);
-    const { width: tw, height: th } = getNodeDimensions(tgtNode);
+    const srcWp = worldPosMap.get(srcNode.id)!;
+    const tgtWp = worldPosMap.get(tgtNode.id)!;
 
-    const sx = srcNode.position.x + sw;
-    const sy = srcNode.position.y + sh / 2;
-    const tx = tgtNode.position.x;
-    const ty = tgtNode.position.y + th / 2;
+    const start = getHandleEndpoint(srcNode, srcWp, edge.sourceHandle, true);
+    const end = getHandleEndpoint(tgtNode, tgtWp, edge.targetHandle, false);
+
+    const edgeStyle = edge.data?.style;
+    const strokeColor = edgeStyle?.strokeColor ? String(edgeStyle.strokeColor) : '#64748B';
+    const strokeWidth = edgeStyle?.strokeWidth ?? 2;
+    const strokeDash = edgeStyle?.strokeStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
 
     let pathD: string;
     const waypoints = edge.data?.waypoints;
 
-    if (waypoints && waypoints.length > 0) {
-      pathD = `M ${sx} ${sy}`;
+    if (Array.isArray(waypoints) && waypoints.length > 0) {
+      pathD = `M ${start.x} ${start.y}`;
       for (const wp of waypoints) {
         pathD += ` L ${wp.x} ${wp.y}`;
       }
-      pathD += ` L ${tx} ${ty}`;
+      pathD += ` L ${end.x} ${end.y}`;
     } else {
-      const midX = (sx + tx) / 2;
-      pathD = `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${tx} ${ty}`;
+      const midX = (start.x + end.x) / 2;
+      pathD = `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
     }
 
-    svg += `    <path d="${pathD}" fill="none" stroke="#64748B" stroke-width="2" marker-end="url(#fs-arrow)" stroke-linecap="round" stroke-linejoin="round" />\n`;
+    svg += `    <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} marker-end="url(#fs-arrow)" stroke-linecap="round" stroke-linejoin="round" />\n`;
 
     if (edge.data?.label) {
-      const lx = (sx + tx) / 2;
-      const ly = (sy + ty) / 2 - 6;
-      svg += `    <text x="${lx}" y="${ly}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" fill="#475569" font-weight="500">${escapeXml(edge.data.label)}</text>\n`;
+      const label = String(edge.data.label);
+      const lx = (start.x + end.x) / 2;
+      const ly = (start.y + end.y) / 2 - 8;
+      const badgeW = Math.max(24, label.length * 12 + 12);
+      svg += `    <rect x="${lx - badgeW / 2}" y="${ly - 10}" width="${badgeW}" height="18" rx="4" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />\n`;
+      svg += `    <text x="${lx}" y="${ly + 3}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" fill="#475569" font-weight="500">${escapeXml(label)}</text>\n`;
     }
   }
 
   svg += `  </g>\n\n  <!-- 图元节点层 -->\n  <g id="nodes-layer">\n`;
 
-  // 3. 绘制节点（优先绘制容器类型 pool/lane/group，再绘制业务节点）
+  // 2. 绘制节点（优先绘制容器类型 pool/lane/group，再绘制业务叶子节点）
   const containerNodes = nodes.filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group');
   const leafNodes = nodes.filter((n) => n.type !== 'pool' && n.type !== 'lane' && n.type !== 'group');
 
   for (const node of [...containerNodes, ...leafNodes]) {
     const { width: nw, height: nh } = getNodeDimensions(node);
-    const x = node.position.x;
-    const y = node.position.y;
+    const wp = worldPosMap.get(node.id)!;
+    const x = wp.x;
+    const y = wp.y;
     const label = node.data?.label || '';
 
-    if (node.type === 'pool') {
-      svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#card-shadow)" />\n`;
-      svg += `    <path d="M ${x} ${y + 36} L ${x + nw} ${y + 36}" stroke="#E2E8F0" stroke-width="1" />\n`;
-      svg += `    <text x="${x + 16}" y="${y + 23}" font-size="12" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A">${escapeXml(label)}</text>\n`;
-    } else if (node.type === 'lane') {
-      svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" stroke-dasharray="4 4" />\n`;
-      svg += `    <rect x="${x}" y="${y}" width="36" height="${nh}" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1" />\n`;
-      svg += `    <text x="${x + 18}" y="${y + nh / 2}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B" transform="rotate(-90 ${x + 18} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
-    } else if (node.type === 'start-end') {
-      svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="${nh / 2}" fill="#FFFFFF" stroke="#6366F1" stroke-width="2" filter="url(#card-shadow)" />\n`;
-      svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="12" font-family="-apple-system, sans-serif" font-weight="500" fill="#1E293B">${escapeXml(label)}</text>\n`;
-    } else if (node.type === 'decision') {
-      const cx = x + nw / 2;
-      const cy = y + nh / 2;
-      const pts = `${cx},${y} ${x + nw},${cy} ${cx},${y + nh} ${x},${cy}`;
-      svg += `    <polygon points="${pts}" fill="#FFFFFF" stroke="#F59E0B" stroke-width="2" filter="url(#card-shadow)" />\n`;
-      svg += `    <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="12" font-family="-apple-system, sans-serif" font-weight="500" fill="#1E293B">${escapeXml(label)}</text>\n`;
-    } else {
-      svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#card-shadow)" />\n`;
-      svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="12" font-family="-apple-system, sans-serif" font-weight="500" fill="#1E293B">${escapeXml(label)}</text>\n`;
+    const styleData = node.data?.style || {};
+    const defaultFill = node.type === 'comment' ? '#FEF9C3' : '#FFFFFF';
+    const defaultBorder = node.type === 'comment' ? '#FDE047' : '#CBD5E1';
+    const fillColor = styleData.fillColor ? String(styleData.fillColor) : defaultFill;
+    const strokeColor = styleData.borderColor ? String(styleData.borderColor) : defaultBorder;
+    const strokeWidth = styleData.borderWidth ?? (node.type === 'pool' ? 2 : 1.5);
+    const strokeDash = styleData.borderStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
+    const fontColor = styleData.fontColor ? String(styleData.fontColor) : '#1E293B';
+    const fontSize = styleData.fontSize ?? 12;
+
+    switch (node.type) {
+      case 'pool': {
+        const isHoriz = node.data?.orientation !== 'vertical';
+        const headerSize = (node.data?.headerSize as number) || 40;
+        svg += `    <!-- Pool: ${node.id} -->\n`;
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        if (isHoriz) {
+          svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${headerSize}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+          svg += `    <rect x="${x}" y="${y + headerSize - 8}" width="${nw}" height="8" fill="#F1F5F9" />\n`;
+          svg += `    <text x="${x + 16}" y="${y + headerSize / 2 + 4}" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A">${escapeXml(label)}</text>\n`;
+        } else {
+          svg += `    <rect x="${x}" y="${y}" width="${headerSize}" height="${nh}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+          svg += `    <rect x="${x + headerSize - 8}" y="${y}" width="8" height="${nh}" fill="#F1F5F9" />\n`;
+          svg += `    <text x="${x + headerSize / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A" transform="rotate(-90 ${x + headerSize / 2} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'lane': {
+        svg += `    <!-- Lane: ${node.id} -->\n`;
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="4 4" />\n`;
+        svg += `    <rect x="${x}" y="${y}" width="36" height="${nh}" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="1" />\n`;
+        svg += `    <text x="${x + 18}" y="${y + nh / 2}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B" transform="rotate(-90 ${x + 18} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'group': {
+        svg += `    <!-- Group: ${node.id} -->\n`;
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
+        if (label) {
+          svg += `    <text x="${x + 12}" y="${y + 20}" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'start-end': {
+        const radius = nh / 2;
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="${radius}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'decision': {
+        const cx = x + nw / 2;
+        const cy = y + nh / 2;
+        const pts = `${cx},${y} ${x + nw},${cy} ${cx},${y + nh} ${x},${cy}`;
+        svg += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'io': {
+        const offset = Math.min(20, nw * 0.15);
+        const pts = `${x + offset},${y} ${x + nw},${y} ${x + nw - offset},${y + nh} ${x},${y + nh}`;
+        svg += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'document': {
+        const d = `M ${x},${y} L ${x + nw},${y} L ${x + nw},${y + nh * 0.92} Q ${x + nw * 0.75},${y + nh * 0.84} ${x + nw * 0.5},${y + nh * 0.98} Q ${x + nw * 0.25},${y + nh * 1.06} ${x},${y + nh * 0.92} Z`;
+        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'database': {
+        const rx = nw / 2;
+        const ry = Math.min(16, nh * 0.15);
+        // 柱身与底部圆弧
+        const d = `M ${x},${y + ry} L ${x},${y + nh - ry} A ${rx},${ry} 0 0 0 ${x + nw},${y + nh - ry} L ${x + nw},${y + ry} Z`;
+        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        // 顶面椭圆
+        svg += `    <ellipse cx="${x + rx}" cy="${y + ry}" rx="${rx}" ry="${ry}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 8}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'subprocess': {
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="4" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <line x1="${x + 12}" y1="${y}" x2="${x + 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        svg += `    <line x1="${x + nw - 12}" y1="${y}" x2="${x + nw - 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'comment': {
+        const fold = 14;
+        const d = `M ${x},${y} L ${x + nw - fold},${y} L ${x + nw},${y + fold} L ${x + nw},${y + nh} L ${x},${y + nh} Z`;
+        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <polygon points="${x + nw - fold},${y} ${x + nw},${y + fold} ${x + nw - fold},${y + fold}" fill="#E2E8F0" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'process':
+      default: {
+        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
     }
   }
 
   svg += `  </g>\n</svg>`;
   return svg;
-}
-
-function escapeXml(unsafe: string): string {
-  return unsafe.replace(/[<>&'"]/g, (c) => {
-    switch (c) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '&': return '&amp;';
-      case '\'': return '&apos;';
-      case '"': return '&quot;';
-      default: return c;
-    }
-  });
 }
 
 /**
@@ -209,4 +352,54 @@ export function exportToJson(nodes: FlowNode[], edges: FlowEdge[], title: string
   };
   const jsonString = JSON.stringify(exportData, null, 2);
   downloadFile(`${cleanTitle}.json`, jsonString, 'application/json');
+}
+
+export interface ParsedDiagramJson {
+  success: boolean;
+  title?: string;
+  nodes?: FlowNode[];
+  edges?: FlowEdge[];
+  error?: string;
+}
+
+/**
+ * 校验并解析外部导入的 JSON 备份工程文件
+ */
+export function validateAndParseDiagramJson(rawJson: string): ParsedDiagramJson {
+  try {
+    const data = JSON.parse(rawJson);
+    if (!data || typeof data !== 'object') {
+      return { success: false, error: 'JSON 文件根节点必须为对象' };
+    }
+
+    if (!Array.isArray(data.nodes)) {
+      return { success: false, error: 'JSON 文件缺少有效的 nodes 节点数组' };
+    }
+
+    const title = typeof data.title === 'string' ? data.title.trim() : '导入流程图';
+    const rawNodes = data.nodes as FlowNode[];
+    const rawEdges = Array.isArray(data.edges) ? (data.edges as FlowEdge[]) : [];
+
+    // 校验每个节点包含基本字段 id, type, position
+    for (const node of rawNodes) {
+      if (!node.id || !node.type || !node.position) {
+        return { success: false, error: `节点数据不完整：缺少 id, type 或 position` };
+      }
+    }
+
+    const sanitizedNodes = sanitizeNodes(rawNodes);
+    const sanitizedEdges = sanitizeEdges(rawEdges);
+
+    return {
+      success: true,
+      title,
+      nodes: sanitizedNodes,
+      edges: sanitizedEdges,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `JSON 解析失败：${err.message || String(err)}`,
+    };
+  }
 }

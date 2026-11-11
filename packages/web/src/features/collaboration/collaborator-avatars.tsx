@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { useCollaboration } from './collaboration-provider.js';
 import { NicknameModal } from './nickname-modal.js';
+import { useFlowStore } from '../../stores/flow-store.js';
 
 export const CollaboratorAvatars: React.FC = () => {
   const collab = useCollaboration();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const followingUserId = useFlowStore((s) => s.followingUserId);
+  const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
 
   if (!collab) return null;
 
@@ -51,17 +54,30 @@ export const CollaboratorAvatars: React.FC = () => {
           {currentUser.nickname.slice(0, 1)}
         </button>
 
-        {/* 远端用户头像 */}
-        {remoteUsers.slice(0, 4).map((user) => (
-          <div
-            key={user.clientId}
-            title={`协作者: ${user.nickname}`}
-            className="relative inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-xs font-bold border-2 border-white ring-1 ring-black/10 shadow-xs"
-            style={{ backgroundColor: user.color }}
-          >
-            {user.nickname.slice(0, 1)}
-          </div>
-        ))}
+        {/* 远端用户头像（点击可开启/退出局域网带看跟随模式） */}
+        {remoteUsers.slice(0, 4).map((user) => {
+          const isFollowing = followingUserId === user.clientId;
+          return (
+            <button
+              key={user.clientId}
+              type="button"
+              onClick={() => setFollowingUser(isFollowing ? null : user.clientId)}
+              title={
+                isFollowing
+                  ? `正在跟随 ${user.nickname} 的视角 (点击退出跟随)`
+                  : `点击跟随 ${user.nickname} 的视角 (实时同步缩放与聚光灯链路)`
+              }
+              className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-xs font-bold border-2 transition-transform hover:scale-110 hover:z-10 cursor-pointer shadow-xs ${
+                isFollowing
+                  ? 'border-amber-400 ring-2 ring-amber-400/50 scale-110 z-10'
+                  : 'border-white ring-1 ring-black/10'
+              }`}
+              style={{ backgroundColor: user.color }}
+            >
+              {user.nickname.slice(0, 1)}
+            </button>
+          );
+        })}
 
         {remoteUsers.length > 4 && (
           <div
@@ -75,6 +91,20 @@ export const CollaboratorAvatars: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 跟随状态提示与快捷退出 */}
+      {followingUserId && (
+        <button
+          type="button"
+          onClick={() => setFollowingUser(null)}
+          title="点击退出视角跟随模式"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-medium hover:bg-amber-500/25 transition-colors cursor-pointer"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <span>正在跟随</span>
+          <span className="font-bold ml-0.5">×</span>
+        </button>
+      )}
 
       <NicknameModal
         isOpen={isEditModalOpen}

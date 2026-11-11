@@ -55,21 +55,25 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const handleDeleteLane = (e: React.MouseEvent) => {
     e.stopPropagation();
     const st = useFlowStore.getState();
-    // 递归删除该泳道及其包含的子节点
-    st.deleteSelected(); // 或者直接删除此节点
+
+    // 高危防误触二次确认护栏：当泳道内部包含子节点时提示确认
+    const childrenIds = st.nodes.filter((n) => n.parentId === id).map((n) => n.id);
+    if (childrenIds.length > 0) {
+      const ok = window.confirm(
+        `该泳道内包含 ${childrenIds.length} 个步骤节点，删除泳道将同时清除所有内部节点与连线，是否确定删除？`
+      );
+      if (!ok) return;
+    }
+
     const pool = parentId ? st.nodes.find((n) => n.id === parentId) : null;
     if (pool) {
       const remainingOrder = ((pool.data?.laneOrder as string[]) || []).filter((lid) => lid !== id);
       st.updateNodeData(pool.id, { laneOrder: remainingOrder });
     }
-    // 触发批量删除该泳道及挂在其下的子节点
-    const childrenIds = st.nodes.filter((n) => n.parentId === id).map((n) => n.id);
-    const allToDelete = [id, ...childrenIds];
-    const nextNodes = st.nodes.filter((n) => !allToDelete.includes(n.id));
-    const nextEdges = st.edges.filter(
-      (e) => !allToDelete.includes(e.source) && !allToDelete.includes(e.target)
-    );
-    st.setDiagram(nextNodes, nextEdges);
+
+    // 选中本节点并调用 deleteSelected：自动级联删除子节点与连线，并完整保留撤销历史栈（修复误调 setDiagram 导致清空本地 Undo 栈的 Bug）
+    st.setSelectedNodes([id]);
+    st.deleteSelected();
   };
 
   return (

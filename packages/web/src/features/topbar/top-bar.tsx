@@ -15,6 +15,8 @@ import {
   Share2,
   Sparkles,
   History,
+  Compass,
+  Upload,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -24,7 +26,12 @@ import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
 import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
-import { exportToPng, exportToSvg, exportToJson } from '../../lib/export-utils';
+import {
+  exportToPng,
+  exportToSvg,
+  exportToJson,
+  validateAndParseDiagramJson,
+} from '../../lib/export-utils';
 
 export interface TopBarProps {
   /** 当前图表 ID */
@@ -39,6 +46,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const storeTitle = useFlowStore((s) => s.diagramTitle);
   const setDiagramTitle = useFlowStore((s) => s.setDiagramTitle);
   const setDiagram = useFlowStore((s) => s.setDiagram);
+  const spotlightActive = useFlowStore((s) => s.spotlightActive);
+  const toggleSpotlightMode = useFlowStore((s) => s.toggleSpotlightMode);
 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -49,6 +58,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
   const isEscapingRef = useRef(false);
 
   // 当外部/远端 storeTitle 变化时同步更新编辑缓存
@@ -120,6 +130,36 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     } finally {
       setIsLayouting(false);
     }
+  };
+
+  const handleImportJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const res = validateAndParseDiagramJson(content);
+      if (!res.success) {
+        showToast(res.error || 'JSON 解析失败');
+        return;
+      }
+
+      if (nodes.length > 0) {
+        const ok = window.confirm(
+          `当前画布已有 ${nodes.length} 个节点。\n点击「确定」将覆盖当前画布内容并导入；点击「取消」中止操作。`
+        );
+        if (!ok) return;
+      }
+
+      setDiagram(res.nodes || [], res.edges || []);
+      if (res.title) {
+        setDiagramTitle(res.title);
+      }
+      showToast('已成功导入图表工程');
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   useEffect(() => {
@@ -232,6 +272,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           </span>
         </div>
 
+        {/* 链路走查聚光灯开关 */}
+        <button
+          type="button"
+          onClick={() => toggleSpotlightMode()}
+          title="开启因果链路聚光灯走查（支持 Alt+点击 节点/连线 快捷高亮完整上下游）"
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+            spotlightActive
+              ? 'bg-blue-600 text-white border-blue-600 shadow-blue-500/20'
+              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-blue-500/50'
+          }`}
+        >
+          <Compass className={`w-3.5 h-3.5 ${spotlightActive ? 'text-white' : 'text-blue-500'}`} />
+          <span>{spotlightActive ? '走查中' : '链路走查'}</span>
+        </button>
+
         {/* 一键自动排版 */}
         <button
           type="button"
@@ -311,9 +366,36 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
                   <span className="text-[10px] text-fs-text-muted">完整画布工程文件</span>
                 </div>
               </button>
+
+              <div className="h-px bg-fs-border my-1" />
+
+              {/* 导入外部 JSON */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExportOpen(false);
+                  jsonFileInputRef.current?.click();
+                }}
+                className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <Upload className="w-4 h-4 text-fs-primary shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-medium text-fs-primary">导入 JSON 工程</span>
+                  <span className="text-[10px] text-fs-text-muted">恢复或覆盖当前画布</span>
+                </div>
+              </button>
             </div>
           )}
         </div>
+
+        {/* 隐藏的 JSON 文件选择器 */}
+        <input
+          ref={jsonFileInputRef}
+          type="file"
+          accept=".json"
+          className="hidden"
+          onChange={handleImportJsonFile}
+        />
 
         <div className="h-4 w-px bg-fs-border" />
 

@@ -65,8 +65,22 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
 
   const handleRestore = async (snapshotId: string, label: string) => {
     if (!diagramId || revertingId) return;
+
+    // 高危防误触二次确认护栏：恢复前确认并自动创建备份
+    const confirmed = window.confirm(
+      `确定要恢复至历史快照「${label}」吗？\n恢复前系统将自动为当前画布创建一份安全备份快照。`
+    );
+    if (!confirmed) return;
+
     try {
       setRevertingId(snapshotId);
+      // 自动安全备份当前画布
+      try {
+        await apiClient.createSnapshot(diagramId, `[系统安全备份] 恢复「${label}」前`);
+      } catch (err) {
+        console.warn('[SnapshotDrawer] 自动备份快照失败:', err);
+      }
+
       const res = await apiClient.restoreSnapshot(diagramId, snapshotId);
       if (res.success) {
         onToast?.(`已成功恢复至「${label}」版本`);

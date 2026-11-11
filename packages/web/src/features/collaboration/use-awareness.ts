@@ -26,6 +26,9 @@ function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): bo
       item.color === other.color &&
       item.cursor?.x === other.cursor?.x &&
       item.cursor?.y === other.cursor?.y &&
+      item.viewport?.x === other.viewport?.x &&
+      item.viewport?.y === other.viewport?.y &&
+      item.viewport?.zoom === other.viewport?.zoom &&
       joinIds(item.selectedNodeIds) === joinIds(other.selectedNodeIds)
     );
   });
@@ -34,19 +37,27 @@ function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): bo
 export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwarenessOptions) {
   const [remoteUsers, setRemoteUsers] = useState<AwarenessUserState[]>([]);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
+  const viewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   // 广播本地用户状态
   const broadcastLocalState = useCallback(
-    (cursor: { x: number; y: number } | null) => {
+    (cursor: { x: number; y: number } | null, viewport?: { x: number; y: number; zoom: number }) => {
       if (!provider || !provider.awareness) return;
 
-      cursorRef.current = cursor;
+      if (cursor !== undefined) {
+        cursorRef.current = cursor;
+      }
+      if (viewport !== undefined) {
+        viewportRef.current = viewport;
+      }
+
       const localState: AwarenessUserState = {
         clientId: currentUser.clientId,
         nickname: currentUser.nickname,
         color: currentUser.color,
-        cursor,
+        cursor: cursorRef.current,
         selectedNodeIds,
+        viewport: viewportRef.current,
       };
 
       provider.awareness.setLocalStateField('user', localState);
@@ -54,9 +65,16 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
     [provider, currentUser, selectedNodeIds]
   );
 
+  const broadcastViewport = useCallback(
+    (viewport: { x: number; y: number; zoom: number }) => {
+      broadcastLocalState(cursorRef.current, viewport);
+    },
+    [broadcastLocalState]
+  );
+
   // 监听选中节点与当前身份变化，自动同步 Awareness
   useEffect(() => {
-    broadcastLocalState(cursorRef.current);
+    broadcastLocalState(cursorRef.current, viewportRef.current);
   }, [broadcastLocalState]);
 
   // 监听远端 awareness 变更
@@ -91,6 +109,7 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
 
   return {
     remoteUsers,
-    broadcastCursor: broadcastLocalState,
+    broadcastCursor: (cursor: { x: number; y: number } | null) => broadcastLocalState(cursor, viewportRef.current),
+    broadcastViewport,
   };
 }

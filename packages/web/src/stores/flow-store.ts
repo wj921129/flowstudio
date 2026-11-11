@@ -85,6 +85,14 @@ interface FlowStoreInternalState extends FlowStoreState {
   viewportZoom: number;
   /** 智能对齐吸附开关 (按住 Alt 临时关闭) */
   alignmentSnapEnabled: boolean;
+  /** 因果链路聚光灯走查是否激活 */
+  spotlightActive: boolean;
+  /** 聚光灯聚焦的目标节点或连线 ID */
+  spotlightTargetId: string | null;
+  /** 决策节点分支过滤 ('all' | 'yes' | 'no' | string | null) */
+  spotlightBranchFilter: string | null;
+  /** 当前正在跟随视角的协作者 ID */
+  followingUserId: string | null;
 }
 
 /**
@@ -143,6 +151,14 @@ export interface FlowStoreActions {
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
   /** 设置当前图表标题 */
   setDiagramTitle: (title: string) => void;
+  /** 重置画布图表状态（用于切换图表或离开画布时的状态清理，杜绝跨图残留） */
+  resetDiagramState: () => void;
+  /** 切换因果链路聚光灯走查模式 */
+  toggleSpotlightMode: (enabled?: boolean) => void;
+  /** 设置聚光灯聚焦目标与分支过滤 */
+  setSpotlightTarget: (targetId: string | null, branchFilter?: string | null) => void;
+  /** 设置跟随协作者视角 */
+  setFollowingUser: (userId: string | null) => void;
   /** 绑定 Yjs 协同桥接与协同撤销管理器 */
   bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => () => void;
   /** 解除 Yjs 协同绑定 */
@@ -233,6 +249,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   alignmentGuides: [],
   viewportZoom: 1,
   alignmentSnapEnabled: true,
+  spotlightActive: false,
+  spotlightTargetId: null,
+  spotlightBranchFilter: null,
+  followingUserId: null,
 
   onNodesChange: (changes: NodeChange[]) => {
     if (changes.length === 0) return;
@@ -1124,6 +1144,45 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     if (activeBridge) {
       activeBridge.setTitle(trimmed);
     }
+  },
+
+  resetDiagramState: () => {
+    set({
+      nodes: [],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeId: null,
+      diagramTitle: '未命名流程图',
+      historyPast: [],
+      historyFuture: [],
+      canUndo: false,
+      canRedo: false,
+      isInteracting: false,
+      alignmentGuides: [],
+      spotlightActive: false,
+      spotlightTargetId: null,
+      spotlightBranchFilter: null,
+      followingUserId: null,
+    });
+  },
+
+  toggleSpotlightMode: (enabled?: boolean) => {
+    set((s) => ({
+      spotlightActive: enabled ?? !s.spotlightActive,
+      ...(!enabled && s.spotlightActive ? { spotlightTargetId: null, spotlightBranchFilter: null } : {}),
+    }));
+  },
+
+  setSpotlightTarget: (targetId: string | null, branchFilter: string | null = null) => {
+    set({
+      spotlightActive: Boolean(targetId),
+      spotlightTargetId: targetId,
+      spotlightBranchFilter: branchFilter,
+    });
+  },
+
+  setFollowingUser: (userId: string | null) => {
+    set({ followingUserId: userId });
   },
 
   bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => {

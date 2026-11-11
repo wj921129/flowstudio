@@ -3,7 +3,7 @@
  * @description 组装 React Flow 视口，集成自由拖拽与智能对齐参考线、橡皮筋框选、全局快捷键、正交连线与就地浮动工具条
  */
 
-import React, { useEffect, useCallback, useState, useRef } from 'react';
+import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -11,6 +11,7 @@ import {
   ConnectionMode,
   MarkerType,
   ConnectionLineType,
+  ViewportPortal,
   useReactFlow,
 } from '@xyflow/react';
 import {
@@ -18,8 +19,9 @@ import {
   isFlowNodeType,
   getDefaultNodeSize,
   type FlowNode,
+  type FlowEdge,
 } from '@flowstudio/shared';
-import { generateUniqueId } from '../../lib/node-utils';
+import { generateUniqueId, createNodeFromType } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
 import { nodeTypes } from './custom-nodes';
 import { edgeTypes } from './custom-edges';
@@ -31,6 +33,8 @@ import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
+import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete } from './utils/split-insert-manager';
+import { computePathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
@@ -57,10 +61,107 @@ export const FlowCanvas: React.FC = () => {
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
+  const setDiagram = useFlowStore((s) => s.setDiagram);
+  const spotlightActive = useFlowStore((s) => s.spotlightActive);
+  const spotlightTargetId = useFlowStore((s) => s.spotlightTargetId);
+  const spotlightBranchFilter = useFlowStore((s) => s.spotlightBranchFilter);
+  const toggleSpotlightMode = useFlowStore((s) => s.toggleSpotlightMode);
+  const setSpotlightTarget = useFlowStore((s) => s.setSpotlightTarget);
+  const followingUserId = useFlowStore((s) => s.followingUserId);
+  const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
   const setAlignmentSnapEnabled = useFlowStore((s) => s.setAlignmentSnapEnabled);
+
+  // 拖拽悬停至连线附近的断键预览态状态
+  const [hoveredEdgeForInsert, setHoveredEdgeForInsert] = useState<{
+    edgeId: string;
+    point: { x: number; y: number };
+  } | null>(null);
+
+  // 监听并执行主讲人视角跟随
+  useEffect(() => {
+    if (!followingUserId || !collab?.remoteUsers) return;
+    const targetUser = collab.remoteUsers.find((u) => u.clientId === followingUserId);
+    if (targetUser?.viewport) {
+      setViewport(
+        { x: targetUser.viewport.x, y: targetUser.viewport.y, zoom: targetUser.viewport.zoom },
+        { duration: 150 }
+      );
+    }
+  }, [followingUserId, collab?.remoteUsers, setViewport]);
+
+  // 计算因果链路聚光灯走查范围
+  const spotlightResult = useMemo(() => {
+    if (!spotlightActive || !spotlightTargetId) return null;
+    return computePathSpotlight(nodes, edges, spotlightTargetId, {
+      decisionBranchFilter: spotlightBranchFilter,
+    });
+  }, [spotlightActive, spotlightTargetId, spotlightBranchFilter, nodes, edges]);
+
+  // 计算当前聚焦链路中的决策分支列表供浮动单选胶囊切换
+  const decisionBranches = useMemo(() => {
+    if (!spotlightActive || !spotlightTargetId) return [];
+    return getDecisionBranches(spotlightTargetId, edges);
+  }, [spotlightActive, spotlightTargetId, edges]);
+
+  // 映射聚光灯走查下的高亮/暗淡节点集合（15%透明度，泳道微光保留）
+  const displayNodes = useMemo(() => {
+    if (!spotlightResult) return nodes;
+    const { nodeIds, laneIds } = spotlightResult;
+    return nodes.map((node) => {
+      const isHighlighted = nodeIds.has(node.id) || laneIds.has(node.id);
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: isHighlighted ? 1 : 0.15,
+          filter: isHighlighted ? undefined : 'grayscale(80%)',
+          transition: 'opacity 0.2s ease, filter 0.2s ease',
+        },
+      };
+    });
+  }, [nodes, spotlightResult]);
+
+  // 映射聚光灯走查及断键悬停下的连线样式
+  const displayEdges = useMemo(() => {
+    if (!spotlightResult && !hoveredEdgeForInsert) return edges;
+    const edgeIds = spotlightResult?.edgeIds;
+
+    return edges.map((edge) => {
+      const isHovered = hoveredEdgeForInsert?.edgeId === edge.id;
+      if (isHovered) {
+        return {
+          ...edge,
+          animated: true,
+          style: {
+            ...edge.style,
+            stroke: '#6366f1',
+            strokeWidth: 3,
+            strokeDasharray: '6,6',
+          },
+        };
+      }
+
+      if (spotlightResult) {
+        const isHighlighted = edgeIds ? edgeIds.has(edge.id) : true;
+        return {
+          ...edge,
+          animated: isHighlighted,
+          style: {
+            ...edge.style,
+            opacity: isHighlighted ? 1 : 0.15,
+            stroke: isHighlighted ? 'var(--fs-selection-ring, #2563eb)' : edge.style?.stroke,
+            strokeWidth: isHighlighted ? 2.5 : edge.style?.strokeWidth ?? 1.5,
+            transition: 'opacity 0.2s ease',
+          },
+        };
+      }
+
+      return edge;
+    });
+  }, [edges, spotlightResult, hoveredEdgeForInsert]);
 
   const lastCursorBroadcastRef = useRef(0);
 
@@ -78,17 +179,29 @@ export const FlowCanvas: React.FC = () => {
   );
 
   const handleMouseLeave = useCallback(() => {
+    setHoveredEdgeForInsert(null);
     if (!collab) return;
     lastCursorBroadcastRef.current = 0;
     collab.broadcastCursor(null);
   }, [collab]);
 
-  /** 视口缩放随 pan/zoom 变化，对齐感应半径需要据此换算 */
+  /** 视口缩放随 pan/zoom 变化，对齐感应半径需要据此换算，并向协同者广播视口 */
   const handleViewportMove = useCallback(
     (_event: unknown, viewport: { x: number; y: number; zoom: number }) => {
       useFlowStore.getState().setViewportZoom(viewport.zoom);
+      collab?.broadcastViewport?.(viewport);
     },
-    []
+    [collab]
+  );
+
+  /** 用户主动平移/拖动画布时自动退出主讲人视角跟随 */
+  const handleMoveStart = useCallback(
+    (event: unknown) => {
+      if (event && followingUserId) {
+        setFollowingUser(null);
+      }
+    },
+    [followingUserId, setFollowingUser]
   );
 
   // 按住 Alt 期间临时关闭智能对齐吸附，回到逐像素自由落点
@@ -125,15 +238,34 @@ export const FlowCanvas: React.FC = () => {
   }, [activeTool]);
 
   /**
-   * 画布拖拽经过处理器：允许放置操作并指明 move 移动意图
+   * 画布拖拽经过处理器：允许放置操作，并实时检测光标是否在连线感应区内以呈现断键插入浮标
    */
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  }, []);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+
+      const flowPosition = screenToFlowPosition({
+        x: e.clientX,
+        y: e.clientY,
+      });
+
+      const currentEdges = useFlowStore.getState().edges;
+      const currentNodes = useFlowStore.getState().nodes;
+      const hitResult = findEdgeAtPosition(currentEdges, currentNodes, flowPosition, 20);
+
+      if (hitResult) {
+        setHoveredEdgeForInsert({ edgeId: hitResult.edge.id, point: flowPosition });
+      } else {
+        setHoveredEdgeForInsert(null);
+      }
+    },
+    [screenToFlowPosition]
+  );
 
   /**
-   * 画布拖拽放置处理器：将图元落点转换为画布坐标并按光标居中生成节点，随后自动选中
+   * 画布拖拽放置处理器：将图元落点转换为画布坐标并按光标居中生成节点；
+   * 若落点在连线上则自动触发断键串接与下游智能顺推
    */
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -156,12 +288,14 @@ export const FlowCanvas: React.FC = () => {
           appendSubgraph(instance.nodes, instance.edges);
           setSelectedNodes(instance.nodes.map((n) => n.id));
           setSelectedEdge(null);
+          setHoveredEdgeForInsert(null);
           return;
         }
       }
 
       const rawType = e.dataTransfer.getData('application/flowstudio-node-type');
       if (!isFlowNodeType(rawType)) {
+        setHoveredEdgeForInsert(null);
         return;
       }
 
@@ -177,6 +311,30 @@ export const FlowCanvas: React.FC = () => {
         x: flowPosition.x - defaultSize.width / 2,
         y: flowPosition.y - defaultSize.height / 2,
       };
+
+      // 2. 检查落点是否落在连线上：非 pool 容器节点触发断键插入与顺推
+      const currentEdges = useFlowStore.getState().edges;
+      const currentNodes = useFlowStore.getState().nodes;
+      const hitResult =
+        rawType !== 'pool' ? findEdgeAtPosition(currentEdges, currentNodes, flowPosition, 24) : null;
+
+      if (hitResult) {
+        const newNode = createNodeFromType(rawType, centeredPosition);
+        const { nextNodes, nextEdges } = splitEdgeAndInsertNode({
+          nodes: currentNodes,
+          edges: currentEdges,
+          targetEdge: hitResult.edge,
+          newNode,
+          safetyGap: 60,
+        });
+        setDiagram(nextNodes, nextEdges);
+        setSelectedNodes([newNode.id]);
+        setSelectedEdge(null);
+        setHoveredEdgeForInsert(null);
+        return;
+      }
+
+      setHoveredEdgeForInsert(null);
 
       if (rawType === 'pool') {
         // 拖入泳道池时自动附带生成两条初始子泳道
@@ -234,19 +392,35 @@ export const FlowCanvas: React.FC = () => {
         setSelectedEdge(null);
       }
     },
-    [screenToFlowPosition, addNode, addNodes, appendSubgraph, setSelectedNodes, setSelectedEdge]
+    [
+      screenToFlowPosition,
+      addNode,
+      addNodes,
+      appendSubgraph,
+      setDiagram,
+      setSelectedNodes,
+      setSelectedEdge,
+    ]
   );
 
   /**
-   * 连线点击事件处理器：激活连线属性模式，并清空所有节点选中状态
+   * 连线点击事件处理器：激活连线属性模式，并清空所有节点选中状态；
+   * 支持 Alt + Click 快速开启链路聚光灯走查
    */
   const handleEdgeClick = useCallback(
-    (_event: React.MouseEvent, edge: { id: string }) => {
+    (event: React.MouseEvent, edge: { id: string }) => {
       setSelectedNodes([]);
       setSelectedEdge(edge.id);
       setConnectSourceNodeId(null);
+
+      if (event.altKey) {
+        toggleSpotlightMode(true);
+        setSpotlightTarget(edge.id, 'all');
+      } else if (spotlightActive) {
+        setSpotlightTarget(edge.id, 'all');
+      }
     },
-    [setSelectedNodes, setSelectedEdge]
+    [setSelectedNodes, setSelectedEdge, spotlightActive, toggleSpotlightMode, setSpotlightTarget]
   );
 
   const handleConnect = useCallback(
@@ -263,12 +437,27 @@ export const FlowCanvas: React.FC = () => {
 
   /**
    * 节点点击事件处理器：
+   * - 支持 Alt + Click 开启因果链路聚光灯走查
+   * - 聚光灯模式下点击直接聚焦该节点因果链路
    * - 选择/常规模式：清空连线选中状态，确保属性面板专注呈现节点属性
    * - 连线模式：两两点击节点直接建立正交连线，并高亮反馈
    */
   const handleNodeClick = useCallback(
-    (_event: React.MouseEvent, node: { id: string }) => {
+    (event: React.MouseEvent, node: { id: string }) => {
       setSelectedEdge(null);
+
+      if (event.altKey) {
+        toggleSpotlightMode(true);
+        setSpotlightTarget(node.id, 'all');
+        setSelectedNodes([node.id]);
+        return;
+      }
+
+      if (spotlightActive) {
+        setSpotlightTarget(node.id, 'all');
+        setSelectedNodes([node.id]);
+        return;
+      }
 
       if (activeTool === 'connect') {
         if (!connectSourceNodeId) {
@@ -288,17 +477,55 @@ export const FlowCanvas: React.FC = () => {
           setConnectSourceNodeId(null);
           setSelectedNodes([]);
         }
+      } else {
+        setSelectedNodes([node.id]);
       }
     },
-    [activeTool, connectSourceNodeId, onConnect, setSelectedNodes, setSelectedEdge]
+    [
+      activeTool,
+      connectSourceNodeId,
+      onConnect,
+      setSelectedNodes,
+      setSelectedEdge,
+      spotlightActive,
+      toggleSpotlightMode,
+      setSpotlightTarget,
+    ]
   );
 
   /**
-   * 节点拖拽松手事件处理器：执行泳道吸附、坐标转换与容器尺寸自动扩充
+   * 节点拖拽松手事件处理器：
+   * 1. 若移动孤立节点（无连线节点）至连线上，自动触发断键串接
+   * 2. 执行泳道吸附、坐标转换与容器尺寸自动扩充
    */
   const handleNodeDragStop = useCallback(
     (_event: any, node: any) => {
       const store = useFlowStore.getState();
+      const isConnected = store.edges.some((e) => e.source === node.id || e.target === node.id);
+      const isContainer = ['pool', 'lane', 'group'].includes(node.type ?? '');
+
+      if (!isConnected && !isContainer) {
+        const targetNode = store.nodes.find((n) => n.id === node.id);
+        if (targetNode) {
+          const centerPos = {
+            x: targetNode.position.x + (targetNode.width ?? 120) / 2,
+            y: targetNode.position.y + (targetNode.height ?? 60) / 2,
+          };
+          const hitResult = findEdgeAtPosition(store.edges, store.nodes, centerPos, 24);
+          if (hitResult) {
+            const { nextNodes, nextEdges } = splitEdgeAndInsertNode({
+              nodes: store.nodes,
+              edges: store.edges,
+              targetEdge: hitResult.edge,
+              newNode: targetNode,
+              safetyGap: 60,
+            });
+            store.setDiagram(nextNodes, nextEdges);
+            return;
+          }
+        }
+      }
+
       const { updated, nextNodes } = handleNodeDragNesting(node.id, store.nodes);
       if (updated) {
         store.setDiagram(nextNodes, store.edges);
@@ -308,13 +535,18 @@ export const FlowCanvas: React.FC = () => {
   );
 
   /**
-   * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态
+   * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态；退出聚光灯走查
    */
   const handlePaneClick = useCallback(() => {
     setSelectedNodes([]);
     setSelectedEdge(null);
     setConnectSourceNodeId(null);
-  }, [setSelectedNodes, setSelectedEdge]);
+    setHoveredEdgeForInsert(null);
+    if (spotlightActive) {
+      toggleSpotlightMode(false);
+      setSpotlightTarget(null);
+    }
+  }, [setSelectedNodes, setSelectedEdge, spotlightActive, toggleSpotlightMode, setSpotlightTarget]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -422,16 +654,33 @@ export const FlowCanvas: React.FC = () => {
         return;
       }
 
-      // 批量删除
+      // 批量删除与 Shift 愈合式删除
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        if (e.shiftKey) {
+          const { nodes: curNodes, edges: curEdges, selectedNodeIds: curSel } =
+            useFlowStore.getState();
+          if (curSel.length === 1) {
+            const healRes = healOnDelete(curSel[0], curNodes, curEdges);
+            if (healRes.canHeal) {
+              useFlowStore.getState().setDiagram(healRes.nextNodes, healRes.nextEdges);
+              setSelectedNodes([]);
+              setSelectedEdge(null);
+              return;
+            }
+          }
+        }
         deleteSelected();
         return;
       }
 
-      // 取消连线模式或清空选中 (Escape)
+      // 取消连线模式、退出聚光灯或清空选中 (Escape)
       if (e.key === 'Escape') {
         e.preventDefault();
+        if (spotlightActive) {
+          toggleSpotlightMode(false);
+          setSpotlightTarget(null);
+        }
         if (connectSourceNodeId) {
           setConnectSourceNodeId(null);
           setActiveTool('select');
@@ -463,7 +712,16 @@ export const FlowCanvas: React.FC = () => {
     setActiveTool,
     setSelectedNodes,
     setSelectedEdge,
+    spotlightActive,
+    toggleSpotlightMode,
+    setSpotlightTarget,
   ]);
+
+  // 获取当前正在跟随的主讲人信息
+  const followingUser = useMemo(() => {
+    if (!followingUserId || !collab?.remoteUsers) return null;
+    return collab.remoteUsers.find((u) => u.clientId === followingUserId) ?? null;
+  }, [followingUserId, collab?.remoteUsers]);
 
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =
@@ -483,9 +741,73 @@ export const FlowCanvas: React.FC = () => {
     >
       <CollaborativeCursors />
       <AiBatchBanner diagramId={collab?.diagramId} />
+
+      {/* 主讲人视角跟随浮层指示条 */}
+      {followingUser && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-1.5 bg-blue-600/90 text-white text-xs font-medium rounded-full shadow-lg backdrop-blur-md border border-blue-400/30">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+          </span>
+          <span>
+            正在跟随 <b>{followingUser.nickname}</b> 的视角
+          </span>
+          <button
+            onClick={() => setFollowingUser(null)}
+            className="ml-1 text-[11px] bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
+          >
+            退出跟随
+          </button>
+        </div>
+      )}
+
+      {/* 聚光灯决策节点分支单选筛选胶囊 */}
+      {spotlightActive && decisionBranches.length > 0 && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1 bg-slate-900/85 text-white rounded-full shadow-xl border border-slate-700/60 backdrop-blur-md">
+          <span className="text-[11px] font-medium text-slate-300 pl-2.5 pr-1">因果分支:</span>
+          <button
+            key="all"
+            onClick={() => setSpotlightTarget(spotlightTargetId, 'all')}
+            className={`px-2.5 py-1 text-xs rounded-full transition-all cursor-pointer ${
+              spotlightBranchFilter === 'all' || !spotlightBranchFilter
+                ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                : 'text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            全部分支
+          </button>
+          {decisionBranches.map((label) => {
+            const isSelected = spotlightBranchFilter === label;
+            return (
+              <button
+                key={label}
+                onClick={() => setSpotlightTarget(spotlightTargetId, label)}
+                className={`px-2.5 py-1 text-xs rounded-full transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                仅看[{label}]
+              </button>
+            );
+          })}
+          <button
+            onClick={() => {
+              toggleSpotlightMode(false);
+              setSpotlightTarget(null);
+            }}
+            className="ml-1 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 cursor-pointer"
+            title="退出链路走查 (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={displayNodes}
+        edges={displayEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         deleteKeyCode={null}
@@ -497,6 +819,7 @@ export const FlowCanvas: React.FC = () => {
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
         onMove={handleViewportMove}
+        onMoveStart={handleMoveStart}
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
@@ -534,6 +857,23 @@ export const FlowCanvas: React.FC = () => {
           size={1}
           color="var(--fs-canvas-dot)"
         />
+
+        {/* 悬停断键插入浮标 */}
+        <ViewportPortal>
+          {hoveredEdgeForInsert && (
+            <div
+              style={{
+                position: 'absolute',
+                transform: `translate(${hoveredEdgeForInsert.point.x}px, ${hoveredEdgeForInsert.point.y}px) translate(-50%, -50%)`,
+                pointerEvents: 'none',
+              }}
+              className="z-50 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-full shadow-lg ring-2 ring-white/40 animate-pulse"
+            >
+              <span className="text-base font-bold leading-none">+</span>
+              <span>插入步骤</span>
+            </div>
+          )}
+        </ViewportPortal>
 
         {/* 拖拽智能对齐参考线 */}
         <AlignmentGuides />

@@ -23,6 +23,7 @@ export interface CollaborationContextValue {
   currentUser: UserIdentity;
   updateNickname: (name: string) => void;
   broadcastCursor: (cursor: { x: number; y: number } | null) => void;
+  broadcastViewport?: (viewport: { x: number; y: number; zoom: number }) => void;
 }
 
 const CollaborationContext = createContext<CollaborationContextValue | null>(null);
@@ -45,15 +46,21 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
 
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
 
-  // 初始化 Y.Doc 与桥接管理器
+  // 当切换图表时重置连接与同步标识
+  useEffect(() => {
+    setIsSynced(false);
+    setConnectionStatus('connecting');
+  }, [diagramId]);
+
+  // 初始化 Y.Doc 与桥接管理器：严格绑定当前 diagramId 确保生命周期隔离
   const { doc, bridge, undoManager } = useMemo(() => {
     const d = new Y.Doc();
     const b = new YjsDiagramBridge(d, { localClientId: currentUser.clientId });
     const u = new CollaborativeUndoManager(d, currentUser.clientId);
     return { doc: d, bridge: b, undoManager: u };
-  }, [currentUser.clientId]);
+  }, [diagramId, currentUser.clientId]);
 
-  // 绑定至 zustand flow-store
+  // 绑定至 zustand flow-store；切换图表或卸载时彻底解绑并销毁旧实例，清空残留图表状态
   useEffect(() => {
     const unbind = useFlowStore.getState().bindCollaboration(bridge, undoManager);
     const unbindTheme = bridge.subscribe((state) => {
@@ -64,8 +71,11 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     return () => {
       unbind();
       unbindTheme();
+      bridge.destroy();
+      doc.destroy();
+      useFlowStore.getState().resetDiagramState();
     };
-  }, [bridge, undoManager]);
+  }, [diagramId, bridge, undoManager, doc]);
 
   // 构建 HocuspocusProvider
   const provider = useMemo(() => {
@@ -112,7 +122,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   }, [currentUser.isFirstVisit]);
 
   // 协同感知 Hook
-  const { remoteUsers, broadcastCursor } = useAwareness({
+  const { remoteUsers, broadcastCursor, broadcastViewport } = useAwareness({
     provider,
     currentUser,
     selectedNodeIds,
@@ -136,6 +146,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       currentUser,
       updateNickname: handleUpdateNickname,
       broadcastCursor,
+      broadcastViewport,
     }),
     [
       diagramId,
@@ -148,6 +159,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       remoteUsers,
       currentUser,
       broadcastCursor,
+      broadcastViewport,
     ]
   );
 
