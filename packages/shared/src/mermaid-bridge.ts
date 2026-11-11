@@ -20,6 +20,16 @@ const NODE_SHAPE_SYNTAX: Record<FlowNodeType, string> = {
   group: '("%L%")',
   pool: '["%L%"]',
   lane: '["%L%"]',
+  'uml-lifeline': '["%L%"]',
+  'uml-activation': '["%L%"]',
+  'uml-message': '["%L%"]',
+  'arch-microservice': '["%L%"]',
+  'arch-gateway': '["%L%"]',
+  'arch-db-shard': '[("%L%")]',
+  'arch-cache': '["%L%"]',
+  'arch-k8s-pod': '["%L%"]',
+  'arch-docker': '["%L%"]',
+  'rich-card': '["%L%"]',
 };
 
 /** 导出时会被 Mermaid 语法破坏的字符 */

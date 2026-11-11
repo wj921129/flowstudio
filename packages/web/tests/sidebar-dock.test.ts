@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { filterElements, categorizeElements } from '../src/features/sidebar/tabs/elements-panel';
-import { NODE_REGISTRY_RECORD } from '@flowstudio/shared';
+import { NODE_REGISTRY_RECORD, NODE_CATEGORIES } from '@flowstudio/shared';
 
 describe('Sidebar Components Logic', () => {
   it('filters elements by search keyword correctly', () => {
@@ -14,26 +14,28 @@ describe('Sidebar Components Logic', () => {
     expect(results[0].id).toBe('decision');
   });
 
-  it('categorizes registry entries into three functionally disjoint groups without duplicates', () => {
+  it('categorizes registry entries into five disjoint category tabs without duplicates', () => {
     const entries = Object.values(NODE_REGISTRY_RECORD);
     const groups = categorizeElements(entries);
     const typesOf = (list: typeof entries) => list.map((e) => e.type);
-    const basic = typesOf(groups.basic);
-    const flowchart = typesOf(groups.flowchart);
-    const containers = typesOf(groups.containers);
+    const grouped = NODE_CATEGORIES.map((c) => typesOf(groups[c]));
 
-    // 任意图元不得出现在两个分组
-    expect(basic.filter((t) => flowchart.includes(t))).toEqual([]);
-    expect(basic.filter((t) => containers.includes(t))).toEqual([]);
-    expect(flowchart.filter((t) => containers.includes(t))).toEqual([]);
+    grouped.forEach((a, i) => {
+      grouped.forEach((b, j) => {
+        if (i !== j) expect(a.filter((t) => b.includes(t))).toEqual([]);
+      });
+    });
 
-    // 三组并集必须覆盖注册表全集，且总数不重复计数
-    const union = [...basic, ...flowchart, ...containers];
+    const union = grouped.flat();
     expect(new Set(union).size).toBe(union.length);
     expect(union.sort()).toEqual(entries.map((e) => e.type).sort());
 
-    expect(containers).toEqual(expect.arrayContaining(['pool', 'lane', 'group']));
-    expect(flowchart).toEqual(expect.arrayContaining(['io', 'document', 'subprocess', 'database']));
-    expect(basic).toEqual(expect.arrayContaining(['start-end', 'process', 'decision', 'comment']));
+    expect(typesOf(groups['泳道'])).toEqual(expect.arrayContaining(['pool', 'lane']));
+    expect(typesOf(groups['流程'])).toEqual(expect.arrayContaining(['start-end', 'process', 'decision', 'io', 'document', 'subprocess', 'database']));
+    expect(typesOf(groups['UML']).sort()).toEqual(['uml-lifeline', 'uml-activation', 'uml-message'].sort());
+    expect(typesOf(groups['架构']).sort()).toEqual(
+      ['arch-microservice', 'arch-gateway', 'arch-db-shard', 'arch-cache', 'arch-k8s-pod', 'arch-docker'].sort()
+    );
+    expect(typesOf(groups['形状'])).toEqual(expect.arrayContaining(['comment', 'group', 'rich-card']));
   });
 });
