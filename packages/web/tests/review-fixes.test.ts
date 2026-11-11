@@ -507,4 +507,150 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(sanitizeSvgColor('var(--fs-palette-3)')).toBe('#F59E0B');
     });
   });
+
+  describe('B3, B4, B5, B11: 审查整改#3 净新增专项用例', () => {
+    it('B3: onNodesChange 严格拦截包含锁定子节点的容器的 position 移动', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const lane: FlowNode = {
+        id: 'lane-parent',
+        type: 'lane',
+        position: { x: 100, y: 100 },
+        width: 800,
+        height: 200,
+        data: { label: '受保泳道' },
+      };
+      const lockedChild: FlowNode = {
+        id: 'child-locked',
+        type: 'process',
+        parentId: 'lane-parent',
+        position: { x: 40, y: 40 },
+        data: { label: '锁定子节点', lockMode: 'position' },
+      };
+
+      store.setDiagram([lane, lockedChild], []);
+
+      // 试图移动 lane-parent
+      store.onNodesChange([
+        {
+          type: 'position',
+          id: 'lane-parent',
+          position: { x: 300, y: 300 },
+        },
+      ]);
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const latestLane = latestNodes.find((n) => n.id === 'lane-parent')!;
+      // lane 包含锁定子节点，其 position 移动被拦截，保持原位 (100, 100)
+      expect(latestLane.position).toEqual({ x: 100, y: 100 });
+    });
+
+    it('B4: applyMermaidOps 的 move_to_lane 严格拦截对 position/full 锁定节点的重挂', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const laneA: FlowNode = { id: 'lane-a', type: 'lane', position: { x: 0, y: 0 }, data: { label: '泳道A' } };
+      const laneB: FlowNode = { id: 'lane-b', type: 'lane', position: { x: 0, y: 200 }, data: { label: '泳道B' } };
+      const nodeLocked: FlowNode = {
+        id: 'node-locked',
+        type: 'process',
+        parentId: 'lane-a',
+        position: { x: 50, y: 50 },
+        data: { label: '锁定节点', lockMode: 'position' },
+      };
+      const nodeNormal: FlowNode = {
+        id: 'node-normal',
+        type: 'process',
+        parentId: 'lane-a',
+        position: { x: 50, y: 50 },
+        data: { label: '普通节点', lockMode: 'none' },
+      };
+
+      store.setDiagram([laneA, laneB, nodeLocked, nodeNormal], []);
+
+      store.applyMermaidOps([
+        { op: 'move_to_lane', nodeId: 'node-locked', laneId: 'lane-b' },
+        { op: 'move_to_lane', nodeId: 'node-normal', laneId: 'lane-b' },
+      ]);
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const resLocked = latestNodes.find((n) => n.id === 'node-locked')!;
+      const resNormal = latestNodes.find((n) => n.id === 'node-normal')!;
+
+      // 锁定节点被拦截，仍停留在 lane-a
+      expect(resLocked.parentId).toBe('lane-a');
+      // 普通节点成功移至 lane-b
+      expect(resNormal.parentId).toBe('lane-b');
+    });
+
+    it('B5: deleteSelected 保护包含锁定子节点的泳道/分组不被删除，避免子节点悬挂', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const groupNode: FlowNode = {
+        id: 'group-1',
+        type: 'group',
+        position: { x: 50, y: 50 },
+        width: 300,
+        height: 200,
+        data: { label: '受保分组' },
+      };
+      const lockedChild: FlowNode = {
+        id: 'g-child-locked',
+        type: 'process',
+        parentId: 'group-1',
+        position: { x: 20, y: 20 },
+        data: { label: '不可删除的锁定子节点', lockMode: 'full' },
+      };
+      const normalChild: FlowNode = {
+        id: 'g-child-normal',
+        type: 'process',
+        parentId: 'group-1',
+        position: { x: 120, y: 20 },
+        data: { label: '普通子节点' },
+      };
+
+      store.setDiagram([groupNode, lockedChild, normalChild], []);
+
+      // 用户全选并按 Delete 删除 group-1
+      store.setSelectedNodes(['group-1']);
+      store.deleteSelected();
+
+      const latestNodes = useFlowStore.getState().nodes;
+      // group-1 内部有 full 锁定的子节点，父容器 group-1 和锁定子节点都安全保留
+      expect(latestNodes.some((n) => n.id === 'group-1')).toBe(true);
+      expect(latestNodes.some((n) => n.id === 'g-child-locked')).toBe(true);
+      // 锁定子节点的 parentId 没有悬挂！
+      const lockedNode = latestNodes.find((n) => n.id === 'g-child-locked')!;
+      expect(lockedNode.parentId).toBe('group-1');
+    });
+
+    it('B11: applyMermaidOps 泳道内增量节点横向排列且连线端点校验', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const lane: FlowNode = { id: 'lane-x', type: 'lane', position: { x: 0, y: 0 }, data: { label: '泳道X' } };
+      store.setDiagram([lane], []);
+
+      store.applyMermaidOps([
+        { op: 'add_node', id: 'n1', label: '节点1', type: 'process', laneId: 'lane-x' },
+        { op: 'add_node', id: 'n2', label: '节点2', type: 'process', laneId: 'lane-x' },
+        { op: 'connect', source: 'n1', target: 'n2' },
+        { op: 'connect', source: 'n1', target: 'non-existent' }, // 目标不存在，应被跳过
+      ]);
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const latestEdges = useFlowStore.getState().edges;
+
+      const n1 = latestNodes.find((n) => n.id === 'n1')!;
+      const n2 = latestNodes.find((n) => n.id === 'n2')!;
+
+      expect(n1.position.x).toBe(40);
+      expect(n2.position.x).toBe(200); // 40 + 1 * 160 = 200，增量横向偏移不堆叠！
+      expect(latestEdges.length).toBe(1);
+      expect(latestEdges[0].source).toBe('n1');
+      expect(latestEdges[0].target).toBe('n2');
+    });
+  });
 });

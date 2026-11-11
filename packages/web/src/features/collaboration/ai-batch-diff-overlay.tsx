@@ -36,9 +36,10 @@ export const AiBatchDiffOverlay: React.FC = () => {
       const res = await fetch(`/api/diagrams/${cleanDiagramId}/ai-batches`);
       if (!res.ok) return;
       const batches = (await res.json()) as AiBatchRecord[];
+      const validBatches = (batches || []).filter((b) => b.status !== 'reverted');
       const target = aiReviewBatchId
-        ? batches.find((b) => b.batchId === aiReviewBatchId)
-        : batches[0];
+        ? validBatches.find((b) => b.batchId === aiReviewBatchId)
+        : validBatches[0];
       setBatchRecord(target || null);
     } catch (err) {
       console.error('[AiBatchDiffOverlay] 拉取批次失败:', err);
@@ -86,6 +87,7 @@ export const AiBatchDiffOverlay: React.FC = () => {
       }
     } catch (err: any) {
       console.warn('[AiBatchDiffOverlay] 撤回请求异常:', err);
+      showToast('网络连接异常，撤回请求未送达，请稍后重试');
     } finally {
       setRevertingIds((prev) => {
         const next = new Set(prev);

@@ -292,11 +292,36 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       alignmentSnapEnabled,
     } = get();
 
+    // 锚定锁守卫：过滤掉被锁定节点自身以及包含锁定子节点的容器的 position 变更 (B3)
+    const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
+    const lockedContainers = new Set<string>();
+    for (const n of nodes) {
+      if (n.parentId && lockedNodeIds.has(n.id)) {
+        let curr: string | undefined = n.parentId;
+        while (curr) {
+          lockedContainers.add(curr);
+          const pNode = nodes.find((x) => x.id === curr);
+          curr = pNode?.parentId;
+        }
+      }
+    }
+
+    const safeChanges = changes.filter((c) => {
+      if (c.type === 'position') {
+        if (lockedNodeIds.has(c.id) || lockedContainers.has(c.id)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (safeChanges.length === 0) return;
+
     const isSelectionOnly =
-      changes.length > 0 && changes.every((c) => c.type === 'select');
+      safeChanges.length > 0 && safeChanges.every((c) => c.type === 'select');
 
     // React Flow 对节点 DOM 尺寸的纯测量上报，只应在本地生效，见下方提交守卫
-    const isMeasureOnly = changes.every(
+    const isMeasureOnly = safeChanges.every(
       (c) =>
         c.type === 'select' ||
         (c.type === 'dimensions' &&
@@ -309,18 +334,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     let shouldPushHistory = false;
 
     const isDraggingOnly =
-      changes.length > 0 &&
-      changes.every(
+      safeChanges.length > 0 &&
+      safeChanges.every(
         (c) =>
           c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true
       );
 
-    const hasDragStart = changes.some(
+    const hasDragStart = safeChanges.some(
       (c) =>
         (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true) ||
         (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === true)
     );
-    const hasDragEnd = changes.some(
+    const hasDragEnd = safeChanges.some(
       (c) =>
         (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === false) ||
         (c.type === 'dimensions' && (c as unknown as { resizing?: boolean }).resizing === false)
@@ -348,11 +373,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
      * 原始指针位置，节点在释放瞬间从对齐线上弹开。React Flow 每帧从指针重算落点、
      * 不回读节点当前位置，因此这里的改写不会自我放大
      */
-    let effectiveChanges: NodeChange[] = changes;
+    let effectiveChanges: NodeChange[] = safeChanges;
     let nextGuides: AlignGuide[] = [];
 
     const proposedPositions = new Map<string, XYPosition>();
-    for (const change of changes) {
+    for (const change of safeChanges) {
       const parsed = readPositionChange(change);
       if (parsed) proposedPositions.set(parsed.id, parsed.position);
     }
@@ -393,7 +418,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
     }
 
-    const hasRemove = changes.some((c) => c.type === 'remove');
+    const hasRemove = safeChanges.some((c) => c.type === 'remove');
     let nextEdges = edges;
     if (hasRemove) {
       const activeNodeIdSet = new Set(nextNodes.map((n) => n.id));
@@ -566,10 +591,33 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    // 锚定锁事前防线：完全锁定 (full) 的节点禁止删除
-    for (const n of nodes) {
-      if (nodeIdsToDelete.has(n.id) && n.data?.lockMode === 'full') {
-        nodeIdsToDelete.delete(n.id);
+    // 锚定锁事前防线：
+    // 1. 完全锁定 (full) 的节点本身禁止删除；
+    // 2. 若容器（pool/lane/group）内部有不可删除的锁定子节点，该父容器整体禁止删除，防止子节点 parentId 悬挂与坐标错位 (B5)
+    let hasProtectedNodes = true;
+    while (hasProtectedNodes) {
+      hasProtectedNodes = false;
+      for (const n of nodes) {
+        if (!nodeIdsToDelete.has(n.id)) continue;
+
+        // 节点自身 full 锁定
+        if (isNodeLocked(n, 'delete')) {
+          nodeIdsToDelete.delete(n.id);
+          hasProtectedNodes = true;
+          continue;
+        }
+
+        // 容器保护：如果容器内包含存活的锁定后代，父级容器坚决禁删！
+        const isContainer = ['pool', 'lane', 'group'].includes(n.type ?? '');
+        if (isContainer) {
+          const hasLockedChild = nodes.some(
+            (child) => child.parentId === n.id && (!nodeIdsToDelete.has(child.id) || isNodeLocked(child, 'delete'))
+          );
+          if (hasLockedChild) {
+            nodeIdsToDelete.delete(n.id);
+            hasProtectedNodes = true;
+          }
+        }
       }
     }
 
@@ -1327,7 +1375,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
               type: 'pool',
               position: { x: 50, y: 50 },
               width: 800,
-              height: 400,
+              height: 240,
               data: {
                 label: '业务泳道池',
                 type: 'pool',
@@ -1351,18 +1399,35 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             }
           }
 
-          if (!nextNodes.some((n) => n.id === op.id)) {
-            const laneCount = nextNodes.filter((n) => n.type === 'lane').length;
+          if (pool && !nextNodes.some((n) => n.id === op.id)) {
+            const currentPool = pool;
+            // 按所属池内的泳道计数 (B11)
+            const poolLanes = nextNodes.filter((n) => n.parentId === currentPool.id && n.type === 'lane');
+            const laneIndex = poolLanes.length;
+            const newLaneY = 40 + laneIndex * 200;
+
             nextNodes.push({
               id: op.id,
               type: 'lane',
-              parentId: pool.id,
+              parentId: currentPool.id,
               extent: 'parent',
-              position: { x: 0, y: 40 + laneCount * 200 },
-              width: pool.width ?? 800,
+              position: { x: 0, y: newLaneY },
+              width: currentPool.width ?? 800,
               height: 200,
               data: { label: op.label, type: 'lane', laneTitle: op.label },
             });
+
+            // 撑开池高度
+            const requiredPoolH = newLaneY + 200;
+            if ((currentPool.height ?? 0) < requiredPoolH) {
+              const updatedPool: FlowNode = {
+                ...currentPool,
+                height: requiredPoolH,
+                style: { ...currentPool.style, height: requiredPoolH },
+              };
+              nextNodes = nextNodes.map((n) => (n.id === updatedPool.id ? updatedPool : n));
+            }
+
             addedNodesCount++;
           }
           break;
@@ -1376,7 +1441,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             if (op.laneId) {
               newNode.parentId = op.laneId;
               newNode.extent = 'parent';
-              newNode.position = { x: 40, y: 40 };
+              // 同泳道内增量布局横向偏移 (B11)
+              const existingChildren = nextNodes.filter((n) => n.parentId === op.laneId);
+              newNode.position = { x: 40 + existingChildren.length * 160, y: 40 };
             } else {
               newPlacementY += 120;
               if (newPlacementY > 600) {
@@ -1393,8 +1460,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         case 'update_node': {
           nextNodes = nextNodes.map((n) => {
             if (n.id === op.id) {
-              // 锚定锁防护：full 锁定节点不被改写
-              if (n.data?.lockMode === 'full') return n;
+              // 锚定锁防护：full 锁定节点不被改写 (统一锁守卫)
+              if (isNodeLocked(n, 'content')) return n;
               return {
                 ...n,
                 data: {
@@ -1409,8 +1476,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         }
 
         case 'move_to_lane': {
+          // 校验目标泳道存在性 (B11)
+          const laneExists = nextNodes.some((n) => n.id === op.laneId && n.type === 'lane');
+          if (!laneExists) break;
+
           nextNodes = nextNodes.map((n) => {
             if (n.id === op.nodeId) {
+              // 锚定锁守卫：position 或 full 锁定节点坚决禁止通过 Mermaid 重挂泳道导致位移与归属跳变 (B4)
+              if (isNodeLocked(n, 'position')) {
+                return n;
+              }
               return {
                 ...n,
                 parentId: op.laneId,
@@ -1423,6 +1498,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         }
 
         case 'connect': {
+          // 校验端点存在性 (B11)
+          const srcExists = nextNodes.some((n) => n.id === op.source);
+          const tgtExists = nextNodes.some((n) => n.id === op.target);
+          if (!srcExists || !tgtExists) break;
+
           const edgeId = generateEdgeId(op.source, op.target);
           if (!nextEdges.some((e) => e.source === op.source && e.target === op.target)) {
             nextEdges.push({

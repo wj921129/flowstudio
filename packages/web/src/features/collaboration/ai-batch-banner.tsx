@@ -25,7 +25,7 @@ export function sanitizeDiagramId(diagramId?: string): string {
 
 export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast }) => {
   const [batches, setBatches] = useState<AiBatchRecord[]>([]);
-  const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [dismissedBatchId, setDismissedBatchId] = useState<string | null>(null);
   const [isReverting, setIsReverting] = useState(false);
 
@@ -43,14 +43,15 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   // 清洗并规范化 diagramId
   const cleanDiagramId = useMemo(() => sanitizeDiagramId(diagramId), [diagramId]);
 
-  // 定期轮询检查当前图的有效 AI 批次
+  // 定期轮询检查当前图的有效 AI 批次（过滤已撤回的批次，B10）
   const checkBatches = useCallback(async () => {
     if (!cleanDiagramId) return;
     try {
       const res = await fetch(`/api/diagrams/${cleanDiagramId}/ai-batches`);
       if (!res.ok) return;
       const list = (await res.json()) as AiBatchRecord[];
-      setBatches(list || []);
+      const activeList = (list || []).filter((b) => b.status !== 'reverted');
+      setBatches(activeList);
     } catch {
       // 忽略轮询静默异常
     }
@@ -62,7 +63,21 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
     return () => clearInterval(timer);
   }, [checkBatches]);
 
-  const activeBatch = batches[currentBatchIndex] || null;
+  // 基于 selectedBatchId 稳定锚定当前批次，避免轮询新批次插入导致索引漂移 (B10)
+  const activeBatch = useMemo(() => {
+    if (batches.length === 0) return null;
+    if (selectedBatchId) {
+      const found = batches.find((b) => b.batchId === selectedBatchId);
+      if (found) return found;
+    }
+    return batches[0];
+  }, [batches, selectedBatchId]);
+
+  const currentBatchIndex = useMemo(() => {
+    if (!activeBatch) return 0;
+    const idx = batches.findIndex((b) => b.batchId === activeBatch.batchId);
+    return idx >= 0 ? idx : 0;
+  }, [batches, activeBatch]);
 
   // 当切换批次时同步审阅批次 ID
   useEffect(() => {
@@ -90,6 +105,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
         }
         setAiReviewMode(false, null);
         setDismissedBatchId(activeBatch.batchId);
+        setSelectedBatchId(null);
         checkBatches();
       } else {
         // 后端若触发补偿回滚或瞬时重试，避免误报「撤回失败」造成用户惊慌，以最终收敛态为准
@@ -98,8 +114,9 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
         }
       }
     } catch (err: any) {
-      // 避免将网络波动或事务补偿瞬态过度放大为错误 Toast
+      // 网络波动等异常给用户清晰反馈 (B9)
       console.warn('[AiBatchBanner] 撤回请求异常:', err);
+      triggerToast('网络连接异常，撤回请求未送达，请稍后重试');
     } finally {
       setIsReverting(false);
     }
@@ -145,7 +162,10 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
             <button
               type="button"
               disabled={currentBatchIndex <= 0}
-              onClick={() => setCurrentBatchIndex((i) => Math.max(0, i - 1))}
+              onClick={() => {
+                const prevIdx = Math.max(0, currentBatchIndex - 1);
+                setSelectedBatchId(batches[prevIdx]?.batchId || null);
+              }}
               className="p-0.5 rounded hover:bg-purple-200/50 dark:hover:bg-purple-800/50 disabled:opacity-30 cursor-pointer"
               title="查看更新的批次"
             >
@@ -154,7 +174,10 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
             <button
               type="button"
               disabled={currentBatchIndex >= batches.length - 1}
-              onClick={() => setCurrentBatchIndex((i) => Math.min(batches.length - 1, i + 1))}
+              onClick={() => {
+                const nextIdx = Math.min(batches.length - 1, currentBatchIndex + 1);
+                setSelectedBatchId(batches[nextIdx]?.batchId || null);
+              }}
               className="p-0.5 rounded hover:bg-purple-200/50 dark:hover:bg-purple-800/50 disabled:opacity-30 cursor-pointer"
               title="查看更早的批次"
             >

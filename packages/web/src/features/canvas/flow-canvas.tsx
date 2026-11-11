@@ -36,6 +36,7 @@ import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
 import { computePathSpotlight, getDecisionBranches } from './utils/path-spotlight';
+import { isNodeLocked } from './utils/node-lock-manager';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
@@ -130,11 +131,32 @@ export const FlowCanvas: React.FC = () => {
     return getDecisionBranches(spotlightTargetId, edges);
   }, [spotlightActive, spotlightTargetId, edges]);
 
-  // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定禁止拖拽，聚光灯降噪15%透明度）
+  // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定及包含锁定子节点的容器禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
+    const hasSpotlight = Boolean(spotlightActive && spotlightTargetId && spotlightResult);
+    // 检查是否有 position/full 锁定的节点 (B8 性能优化)
+    const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
+    // 检查是否有包含锁定子节点的祖先容器（lane / pool / group）(B3 容器拖拽穿透防护)
+    const lockedContainers = new Set<string>();
+    for (const n of nodes) {
+      if (n.parentId && lockedNodeIds.has(n.id)) {
+        let curr: string | undefined = n.parentId;
+        while (curr) {
+          lockedContainers.add(curr);
+          const pNode = nodes.find((x) => x.id === curr);
+          curr = pNode?.parentId;
+        }
+      }
+    }
+
+    const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
+    // B8: 无聚光灯激活且无任何锁定节点/容器时，直接返回原数组引用，防止每帧生成新对象导致 React Flow 重渲
+    if (!hasSpotlight && !hasAnyLocked) {
+      return nodes;
+    }
+
     return nodes.map((node) => {
-      const isLockedFromDrag =
-        node.data?.lockMode === 'position' || node.data?.lockMode === 'full';
+      const isLockedFromDrag = lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
       const isHighlighted = spotlightResult
         ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
         : true;
@@ -154,7 +176,7 @@ export const FlowCanvas: React.FC = () => {
         },
       };
     });
-  }, [nodes, spotlightResult]);
+  }, [nodes, spotlightActive, spotlightTargetId, spotlightResult]);
 
   // 映射聚光灯走查及断键悬停下的连线样式
   const displayEdges = useMemo(() => {
