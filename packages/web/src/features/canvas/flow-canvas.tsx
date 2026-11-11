@@ -41,6 +41,7 @@ import { isNodeLocked } from './utils/node-lock-manager';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
+import { WatermarkLayer, PresentationControls, usePresentationStore } from '../presentation';
 
 
 /** 协同光标广播最小间隔 (ms)：原生 mousemove 频率远超展示与带宽需要，逐帧直发会引发全树重渲染 */
@@ -74,6 +75,8 @@ export const FlowCanvas: React.FC = () => {
   const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
   const toastMessage = useFlowStore((s) => s.toastMessage);
   const showToast = useFlowStore((s) => s.showToast);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isPresenting = usePresentationStore((s) => s.isPresenting);
 
   const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
@@ -156,12 +159,12 @@ export const FlowCanvas: React.FC = () => {
 
     const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
     // B8: 无聚光灯激活且无任何锁定节点/容器时，直接返回原数组引用，防止每帧生成新对象导致 React Flow 重渲
-    if (!hasSpotlight && !hasAnyLocked) {
+    if (!hasSpotlight && !hasAnyLocked && !isReadOnly) {
       return nodes;
     }
 
     return nodes.map((node) => {
-      const isLockedFromDrag = lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
+      const isLockedFromDrag = isReadOnly || lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
       const isHighlighted = spotlightResult
         ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
         : true;
@@ -181,7 +184,7 @@ export const FlowCanvas: React.FC = () => {
         },
       };
     });
-  }, [nodes, spotlightActive, spotlightTargetId, spotlightResult]);
+  }, [nodes, spotlightActive, spotlightTargetId, spotlightResult, isReadOnly]);
 
   // 映射聚光灯走查及断键悬停下的连线样式
   const displayEdges = useMemo(() => {
@@ -301,6 +304,7 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
+      if (isReadOnly) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
 
@@ -328,6 +332,7 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
+      if (isReadOnly) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -628,6 +633,17 @@ export const FlowCanvas: React.FC = () => {
         /Mac|iPod|iPhone|iPad/.test(navigator.platform);
       const modKey = isMac ? e.metaKey : e.ctrlKey;
 
+      if (isReadOnly) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          return;
+        }
+        if (modKey && (e.key === 'v' || e.key === 'V' || e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y' || e.key === 'g' || e.key === 'G')) {
+          e.preventDefault();
+          return;
+        }
+      }
+
       // 成组 (Ctrl+G) 与解散组合 (Ctrl+Shift+G)
       if (modKey && (e.key === 'g' || e.key === 'G')) {
         e.preventDefault();
@@ -801,6 +817,7 @@ export const FlowCanvas: React.FC = () => {
     spotlightActive,
     toggleSpotlightMode,
     setSpotlightTarget,
+    isReadOnly,
   ]);
 
   // 获取当前正在跟随的主讲人信息
@@ -916,14 +933,14 @@ export const FlowCanvas: React.FC = () => {
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        panOnDrag={activeTool === 'pan' ? [0, 1, 2] : [1, 2]}
-        panOnScroll={activeTool === 'pan'}
-        nodesDraggable={activeTool === 'select'}
+        panOnDrag={isReadOnly ? [0, 1, 2] : activeTool === 'pan' ? [0, 1, 2] : [1, 2]}
+        panOnScroll={isReadOnly || activeTool === 'pan'}
+        nodesDraggable={!isReadOnly && activeTool === 'select'}
         elementsSelectable={activeTool === 'select'}
-        nodesConnectable={activeTool !== 'pan'}
+        nodesConnectable={!isReadOnly && activeTool !== 'pan'}
         connectionRadius={35}
         selectionMode={SelectionMode.Partial}
-        selectionOnDrag={activeTool === 'select'}
+        selectionOnDrag={!isReadOnly && activeTool === 'select'}
         connectionMode={ConnectionMode.Loose}
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{
@@ -969,26 +986,32 @@ export const FlowCanvas: React.FC = () => {
         </ViewportPortal>
 
         {/* AI 批次画布级 Visual Diff 染色与单点 Cherry-Pick 审阅台 */}
-        <AiBatchDiffOverlay />
+        {!isPresenting && <AiBatchDiffOverlay />}
 
         {/* 拖拽智能对齐参考线 */}
-        <AlignmentGuides />
+        {!isPresenting && !isReadOnly && <AlignmentGuides />}
 
         {/* 多选与组合悬浮操作条 */}
-        <ContextualActionBar />
+        {!isPresenting && !isReadOnly && <ContextualActionBar />}
 
         {/* 左下角视口辅助缩放与小地图控件 */}
-        <CanvasControls />
+        {!isPresenting && <CanvasControls />}
 
         {/* 底部居中悬浮主工具栏 */}
-        <FloatingToolbar />
+        {!isPresenting && !isReadOnly && <FloatingToolbar />}
 
         {/* 画布协同批注图钉层与评论讨论串 */}
-        <CommentsLayer />
+        {!isPresenting && <CommentsLayer />}
 
         {/* 评审模式右侧顺序跳转抽屉 */}
-        <ReviewDrawer />
+        {!isPresenting && <ReviewDrawer />}
       </ReactFlow>
+
+      {/* 动态安全防泄密水印图层 */}
+      <WatermarkLayer />
+
+      {/* 全屏故事板演讲演示控制台 */}
+      <PresentationControls />
     </div>
   );
 };

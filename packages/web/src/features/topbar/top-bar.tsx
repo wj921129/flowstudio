@@ -19,9 +19,14 @@ import {
   Upload,
   Code2,
   Bot,
+  Tv,
+  Shield,
+  Lock,
+  Copy,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
+import { usePresentationStore } from '../presentation';
 import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
@@ -56,13 +61,20 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const copilotOpen = useFlowStore((s) => s.copilotOpen);
   const setCopilotOpen = useFlowStore((s) => s.setCopilotOpen);
 
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isWatermarkEnabled = usePresentationStore((s) => s.isWatermarkEnabled);
+  const toggleWatermark = usePresentationStore((s) => s.toggleWatermark);
+  const startPresentation = usePresentationStore((s) => s.startPresentation);
+
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
+  const shareDropdownRef = useRef<HTMLDivElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
@@ -115,10 +127,35 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     }, 2500);
   }, []);
 
-  const handleCopyShareLink = async () => {
+  const handleCopyEditLink = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
-      showToast('已复制局域网协作链接');
+      const url = new URL(window.location.href);
+      url.searchParams.delete('readonly');
+      url.searchParams.delete('mode');
+      url.searchParams.delete('view');
+      const cleanUrl = url.toString().replace('?readonly=true', '').replace('&readonly=true', '');
+      await navigator.clipboard.writeText(cleanUrl);
+      showToast('已复制局域网协作编辑链接');
+      setIsShareOpen(false);
+    } catch {
+      showToast('复制失败，请手动复制浏览器地址栏');
+    }
+  };
+
+  const handleCopyReadOnlyLink = async () => {
+    try {
+      const currentUrl = window.location.href;
+      let targetUrl = currentUrl;
+      if (!targetUrl.includes('readonly=true')) {
+        targetUrl = targetUrl.includes('?')
+          ? `${targetUrl}&readonly=true`
+          : targetUrl.includes('#')
+          ? `${targetUrl}?readonly=true`
+          : `${targetUrl}?readonly=true`;
+      }
+      await navigator.clipboard.writeText(targetUrl);
+      showToast('已复制只读安全分享链接 (?readonly=true)');
+      setIsShareOpen(false);
     } catch {
       showToast('复制失败，请手动复制浏览器地址栏');
     }
@@ -177,16 +214,22 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
       ) {
         setIsExportOpen(false);
       }
+      if (
+        shareDropdownRef.current &&
+        !shareDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsShareOpen(false);
+      }
     };
 
-    if (isExportOpen) {
+    if (isExportOpen || isShareOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isExportOpen]);
+  }, [isExportOpen, isShareOpen]);
 
   useEffect(() => {
     return () => {
@@ -237,18 +280,30 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
         <div className="h-4 w-px bg-fs-border shrink-0" />
 
-        <div className="relative flex items-center">
+        <div className="relative flex items-center gap-2">
           <input
             ref={titleInputRef}
             type="text"
+            readOnly={isReadOnly}
+            disabled={isReadOnly}
             value={editingTitle}
             onChange={handleTitleChange}
             onBlur={handleTitleBlur}
             onKeyDown={handleTitleKeyDown}
             aria-label="图表标题"
             placeholder={DEFAULT_DIAGRAM_TITLE}
-            className="px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent hover:bg-fs-bg/60 focus:bg-fs-surface border border-transparent hover:border-fs-border focus:border-fs-primary focus:outline-none focus:ring-1 focus:ring-fs-primary text-fs-text transition-colors max-w-[140px] sm:max-w-xs truncate"
+            className={`px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent max-w-[140px] sm:max-w-xs truncate transition-colors ${
+              isReadOnly
+                ? 'cursor-default text-fs-text opacity-90 border border-transparent'
+                : 'hover:bg-fs-bg/60 focus:bg-fs-surface border border-transparent hover:border-fs-border focus:border-fs-primary focus:outline-none focus:ring-1 focus:ring-fs-primary text-fs-text'
+            }`}
           />
+          {isReadOnly && (
+            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-medium select-none">
+              <Lock className="w-3 h-3" />
+              <span>只读模式</span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -257,15 +312,75 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         {/* 协作者在线头像 */}
         <CollaboratorAvatars />
 
-        {/* 分享链接按钮 */}
+        {/* 分享链接下拉菜单 */}
+        <div className="relative" ref={shareDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setIsShareOpen(!isShareOpen)}
+            title="分享协作或只读链接"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
+          >
+            <Share2 className="w-3.5 h-3.5 text-fs-primary" />
+            <span className="hidden sm:inline">分享</span>
+            <ChevronDown className={`w-3 h-3 text-fs-text-muted transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {isShareOpen && (
+            <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-fs-border bg-fs-surface shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 select-text">
+              <div className="px-3 py-1 text-[11px] font-medium text-fs-text-muted border-b border-fs-border mb-1">
+                分享此图表
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyEditLink}
+                className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-fs-bg transition-colors cursor-pointer text-fs-text"
+              >
+                <div className="flex flex-col">
+                  <span className="font-semibold text-xs">协作编辑链接</span>
+                  <span className="text-[10px] text-fs-text-muted">允许局域网成员共同编辑</span>
+                </div>
+                <Copy className="w-3.5 h-3.5 text-fs-text-muted" />
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyReadOnlyLink}
+                className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-fs-bg transition-colors cursor-pointer text-fs-text"
+              >
+                <div className="flex flex-col">
+                  <span className="font-semibold text-xs text-amber-600 dark:text-amber-400">只读安全分享链接</span>
+                  <span className="text-[10px] text-fs-text-muted">禁用写操作，仅允许查看</span>
+                </div>
+                <Lock className="w-3.5 h-3.5 text-amber-500" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 全屏演讲演示按钮 */}
         <button
           type="button"
-          onClick={handleCopyShareLink}
-          title="复制局域网协作链接"
-          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
+          onClick={() => startPresentation(nodes)}
+          disabled={nodes.length === 0}
+          title="开启全屏演讲演示模式 (Space/方向键镜头平滑推进)"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-emerald-500/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
         >
-          <Share2 className="w-3.5 h-3.5 text-fs-primary" />
-          <span className="hidden sm:inline">分享</span>
+          <Tv className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="hidden sm:inline">演示</span>
+        </button>
+
+        {/* 动态安全防泄密水印开关 */}
+        <button
+          type="button"
+          onClick={toggleWatermark}
+          title="切换动态安全防泄密水印"
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+            isWatermarkEnabled
+              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-semibold'
+              : 'border-fs-border bg-fs-surface text-fs-text-muted hover:bg-fs-bg'
+          }`}
+        >
+          <Shield className={`w-3.5 h-3.5 ${isWatermarkEnabled ? 'text-amber-500' : 'text-zinc-400'}`} />
+          <span className="hidden sm:inline">{isWatermarkEnabled ? '水印开' : '水印'}</span>
         </button>
 
         {/* 节点与连线统计徽标 */}
@@ -295,31 +410,35 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         </button>
 
         {/* 一键自动排版 */}
-        <button
-          type="button"
-          onClick={handleAutoLayout}
-          disabled={isLayouting || nodes.length === 0}
-          title="基于 elkjs 执行一键整图/泳道自动正交排版"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
-          <span>{isLayouting ? '排版中...' : '自动排版'}</span>
-        </button>
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={handleAutoLayout}
+            disabled={isLayouting || nodes.length === 0}
+            title="基于 elkjs 执行一键整图/泳道自动正交排版"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
+            <span>{isLayouting ? '排版中...' : '自动排版'}</span>
+          </button>
+        )}
 
         {/* AI Copilot 交互面板开关 */}
-        <button
-          type="button"
-          onClick={() => setCopilotOpen(!copilotOpen)}
-          title="打开画布内置 AI Copilot 对话交互面板 (Cmd/Ctrl+J)"
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-            copilotOpen
-              ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
-              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
-          }`}
-        >
-          <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
-          <span>AI Copilot</span>
-        </button>
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={() => setCopilotOpen(!copilotOpen)}
+            title="打开画布内置 AI Copilot 对话交互面板 (Cmd/Ctrl+J)"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+              copilotOpen
+                ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
+                : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
+            }`}
+          >
+            <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
+            <span>AI Copilot</span>
+          </button>
+        )}
 
         {/* </> Mermaid 双向同频抽屉开关 */}
         <button
@@ -337,15 +456,17 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         </button>
 
         {/* 历史版本快照 */}
-        <button
-          type="button"
-          onClick={() => setIsHistoryOpen(true)}
-          title="查看历史版本快照与无损差异恢复"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50 transition-colors cursor-pointer shadow-xs"
-        >
-          <History className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-          <span>版本</span>
-        </button>
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={() => setIsHistoryOpen(true)}
+            title="查看历史版本快照与无损差异恢复"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50 transition-colors cursor-pointer shadow-xs"
+          >
+            <History className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+            <span>版本</span>
+          </button>
+        )}
 
         {/* 导出菜单 */}
         <div className="relative" ref={exportDropdownRef}>

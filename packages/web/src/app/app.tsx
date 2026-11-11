@@ -18,6 +18,7 @@ import { getThemePreset, type ThemePreset } from '../features/sidebar/styles/the
 import { instantiateTemplate, type DiagramTemplate } from '../features/sidebar/templates';
 import { TemplateConfirmModal } from '../features/sidebar/components/template-confirm-modal';
 import { CopilotPanel } from '../features/copilot/copilot-panel';
+import { usePresentationStore, parseReadOnlyFromLocation } from '../features/presentation';
 
 /**
  * 协同编辑器内容工作区
@@ -107,19 +108,24 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
     }
   };
 
+  const isPresenting = usePresentationStore((s) => s.isPresenting);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-fs-bg text-fs-text">
-      <TopBar diagramId={diagramId} />
+      {!isPresenting && <TopBar diagramId={diagramId} />}
       <div className="relative flex flex-1 overflow-hidden">
-        <SidebarDock
-          onApplyTemplate={handleApplyTemplate}
-          onApplyThemeToCanvas={handleApplyThemeToCanvas}
-        />
+        {!isPresenting && !isReadOnly && (
+          <SidebarDock
+            onApplyTemplate={handleApplyTemplate}
+            onApplyThemeToCanvas={handleApplyThemeToCanvas}
+          />
+        )}
         <main className="relative flex-1 overflow-hidden">
           <FlowCanvas />
         </main>
-        <PropertyPanel />
-        <CopilotPanel />
+        {!isPresenting && <PropertyPanel />}
+        {!isPresenting && !isReadOnly && <CopilotPanel />}
       </div>
 
       <TemplateConfirmModal
@@ -142,6 +148,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handleHashChange = () => {
       setCurrentHash(window.location.hash || '#/');
+      usePresentationStore.getState().setReadOnly(parseReadOnlyFromLocation());
     };
 
     window.addEventListener('hashchange', handleHashChange);

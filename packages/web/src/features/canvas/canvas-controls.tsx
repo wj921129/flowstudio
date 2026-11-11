@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Panel, useReactFlow, MiniMap } from '@xyflow/react';
 import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessageSquare, MessagesSquare } from 'lucide-react';
 import { useCommentsStore } from '../comments';
+import { usePresentationStore } from '../presentation';
 
 export const CanvasControls: React.FC = () => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
@@ -16,6 +17,7 @@ export const CanvasControls: React.FC = () => {
   const isReviewDrawerOpen = useCommentsStore((s) => s.isReviewDrawerOpen);
   const setReviewDrawerOpen = useCommentsStore((s) => s.setReviewDrawerOpen);
   const commentsCount = useCommentsStore((s) => s.comments.length);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
 
   return (
     <>
@@ -78,24 +80,28 @@ export const CanvasControls: React.FC = () => {
           >
             <MapIcon className="w-4 h-4" />
           </button>
-          <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
-          <button
-            type="button"
-            title={isCommentMode ? '退出批注打点模式 (按 Esc 或 C)' : '进入画布批注打点模式 (按 C)'}
-            onClick={() => setCommentMode(!isCommentMode)}
-            className={`relative p-1.5 rounded-lg transition-colors cursor-pointer ${
-              isCommentMode
-                ? 'bg-[var(--fs-primary)] text-white ring-2 ring-[var(--fs-primary)]/40 shadow-sm'
-                : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" />
-            {commentsCount > 0 && (
-              <span className="absolute -top-1 -right-1 px-1 py-0.2 bg-indigo-600 text-white rounded-full text-[8px] font-bold">
-                {commentsCount}
-              </span>
-            )}
-          </button>
+          {!isReadOnly && (
+            <>
+              <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
+              <button
+                type="button"
+                title={isCommentMode ? '退出批注打点模式 (按 Esc 或 C)' : '进入画布批注打点模式 (按 C)'}
+                onClick={() => setCommentMode(!isCommentMode)}
+                className={`relative p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isCommentMode
+                    ? 'bg-[var(--fs-primary)] text-white ring-2 ring-[var(--fs-primary)]/40 shadow-sm'
+                    : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+                {commentsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 px-1 py-0.2 bg-indigo-600 text-white rounded-full text-[8px] font-bold">
+                    {commentsCount}
+                  </span>
+                )}
+              </button>
+            </>
+          )}
           <button
             type="button"
             title={isReviewDrawerOpen ? '收起评审抽屉' : '展开批注评审抽屉'}

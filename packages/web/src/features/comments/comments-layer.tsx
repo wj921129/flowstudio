@@ -7,6 +7,7 @@ import { CommentPin } from './comment-pin';
 import { DraftCommentCard } from './draft-comment-card';
 import { useFlowStore } from '../../stores/flow-store';
 import { getNodeWorldPosition, findEdgeAtPosition } from '../canvas/utils/split-insert-manager.js';
+import { usePresentationStore } from '../presentation';
 
 export const CommentsLayer: React.FC = () => {
   const {
@@ -23,6 +24,7 @@ export const CommentsLayer: React.FC = () => {
 
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
 
   const { screenToFlowPosition, setViewport, getViewport } = useReactFlow();
 
@@ -35,6 +37,7 @@ export const CommentsLayer: React.FC = () => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey) {
+        if (isReadOnly) return;
         e.preventDefault();
         setCommentMode(!isCommentMode);
       } else if (e.key === 'Escape') {
@@ -46,7 +49,7 @@ export const CommentsLayer: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCommentMode, setCommentMode, setNewCommentDraft, setActiveCommentId]);
+  }, [isCommentMode, setCommentMode, setNewCommentDraft, setActiveCommentId, isReadOnly]);
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
