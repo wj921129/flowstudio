@@ -38,11 +38,22 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
   const [remoteUsers, setRemoteUsers] = useState<AwarenessUserState[]>([]);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
+  const lastViewportBroadcastRef = useRef<number>(0);
 
-  // 广播本地用户状态
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  selectedNodeIdsRef.current = selectedNodeIds;
+
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
+
+  // 广播本地用户状态（引用恒定稳定）
   const broadcastLocalState = useCallback(
-    (cursor: { x: number; y: number } | null, viewport?: { x: number; y: number; zoom: number }) => {
-      if (!provider || !provider.awareness) return;
+    (cursor?: { x: number; y: number } | null, viewport?: { x: number; y: number; zoom: number }) => {
+      const p = providerRef.current;
+      if (!p || !p.awareness) return;
 
       if (cursor !== undefined) {
         cursorRef.current = cursor;
@@ -51,22 +62,37 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
         viewportRef.current = viewport;
       }
 
+      const curUser = currentUserRef.current;
       const localState: AwarenessUserState = {
-        clientId: currentUser.clientId,
-        nickname: currentUser.nickname,
-        color: currentUser.color,
+        clientId: curUser.clientId,
+        nickname: curUser.nickname,
+        color: curUser.color,
         cursor: cursorRef.current,
-        selectedNodeIds,
+        selectedNodeIds: selectedNodeIdsRef.current,
         viewport: viewportRef.current,
       };
 
-      provider.awareness.setLocalStateField('user', localState);
+      p.awareness.setLocalStateField('user', localState);
     },
-    [provider, currentUser, selectedNodeIds]
+    []
+  );
+
+  const broadcastCursor = useCallback(
+    (cursor: { x: number; y: number } | null) => {
+      broadcastLocalState(cursor, viewportRef.current);
+    },
+    [broadcastLocalState]
   );
 
   const broadcastViewport = useCallback(
     (viewport: { x: number; y: number; zoom: number }) => {
+      const now = performance.now();
+      // 50ms 节流，杜绝 pan/zoom 滚轮与拖动触发 awareness 风暴
+      if (now - lastViewportBroadcastRef.current < 50) {
+        viewportRef.current = viewport;
+        return;
+      }
+      lastViewportBroadcastRef.current = now;
       broadcastLocalState(cursorRef.current, viewport);
     },
     [broadcastLocalState]
@@ -75,7 +101,7 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
   // 监听选中节点与当前身份变化，自动同步 Awareness
   useEffect(() => {
     broadcastLocalState(cursorRef.current, viewportRef.current);
-  }, [broadcastLocalState]);
+  }, [selectedNodeIds, currentUser, broadcastLocalState]);
 
   // 监听远端 awareness 变更
   useEffect(() => {
@@ -109,7 +135,7 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
 
   return {
     remoteUsers,
-    broadcastCursor: (cursor: { x: number; y: number } | null) => broadcastLocalState(cursor, viewportRef.current),
+    broadcastCursor,
     broadcastViewport,
   };
 }

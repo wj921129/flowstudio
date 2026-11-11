@@ -213,7 +213,8 @@ export function splitEdgeAndInsertNode({
 
   // 2. 下游同流向局部自适应推挤 (Local Downstream Push)
   const pushedNodeIds: string[] = [];
-  let nextNodes: FlowNode[] = [...nodes, newNode];
+  const baseNodes = nodes.filter((n) => n.id !== newNode.id);
+  let nextNodes: FlowNode[] = [...baseNodes, newNode];
 
   if (targetNode) {
     const { width: newW, height: newH } = getNodeDimensions(newNode);
@@ -266,6 +267,10 @@ export function splitEdgeAndInsertNode({
       // 顺推下游节点
       nextNodes = nextNodes.map((n) => {
         if (!downstreamSet.has(n.id)) return n;
+        // 锚定锁强约束：位置锁定 (position) 或完全锁定 (full) 的节点坚决禁止被推移
+        if (n.data?.lockMode === 'position' || n.data?.lockMode === 'full') {
+          return n;
+        }
         pushedNodeIds.push(n.id);
 
         if (mainAxis === 'x') {
@@ -340,6 +345,16 @@ export function healOnDelete(
   nodes: FlowNode[],
   edges: FlowEdge[]
 ): { canHeal: boolean; nextNodes: FlowNode[]; nextEdges: FlowEdge[]; healedEdge?: FlowEdge } {
+  const targetNode = nodes.find((n) => n.id === nodeId);
+  // 锚定锁强约束：完全锁定 (full) 的节点禁止愈合删除
+  if (!targetNode || targetNode.data?.lockMode === 'full') {
+    return {
+      canHeal: false,
+      nextNodes: nodes,
+      nextEdges: edges,
+    };
+  }
+
   const incoming = edges.filter((e) => e.target === nodeId);
   const outgoing = edges.filter((e) => e.source === nodeId);
 

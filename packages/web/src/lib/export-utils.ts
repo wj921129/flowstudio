@@ -23,7 +23,7 @@ export function downloadFile(filename: string, content: Blob | string, mimeType:
   URL.revokeObjectURL(url);
 }
 
-function escapeXml(unsafe: string): string {
+export function escapeXml(unsafe: string): string {
   return String(unsafe || '').replace(/[<>&'"]/g, (c) => {
     switch (c) {
       case '<': return '&lt;';
@@ -34,6 +34,49 @@ function escapeXml(unsafe: string): string {
       default: return c;
     }
   });
+}
+
+export function escapeXmlAttr(unsafe: unknown): string {
+  return escapeXml(String(unsafe ?? ''));
+}
+
+/**
+ * 校验并清理 SVG 颜色值，仅允许合法 hex / rgb / rgba / hsl / hsla 与安全 CSS 颜色关键字，
+ * 严防注入引号、括号或恶意脚本属性
+ */
+export function sanitizeSvgColor(color: unknown, fallback = '#000000'): string {
+  if (typeof color !== 'string') return fallback;
+  const trimmed = color.trim();
+  // 16 进制颜色 (#fff, #ffffff, #ffffffff)
+  if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) {
+    return trimmed;
+  }
+  // rgb(...) 或 rgba(...)
+  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*(0|1|0?\.\d+))?\s*\)$/.test(trimmed)) {
+    return trimmed;
+  }
+  // hsl(...) 或 hsla(...)
+  if (/^hsla?\(\s*\d{1,3}(\.\d+)?(deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|1|0?\.\d+))?\s*\)$/.test(trimmed)) {
+    return trimmed;
+  }
+  // 安全 CSS 颜色单词白名单
+  const safeNamedColors = new Set([
+    'transparent', 'none', 'currentcolor', 'black', 'white', 'gray', 'red', 'green',
+    'blue', 'yellow', 'orange', 'purple', 'cyan', 'magenta', 'silver', 'navy', 'teal'
+  ]);
+  if (safeNamedColors.has(trimmed.toLowerCase())) {
+    return trimmed.toLowerCase();
+  }
+  return fallback;
+}
+
+/**
+ * 校验并限制 SVG 几何与排版数值，防止 NaN、Infinity 或越界注入
+ */
+export function sanitizeSvgNumber(num: unknown, fallback: number, min = -100000, max = 100000): number {
+  const n = typeof num === 'number' ? num : Number(num);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
 }
 
 /**
@@ -127,8 +170,8 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
     const end = getHandleEndpoint(tgtNode, tgtWp, edge.targetHandle, false);
 
     const edgeStyle = edge.data?.style;
-    const strokeColor = edgeStyle?.strokeColor ? String(edgeStyle.strokeColor) : '#64748B';
-    const strokeWidth = edgeStyle?.strokeWidth ?? 2;
+    const strokeColor = sanitizeSvgColor(edgeStyle?.strokeColor, '#64748B');
+    const strokeWidth = sanitizeSvgNumber(edgeStyle?.strokeWidth, 2, 0.5, 20);
     const strokeDash = edgeStyle?.strokeStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
 
     let pathD: string;
@@ -169,22 +212,23 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
     const x = wp.x;
     const y = wp.y;
     const label = node.data?.label || '';
+    const safeNodeId = escapeXml(node.id).replace(/--/g, '__');
 
     const styleData = node.data?.style || {};
     const defaultFill = node.type === 'comment' ? '#FEF9C3' : '#FFFFFF';
     const defaultBorder = node.type === 'comment' ? '#FDE047' : '#CBD5E1';
-    const fillColor = styleData.fillColor ? String(styleData.fillColor) : defaultFill;
-    const strokeColor = styleData.borderColor ? String(styleData.borderColor) : defaultBorder;
-    const strokeWidth = styleData.borderWidth ?? (node.type === 'pool' ? 2 : 1.5);
+    const fillColor = sanitizeSvgColor(styleData.fillColor, defaultFill);
+    const strokeColor = sanitizeSvgColor(styleData.borderColor, defaultBorder);
+    const strokeWidth = sanitizeSvgNumber(styleData.borderWidth, node.type === 'pool' ? 2 : 1.5, 0.5, 20);
     const strokeDash = styleData.borderStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
-    const fontColor = styleData.fontColor ? String(styleData.fontColor) : '#1E293B';
-    const fontSize = styleData.fontSize ?? 12;
+    const fontColor = sanitizeSvgColor(styleData.fontColor, '#1E293B');
+    const fontSize = sanitizeSvgNumber(styleData.fontSize, 12, 6, 72);
 
     switch (node.type) {
       case 'pool': {
         const isHoriz = node.data?.orientation !== 'vertical';
-        const headerSize = (node.data?.headerSize as number) || 40;
-        svg += `    <!-- Pool: ${node.id} -->\n`;
+        const headerSize = sanitizeSvgNumber(node.data?.headerSize, 40, 20, 200);
+        svg += `    <!-- Pool: ${safeNodeId} -->\n`;
         svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
         if (isHoriz) {
           svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${headerSize}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
@@ -199,7 +243,7 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
       }
 
       case 'lane': {
-        svg += `    <!-- Lane: ${node.id} -->\n`;
+        svg += `    <!-- Lane: ${safeNodeId} -->\n`;
         svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="4 4" />\n`;
         svg += `    <rect x="${x}" y="${y}" width="36" height="${nh}" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="1" />\n`;
         svg += `    <text x="${x + 18}" y="${y + nh / 2}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B" transform="rotate(-90 ${x + 18} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
@@ -207,7 +251,7 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
       }
 
       case 'group': {
-        svg += `    <!-- Group: ${node.id} -->\n`;
+        svg += `    <!-- Group: ${safeNodeId} -->\n`;
         svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
         if (label) {
           svg += `    <text x="${x + 12}" y="${y + 20}" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B">${escapeXml(label)}</text>\n`;
@@ -376,14 +420,22 @@ export function validateAndParseDiagramJson(rawJson: string): ParsedDiagramJson 
       return { success: false, error: 'JSON 文件缺少有效的 nodes 节点数组' };
     }
 
-    const title = typeof data.title === 'string' ? data.title.trim() : '导入流程图';
+    const title = typeof data.title === 'string' ? escapeXml(data.title.trim()).slice(0, 100) : '导入流程图';
     const rawNodes = data.nodes as FlowNode[];
     const rawEdges = Array.isArray(data.edges) ? (data.edges as FlowEdge[]) : [];
 
     // 校验每个节点包含基本字段 id, type, position
     for (const node of rawNodes) {
-      if (!node.id || !node.type || !node.position) {
-        return { success: false, error: `节点数据不完整：缺少 id, type 或 position` };
+      if (!node.id || typeof node.id !== 'string' || !node.type || typeof node.type !== 'string' || !node.position) {
+        return { success: false, error: `节点数据不完整：缺少合法 id, type 或 position` };
+      }
+      if (
+        typeof node.position.x !== 'number' ||
+        !Number.isFinite(node.position.x) ||
+        typeof node.position.y !== 'number' ||
+        !Number.isFinite(node.position.y)
+      ) {
+        return { success: false, error: `节点 ${node.id} 坐标不是有效的数字` };
       }
     }
 

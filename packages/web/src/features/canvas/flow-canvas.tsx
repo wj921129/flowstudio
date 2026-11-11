@@ -34,7 +34,7 @@ import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
-import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete } from './utils/split-insert-manager';
+import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
 import { computePathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
@@ -518,9 +518,11 @@ export const FlowCanvas: React.FC = () => {
       if (!isConnected && !isContainer) {
         const targetNode = store.nodes.find((n) => n.id === node.id);
         if (targetNode) {
+          const byId = new Map(store.nodes.map((n) => [n.id, n]));
+          const worldPos = getNodeWorldPosition(targetNode, byId);
           const centerPos = {
-            x: targetNode.position.x + (targetNode.width ?? 120) / 2,
-            y: targetNode.position.y + (targetNode.height ?? 60) / 2,
+            x: worldPos.x + (targetNode.width ?? 120) / 2,
+            y: worldPos.y + (targetNode.height ?? 60) / 2,
           };
           const hitResult = findEdgeAtPosition(store.edges, store.nodes, centerPos, 24);
           if (hitResult) {
@@ -675,9 +677,17 @@ export const FlowCanvas: React.FC = () => {
       // 批量删除与 Shift 愈合式删除
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        const { nodes: curNodes, edges: curEdges, selectedNodeIds: curSel } =
+          useFlowStore.getState();
+
+        const hasFullLocked = curNodes.some(
+          (n) => curSel.includes(n.id) && n.data?.lockMode === 'full'
+        );
+        if (hasFullLocked) {
+          useFlowStore.getState().showToast('选中的节点已完全锁定，禁止删除');
+        }
+
         if (e.shiftKey) {
-          const { nodes: curNodes, edges: curEdges, selectedNodeIds: curSel } =
-            useFlowStore.getState();
           if (curSel.length === 1) {
             const healRes = healOnDelete(curSel[0], curNodes, curEdges);
             if (healRes.canHeal) {

@@ -5,6 +5,23 @@ export interface UndoStatus {
   canRedo: boolean;
 }
 
+/**
+ * 自定义 trackedOrigins 集合：
+ * 不仅匹配精确 localClientId，还将前缀匹配 'snapshot-restore:' 的事务 origin 纳入撤销栈捕获范围，
+ * 满足 PRD Top 1 要求：服务端差量快照恢复可协同撤销
+ */
+export class TrackedOriginsSet extends Set<any> {
+  override has(origin: any): boolean {
+    if (super.has(origin)) return true;
+    if (typeof origin === 'string') {
+      if (origin.startsWith('snapshot-restore:') || origin === 'snapshot-restore') {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
 export class CollaborativeUndoManager {
   private undoManager: Y.UndoManager;
   private listeners: Set<(status: UndoStatus) => void> = new Set();
@@ -18,8 +35,10 @@ export class CollaborativeUndoManager {
     const nodesMap = doc.getMap('nodes');
     const edgesMap = doc.getMap('edges');
 
+    const trackedOrigins = new TrackedOriginsSet([localClientId]);
+
     this.undoManager = new Y.UndoManager([nodesMap, edgesMap], {
-      trackedOrigins: new Set([localClientId]),
+      trackedOrigins,
       captureTimeout,
     });
 
@@ -74,6 +93,14 @@ export class CollaborativeUndoManager {
 
   clear(): void {
     this.undoManager.clear();
+  }
+
+  addTrackedOrigin(origin: any): void {
+    this.undoManager.trackedOrigins.add(origin);
+  }
+
+  removeTrackedOrigin(origin: any): void {
+    this.undoManager.trackedOrigins.delete(origin);
   }
 
   subscribe(listener: (status: UndoStatus) => void): () => void {
