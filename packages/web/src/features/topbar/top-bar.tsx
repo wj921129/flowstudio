@@ -181,6 +181,11 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnly) {
+      showToast('当前处于只读安全模式，禁止导入修改画布');
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -591,23 +596,26 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
                 </div>
               </button>
 
-              <div className="h-px bg-fs-border my-1" />
-
-              {/* 导入外部图表 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsExportOpen(false);
-                  jsonFileInputRef.current?.click();
-                }}
-                className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
-              >
-                <Upload className="w-4 h-4 text-fs-primary shrink-0" />
-                <div className="flex flex-col">
-                  <span className="font-medium text-fs-primary">导入外部图表</span>
-                  <span className="text-[10px] text-fs-text-muted">支持 JSON / Draw.io / BPMN</span>
-                </div>
-              </button>
+              {/* 导入外部图表（只读模式下隐藏） */}
+              {!isReadOnly && (
+                <>
+                  <div className="h-px bg-fs-border my-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsExportOpen(false);
+                      jsonFileInputRef.current?.click();
+                    }}
+                    className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4 text-fs-primary shrink-0" />
+                    <div className="flex flex-col">
+                      <span className="font-medium text-fs-primary">导入外部图表</span>
+                      <span className="text-[10px] text-fs-text-muted">支持 JSON / Draw.io / BPMN</span>
+                    </div>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

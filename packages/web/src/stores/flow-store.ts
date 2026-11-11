@@ -553,14 +553,46 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const { nodes, edges, historyPast } = get();
     if (newNodes.length === 0 && newEdges.length === 0) return;
 
+    const existingNodeIds = new Set(nodes.map((n) => n.id));
+    const existingEdgeIds = new Set(edges.map((e) => e.id));
+    const idMap = new Map<string, string>();
+
+    // 冲突 ID 安全重映射，防止 React Key 重复或覆盖已有图元
+    const safeNodes: FlowNode[] = newNodes.map((n) => {
+      let finalId = n.id;
+      if (existingNodeIds.has(finalId)) {
+        finalId = `${n.id}-${Math.random().toString(36).slice(2, 6)}`;
+        idMap.set(n.id, finalId);
+      }
+      return { ...n, id: finalId, selected: true };
+    });
+
+    if (idMap.size > 0) {
+      for (const n of safeNodes) {
+        if (n.parentId && idMap.has(n.parentId)) {
+          n.parentId = idMap.get(n.parentId);
+        }
+      }
+    }
+
+    const safeEdges: FlowEdge[] = newEdges.map((e) => {
+      let finalEdgeId = e.id;
+      if (existingEdgeIds.has(finalEdgeId)) {
+        finalEdgeId = `${e.id}-${Math.random().toString(36).slice(2, 6)}`;
+      }
+      const source = idMap.get(e.source) ?? e.source;
+      const target = idMap.get(e.target) ?? e.target;
+      return { ...e, id: finalEdgeId, source, target };
+    });
+
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
-    const newIds = newNodes.map((n) => n.id);
+    const newIds = safeNodes.map((n) => n.id);
 
     const nextNodes = [
       ...nodes.map((n) => ({ ...n, selected: false })),
-      ...newNodes.map((n) => ({ ...n, selected: true })),
+      ...safeNodes,
     ];
-    const nextEdges = [...edges, ...newEdges];
+    const nextEdges = [...edges, ...safeEdges];
 
     set({
       nodes: nextNodes,

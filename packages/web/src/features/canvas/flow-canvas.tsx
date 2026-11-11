@@ -45,6 +45,7 @@ import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
 import { WatermarkLayer, PresentationControls, usePresentationStore } from '../presentation';
+import { SnapshotDiffOverlay, SnapshotDiffSidebar } from '../snapshot';
 
 
 /** 协同光标广播最小间隔 (ms)：原生 mousemove 频率远超展示与带宽需要，逐帧直发会引发全树重渲染 */
@@ -828,7 +829,6 @@ export const FlowCanvas: React.FC = () => {
       if (isReadOnly) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('input, textarea, [contenteditable="true"]'))) return;
-      if (clipboardRef.current && clipboardRef.current.length > 0) return;
       const text = e.clipboardData?.getData('text/plain')?.trim();
       if (!text) return;
       if (/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram)\b/i.test(text) || (text.includes('-->') && (text.includes('subgraph') || text.includes('[')))) {
@@ -1039,6 +1039,9 @@ export const FlowCanvas: React.FC = () => {
         {/* AI 批次画布级 Visual Diff 染色与单点 Cherry-Pick 审阅台 */}
         {!isPresenting && <AiBatchDiffOverlay />}
 
+        {/* 历史版本快照 Visual Diff 染色覆盖层 */}
+        {!isPresenting && <SnapshotDiffOverlay />}
+
         {/* 拖拽智能对齐参考线 */}
         {!isPresenting && !isReadOnly && <AlignmentGuides />}
 
@@ -1057,6 +1060,9 @@ export const FlowCanvas: React.FC = () => {
         {/* 评审模式右侧顺序跳转抽屉 */}
         {!isPresenting && <ReviewDrawer />}
       </ReactFlow>
+
+      {/* 历史版本 Visual Diff 差异清单侧边栏 */}
+      {!isPresenting && <SnapshotDiffSidebar />}
 
       {/* 动态安全防泄密水印图层 */}
       <WatermarkLayer />
