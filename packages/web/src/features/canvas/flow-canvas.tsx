@@ -31,6 +31,7 @@ import { CanvasControls } from './canvas-controls';
 import { FloatingToolbar } from '../toolbar/floating-toolbar';
 import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { AiBatchBanner } from '../collaboration/ai-batch-banner';
+import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete } from './utils/split-insert-manager';
@@ -69,6 +70,8 @@ export const FlowCanvas: React.FC = () => {
   const setSpotlightTarget = useFlowStore((s) => s.setSpotlightTarget);
   const followingUserId = useFlowStore((s) => s.followingUserId);
   const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
+  const toastMessage = useFlowStore((s) => s.toastMessage);
+  const showToast = useFlowStore((s) => s.showToast);
 
   const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
@@ -106,19 +109,27 @@ export const FlowCanvas: React.FC = () => {
     return getDecisionBranches(spotlightTargetId, edges);
   }, [spotlightActive, spotlightTargetId, edges]);
 
-  // 映射聚光灯走查下的高亮/暗淡节点集合（15%透明度，泳道微光保留）
+  // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
-    if (!spotlightResult) return nodes;
-    const { nodeIds, laneIds } = spotlightResult;
     return nodes.map((node) => {
-      const isHighlighted = nodeIds.has(node.id) || laneIds.has(node.id);
+      const isLockedFromDrag =
+        node.data?.lockMode === 'position' || node.data?.lockMode === 'full';
+      const isHighlighted = spotlightResult
+        ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
+        : true;
+
       return {
         ...node,
+        draggable: isLockedFromDrag ? false : undefined,
         style: {
           ...node.style,
-          opacity: isHighlighted ? 1 : 0.15,
-          filter: isHighlighted ? undefined : 'grayscale(80%)',
-          transition: 'opacity 0.2s ease, filter 0.2s ease',
+          ...(spotlightResult
+            ? {
+                opacity: isHighlighted ? 1 : 0.15,
+                filter: isHighlighted ? undefined : 'grayscale(80%)',
+                transition: 'opacity 0.2s ease, filter 0.2s ease',
+              }
+            : {}),
         },
       };
     });
@@ -637,6 +648,13 @@ export const FlowCanvas: React.FC = () => {
         }
       }
 
+      // 循环切换节点锚定锁模式 (Ctrl+L / Cmd+L)
+      if (modKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        useFlowStore.getState().toggleSelectedLockMode();
+        return;
+      }
+
       // 撤销 (Ctrl+Z) 与重做 (Ctrl+Shift+Z / Ctrl+Y)
       if (modKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
@@ -740,7 +758,14 @@ export const FlowCanvas: React.FC = () => {
       onMouseLeave={handleMouseLeave}
     >
       <CollaborativeCursors />
-      <AiBatchBanner diagramId={collab?.diagramId} />
+      <AiBatchBanner diagramId={collab?.diagramId} onToast={showToast} />
+
+      {/* 全局轻提示 Toast */}
+      {toastMessage && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-slate-900/95 text-white text-xs font-medium rounded-xl shadow-2xl border border-slate-700/80 backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+          {toastMessage}
+        </div>
+      )}
 
       {/* 主讲人视角跟随浮层指示条 */}
       {followingUser && (
@@ -874,6 +899,9 @@ export const FlowCanvas: React.FC = () => {
             </div>
           )}
         </ViewportPortal>
+
+        {/* AI 批次画布级 Visual Diff 染色与单点 Cherry-Pick 审阅台 */}
+        <AiBatchDiffOverlay />
 
         {/* 拖拽智能对齐参考线 */}
         <AlignmentGuides />

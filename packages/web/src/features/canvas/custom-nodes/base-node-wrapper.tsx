@@ -97,8 +97,16 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     }
   }, [isEditing]);
 
+  const isLocked = Boolean(data.lockMode && data.lockMode !== 'none');
+  const isFullLocked = data.lockMode === 'full';
+
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // 完全锁定 (full) 节点禁止双击进入内联文本编辑
+    if (isFullLocked) {
+      useFlowStore.getState().showToast('该节点已处于完全锁定状态 🔒，禁止修改文案');
+      return;
+    }
     setIsEditing(true);
   };
 
@@ -166,8 +174,22 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         </div>
       )}
 
-      {/* 中心锚定缩放手柄：拖任意一边/一角，对侧等量同步扩展 */}
-      {showResize && (
+      {/* 节点锚定锁精致微型徽章 */}
+      {isLocked && (
+        <div
+          className={`absolute -top-2.5 -right-2.5 z-40 flex items-center justify-center w-5 h-5 rounded-full shadow-md text-[11px] select-none pointer-events-none border ${
+            isFullLocked
+              ? 'bg-rose-500 border-white text-white dark:bg-rose-600 shadow-rose-500/30'
+              : 'bg-amber-500 border-white text-white dark:bg-amber-600 shadow-amber-500/30'
+          }`}
+          title={isFullLocked ? '完全锁定 (禁止移动/修改文案/删除)' : '坐标锁定 (禁止拖拽移动，排版保留原坐标)'}
+        >
+          {isFullLocked ? '🔒' : '📌'}
+        </div>
+      )}
+
+      {/* 中心锚定缩放手柄：拖任意一边/一角，对侧等量同步扩展 (锁定节点禁用尺寸缩放) */}
+      {showResize && !isLocked && (
         <NodeResizer
           minWidth={40}
           minHeight={30}

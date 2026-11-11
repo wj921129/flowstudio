@@ -17,6 +17,7 @@ import {
   History,
   Compass,
   Upload,
+  Code2,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -26,6 +27,7 @@ import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
 import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
+import { MermaidDrawer } from '../mermaid/mermaid-drawer';
 import {
   exportToPng,
   exportToSvg,
@@ -48,6 +50,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const setDiagram = useFlowStore((s) => s.setDiagram);
   const spotlightActive = useFlowStore((s) => s.spotlightActive);
   const toggleSpotlightMode = useFlowStore((s) => s.toggleSpotlightMode);
+  const mermaidDrawerOpen = useFlowStore((s) => s.mermaidDrawerOpen);
+  const setMermaidDrawerOpen = useFlowStore((s) => s.setMermaidDrawerOpen);
 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -299,6 +303,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           <span>{isLayouting ? '排版中...' : '自动排版'}</span>
         </button>
 
+        {/* </> Mermaid 双向同频抽屉开关 */}
+        <button
+          type="button"
+          onClick={() => setMermaidDrawerOpen(!mermaidDrawerOpen)}
+          title="打开 Mermaid 代码双向同频抽屉（支持实时导出与增量融合上屏）"
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+            mermaidDrawerOpen
+              ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-500/20'
+              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-indigo-500/50'
+          }`}
+        >
+          <Code2 className={`w-3.5 h-3.5 ${mermaidDrawerOpen ? 'text-white' : 'text-indigo-500'}`} />
+          <span>Mermaid</span>
+        </button>
+
         {/* 历史版本快照 */}
         <button
           type="button"
@@ -421,6 +440,12 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         onClose={() => setIsHistoryOpen(false)}
         diagramId={diagramId}
         onToast={showToast}
+      />
+
+      {/* Mermaid 语义双向同频抽屉 */}
+      <MermaidDrawer
+        isOpen={mermaidDrawerOpen}
+        onClose={() => setMermaidDrawerOpen(false)}
       />
     </header>
   );

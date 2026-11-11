@@ -13,6 +13,9 @@ import {
   AlignRight,
   Trash2,
   Layers,
+  Lock,
+  Pin,
+  Unlock,
 } from 'lucide-react';
 import { useFlowStore } from '../../../stores/flow-store';
 import { computeBoundingBox, toWorldPosition } from '../utils/group-calculator';
@@ -36,17 +39,21 @@ export const ContextualActionBar: React.FC = () => {
   const alignSelectedNodes = useFlowStore((s) => s.alignSelectedNodes);
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
   const batchUpdateNodeData = useFlowStore((s) => s.batchUpdateNodeData);
+  const toggleSelectedLockMode = useFlowStore((s) => s.toggleSelectedLockMode);
 
   const selectedSet = new Set(selectedNodeIds);
   const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
 
-  // 触发条件：多选节点 (>= 2) 或选中了已有的组合/容器节点
+  // 触发条件：单选或多选节点/泳道容器
+  if (targetNodes.length === 0) {
+    return null;
+  }
+
   const hasGroupSelected = targetNodes.some((n) => n.type === 'group');
   const isMultiSelection = targetNodes.length >= 2;
 
-  if (!isMultiSelection && !hasGroupSelected) {
-    return null;
-  }
+  // 获取锁定状态用于徽章展示 (none -> position 📌 -> full 🔒)
+  const currentLockMode = targetNodes[0]?.data?.lockMode ?? 'none';
 
   // 换算所有选中节点的世界坐标以确定综合包围盒
   const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
@@ -94,6 +101,30 @@ export const ContextualActionBar: React.FC = () => {
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >
+      {/* 节点/泳道锚定锁切换按钮 (Ctrl+L) */}
+      <button
+        type="button"
+        title={
+          currentLockMode === 'full'
+            ? '完全锁定 🔒 (禁止移动/修改文案/删除) - 点击切换 (Ctrl+L)'
+            : currentLockMode === 'position'
+            ? '坐标锁定 📌 (禁止拖拽，排版固定原位) - 点击切换 (Ctrl+L)'
+            : '未锁定 🔓 - 点击切换锁定模式 (Ctrl+L)'
+        }
+        onClick={() => toggleSelectedLockMode()}
+        className="p-1.5 rounded hover:bg-[var(--fs-bg)] transition-colors flex items-center justify-center cursor-pointer"
+      >
+        {currentLockMode === 'full' ? (
+          <Lock className="w-4 h-4 text-rose-500" />
+        ) : currentLockMode === 'position' ? (
+          <Pin className="w-4 h-4 text-amber-500" />
+        ) : (
+          <Unlock className="w-4 h-4 text-[var(--fs-text-muted)]" />
+        )}
+      </button>
+
+      <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
+
       {/* 组合 / 解散组合操作 */}
       {isMultiSelection && (
         <>

@@ -117,6 +117,10 @@ async function layoutStandardFlowchart(
     }
 
     const nextNodes = nodes.map((node) => {
+      // 锚定锁防护：position 坐标锁定或 full 完全锁定节点固定原坐标不动
+      if (node.data?.lockMode === 'position' || node.data?.lockMode === 'full') {
+        return node;
+      }
       const pos = positionMap.get(node.id);
       if (!pos) return node;
       return {
@@ -303,6 +307,10 @@ async function layoutSwimlaneDiagram(
 
       // 3. 泳道内的子节点 (转换回对应泳道容器内的局部相对坐标)
       if (node.parentId && laneLayoutInfos.has(node.parentId)) {
+        // 锚定锁防护：锁定的子节点固定原有局部坐标
+        if (node.data?.lockMode === 'position' || node.data?.lockMode === 'full') {
+          return node;
+        }
         const laneInfo = laneLayoutInfos.get(node.parentId)!;
         const globalPos = globalPosMap.get(node.id) ?? node.position;
 

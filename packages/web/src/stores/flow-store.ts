@@ -20,6 +20,7 @@ import type {
   FlowEdgeData,
   FlowNodeType,
   XYPosition,
+  MermaidBridgeOp,
 } from '@flowstudio/shared';
 import { DEFAULT_EDGE_TYPE } from '@flowstudio/shared';
 import { createNodeFromType, generateEdgeId, generateUniqueId } from '../lib/node-utils';
@@ -93,6 +94,14 @@ interface FlowStoreInternalState extends FlowStoreState {
   spotlightBranchFilter: string | null;
   /** 当前正在跟随视角的协作者 ID */
   followingUserId: string | null;
+  /** AI 批次画布级 Visual Diff 逐项审阅是否激活 */
+  aiReviewActive: boolean;
+  /** 当前正在审阅的 AI 批次 ID */
+  aiReviewBatchId: string | null;
+  /** Mermaid 代码抽屉是否展开 */
+  mermaidDrawerOpen: boolean;
+  /** 全局浮动轻提示消息 */
+  toastMessage: string | null;
 }
 
 /**
@@ -159,6 +168,16 @@ export interface FlowStoreActions {
   setSpotlightTarget: (targetId: string | null, branchFilter?: string | null) => void;
   /** 设置跟随协作者视角 */
   setFollowingUser: (userId: string | null) => void;
+  /** 循环切换选中节点的锁定模式 (none -> position -> full -> none) */
+  toggleSelectedLockMode: () => void;
+  /** 启停 AI 批次 Visual Diff 审阅台 */
+  setAiReviewMode: (active: boolean, batchId?: string | null) => void;
+  /** 开关 Mermaid 代码抽屉 */
+  setMermaidDrawerOpen: (open: boolean) => void;
+  /** 应用 Mermaid 增量融合产生的操作集合 */
+  applyMermaidOps: (ops: MermaidBridgeOp[]) => { addedNodes: number; addedEdges: number };
+  /** 弹出全局轻提示 Toast */
+  showToast: (message: string, duration?: number) => void;
   /** 绑定 Yjs 协同桥接与协同撤销管理器 */
   bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => () => void;
   /** 解除 Yjs 协同绑定 */
@@ -174,6 +193,7 @@ let activeBridge: YjsDiagramBridge | null = null;
 let activeUndoManager: CollaborativeUndoManager | null = null;
 let unsubscribeBridge: (() => void) | null = null;
 let unsubscribeUndoManager: (() => void) | null = null;
+let toastTimer: any = null;
 
 /**
  * 正在做中心锚定缩放的节点 → 缩放开始时的中心点。
@@ -253,6 +273,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   spotlightTargetId: null,
   spotlightBranchFilter: null,
   followingUserId: null,
+  aiReviewActive: false,
+  aiReviewBatchId: null,
+  mermaidDrawerOpen: false,
+  toastMessage: null,
 
   onNodesChange: (changes: NodeChange[]) => {
     if (changes.length === 0) return;
@@ -541,6 +565,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
+    // 锚定锁事前防线：完全锁定 (full) 的节点禁止删除
+    for (const n of nodes) {
+      if (nodeIdsToDelete.has(n.id) && n.data?.lockMode === 'full') {
+        nodeIdsToDelete.delete(n.id);
+      }
+    }
+
     const edgeIdsToDelete = new Set<string>();
     if (selectedEdgeId) {
       edgeIdsToDelete.add(selectedEdgeId);
@@ -572,6 +603,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const { nodes, edges, historyPast } = get();
     const targetNode = nodes.find((n) => n.id === id);
     if (!targetNode) return;
+
+    // 锚定锁事前防线：完全锁定 (full) 的节点禁止修改数据与样式 (除非本次动作是切换锁定模式自身)
+    if (targetNode.data?.lockMode === 'full' && data.lockMode === undefined) {
+      return;
+    }
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -1163,6 +1199,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       spotlightTargetId: null,
       spotlightBranchFilter: null,
       followingUserId: null,
+      aiReviewActive: false,
+      aiReviewBatchId: null,
+      mermaidDrawerOpen: false,
+      toastMessage: null,
     });
   },
 
@@ -1183,6 +1223,220 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setFollowingUser: (userId: string | null) => {
     set({ followingUserId: userId });
+  },
+
+  toggleSelectedLockMode: () => {
+    const { nodes, selectedNodeIds } = get();
+    if (selectedNodeIds.length === 0) return;
+
+    const targetNodes = nodes.filter((n) => selectedNodeIds.includes(n.id) || n.selected);
+    if (targetNodes.length === 0) return;
+
+    // 循环切换顺序：none -> position (坐标锁 📌) -> full (完全锁 🔒) -> none
+    const currentMode = targetNodes[0].data?.lockMode ?? 'none';
+    const nextMode: 'none' | 'position' | 'full' =
+      currentMode === 'none' ? 'position' : currentMode === 'position' ? 'full' : 'none';
+
+    const updates = targetNodes.map((n) => ({
+      id: n.id,
+      data: { lockMode: nextMode },
+    }));
+    get().batchUpdateNodeData(updates);
+  },
+
+  setAiReviewMode: (active: boolean, batchId?: string | null) => {
+    set({
+      aiReviewActive: active,
+      aiReviewBatchId: batchId ?? (active ? get().aiReviewBatchId : null),
+    });
+  },
+
+  setMermaidDrawerOpen: (open: boolean) => {
+    set({ mermaidDrawerOpen: open });
+  },
+
+  showToast: (message: string, duration = 3000) => {
+    set({ toastMessage: message });
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      set({ toastMessage: null });
+    }, duration);
+  },
+
+  applyMermaidOps: (ops: MermaidBridgeOp[]) => {
+    const { nodes, edges, historyPast } = get();
+    let nextNodes = [...nodes];
+    let nextEdges = [...edges];
+
+    let addedNodesCount = 0;
+    let addedEdgesCount = 0;
+
+    let maxX = 80;
+    let maxY = 80;
+    for (const n of nextNodes) {
+      if (n.type !== 'pool' && n.type !== 'lane') {
+        maxX = Math.max(maxX, n.position.x + (n.width ?? 140));
+        maxY = Math.max(maxY, n.position.y);
+      }
+    }
+    let newPlacementX = maxX + 100;
+    let newPlacementY = 100;
+
+    for (const op of ops) {
+      switch (op.op) {
+        case 'add_lane': {
+          let pool = nextNodes.find((n) => n.type === 'pool');
+          if (!pool) {
+            const poolId = generateUniqueId('pool');
+            pool = {
+              id: poolId,
+              type: 'pool',
+              position: { x: 50, y: 50 },
+              width: 800,
+              height: 400,
+              data: {
+                label: '业务泳道池',
+                type: 'pool',
+                orientation: 'horizontal',
+                laneOrder: [op.id],
+                headerSize: 40,
+              },
+            };
+            nextNodes.push(pool);
+          } else {
+            const currentOrder = pool.data?.laneOrder ?? [];
+            if (!currentOrder.includes(op.id)) {
+              pool = {
+                ...pool,
+                data: {
+                  ...pool.data,
+                  laneOrder: [...currentOrder, op.id],
+                },
+              };
+              nextNodes = nextNodes.map((n) => (n.id === pool!.id ? pool! : n));
+            }
+          }
+
+          if (!nextNodes.some((n) => n.id === op.id)) {
+            const laneCount = nextNodes.filter((n) => n.type === 'lane').length;
+            nextNodes.push({
+              id: op.id,
+              type: 'lane',
+              parentId: pool.id,
+              extent: 'parent',
+              position: { x: 0, y: 40 + laneCount * 200 },
+              width: pool.width ?? 800,
+              height: 200,
+              data: { label: op.label, type: 'lane', laneTitle: op.label },
+            });
+            addedNodesCount++;
+          }
+          break;
+        }
+
+        case 'add_node': {
+          if (!nextNodes.some((n) => n.id === op.id)) {
+            const newNode = createNodeFromType(op.type, { x: newPlacementX, y: newPlacementY });
+            newNode.id = op.id;
+            newNode.data.label = op.label;
+            if (op.laneId) {
+              newNode.parentId = op.laneId;
+              newNode.extent = 'parent';
+              newNode.position = { x: 40, y: 40 };
+            } else {
+              newPlacementY += 120;
+              if (newPlacementY > 600) {
+                newPlacementY = 100;
+                newPlacementX += 200;
+              }
+            }
+            nextNodes.push(newNode);
+            addedNodesCount++;
+          }
+          break;
+        }
+
+        case 'update_node': {
+          nextNodes = nextNodes.map((n) => {
+            if (n.id === op.id) {
+              // 锚定锁防护：full 锁定节点不被改写
+              if (n.data?.lockMode === 'full') return n;
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  label: op.label,
+                },
+              };
+            }
+            return n;
+          });
+          break;
+        }
+
+        case 'move_to_lane': {
+          nextNodes = nextNodes.map((n) => {
+            if (n.id === op.nodeId) {
+              return {
+                ...n,
+                parentId: op.laneId,
+                extent: 'parent',
+              };
+            }
+            return n;
+          });
+          break;
+        }
+
+        case 'connect': {
+          const edgeId = generateEdgeId(op.source, op.target);
+          if (!nextEdges.some((e) => e.source === op.source && e.target === op.target)) {
+            nextEdges.push({
+              id: edgeId,
+              source: op.source,
+              target: op.target,
+              type: 'orthogonal',
+              markerEnd: { type: MarkerType.ArrowClosed },
+              animated: false,
+              data: op.label ? { label: op.label } : {},
+            });
+            addedEdgesCount++;
+          }
+          break;
+        }
+
+        case 'update_edge': {
+          nextEdges = nextEdges.map((e) => {
+            if (e.id === op.id) {
+              return {
+                ...e,
+                data: {
+                  ...e.data,
+                  label: op.label,
+                },
+              };
+            }
+            return e;
+          });
+          break;
+        }
+
+        case 'disconnect': {
+          nextEdges = nextEdges.filter((e) => e.id !== op.edgeId);
+          break;
+        }
+      }
+    }
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    set({
+      nodes: nextNodes,
+      edges: nextEdges,
+      ...historyUpdate,
+    });
+    commitGraph(nextNodes, nextEdges);
+
+    return { addedNodes: addedNodesCount, addedEdges: addedEdgesCount };
   },
 
   bindCollaboration: (bridge: YjsDiagramBridge, undoManager: CollaborativeUndoManager) => {
