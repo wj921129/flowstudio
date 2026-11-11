@@ -1,16 +1,19 @@
 import React, { useEffect, useCallback } from 'react';
 import { useReactFlow, ViewportPortal } from '@xyflow/react';
 import { MessageSquare, Bell, ArrowRight, X } from 'lucide-react';
+import type { FlowNode } from '@flowstudio/shared';
 import { useCommentsStore } from './comments-store';
 import { CommentPin } from './comment-pin';
 import { DraftCommentCard } from './draft-comment-card';
 import { useFlowStore } from '../../stores/flow-store';
+import { getNodeWorldPosition, findEdgeAtPosition } from '../canvas/utils/split-insert-manager.js';
 
 export const CommentsLayer: React.FC = () => {
   const {
     comments,
     isCommentMode,
     setCommentMode,
+    newCommentDraftPosition,
     setNewCommentDraft,
     unreadNotification,
     setUnreadNotification,
@@ -51,29 +54,64 @@ export const CommentsLayer: React.FC = () => {
       e.preventDefault();
       e.stopPropagation();
 
+      if (newCommentDraftPosition) {
+        setNewCommentDraft(null);
+        setCommentMode(false);
+        return;
+      }
+
       const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
 
-      let hitNode = nodes.find(
-        (n) =>
-          flowPos.x >= n.position.x &&
-          flowPos.x <= n.position.x + (n.width || 120) &&
-          flowPos.y >= n.position.y &&
-          flowPos.y <= n.position.y + (n.height || 60)
-      );
+      const candidates = nodes.filter((n) => {
+        const worldPos = getNodeWorldPosition(n, nodeMap);
+        const w = n.width || (n.data as any)?.width || 120;
+        const h = n.height || (n.data as any)?.height || 60;
+        return (
+          flowPos.x >= worldPos.x &&
+          flowPos.x <= worldPos.x + w &&
+          flowPos.y >= worldPos.y &&
+          flowPos.y <= worldPos.y + h
+        );
+      });
 
-      let targetInfo = hitNode
-        ? {
-            type: 'node' as const,
-            id: hitNode.id,
-            label: String((hitNode.data as any)?.label || hitNode.id),
-          }
-        : {
-            type: 'canvas' as const,
+      candidates.sort((a, b) => {
+        const isContainerA = a.type === 'lane' || a.type === 'pool' || a.type === 'group';
+        const isContainerB = b.type === 'lane' || b.type === 'pool' || b.type === 'group';
+        if (isContainerA !== isContainerB) return isContainerA ? 1 : -1;
+        const depthA = a.parentId ? 1 : 0;
+        const depthB = b.parentId ? 1 : 0;
+        return depthB - depthA;
+      });
+
+      const hitNode = candidates[0];
+      let targetInfo: { type: 'node' | 'edge' | 'canvas'; id?: string; label?: string };
+
+      if (hitNode) {
+        targetInfo = {
+          type: 'node',
+          id: hitNode.id,
+          label: String((hitNode.data as any)?.label || hitNode.id),
+        };
+      } else {
+        const hitEdge = findEdgeAtPosition(edges, nodes, flowPos, 16);
+        if (hitEdge) {
+          const edgeLabel = (hitEdge.edge.data as any)?.label || hitEdge.edge.label;
+          targetInfo = {
+            type: 'edge',
+            id: hitEdge.edge.id,
+            label: edgeLabel ? String(edgeLabel) : `连线 (${hitEdge.edge.source} -> ${hitEdge.edge.target})`,
           };
+        } else {
+          targetInfo = {
+            type: 'canvas',
+          };
+        }
+      }
 
       setNewCommentDraft(flowPos, targetInfo);
     },
-    [isCommentMode, screenToFlowPosition, nodes, setNewCommentDraft]
+    [isCommentMode, newCommentDraftPosition, screenToFlowPosition, nodes, edges, setNewCommentDraft, setCommentMode]
   );
 
   const handleNotificationClick = () => {
@@ -98,7 +136,9 @@ export const CommentsLayer: React.FC = () => {
       {isCommentMode && (
         <div
           onClick={handleCanvasClick}
-          className="absolute inset-0 z-30 cursor-crosshair bg-indigo-500/5 select-none"
+          className={`absolute inset-0 z-30 select-none ${
+            newCommentDraftPosition ? 'cursor-default bg-transparent' : 'cursor-crosshair bg-indigo-500/5'
+          }`}
         />
       )}
 

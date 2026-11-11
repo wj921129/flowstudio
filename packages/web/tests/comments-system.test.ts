@@ -4,6 +4,7 @@ import { useCommentsStore } from '../src/features/comments/comments-store';
 import { bindCommentsYjs } from '../src/features/comments/yjs-comments-sync';
 import type { CanvasComment } from '../src/features/comments/types';
 import type { FlowNode, FlowEdge } from '@flowstudio/shared';
+import { getNodeWorldPosition, findEdgeAtPosition } from '../src/features/canvas/utils/split-insert-manager';
 
 describe('Canvas Comment & Pinning System', () => {
   beforeEach(() => {
@@ -176,5 +177,82 @@ describe('Canvas Comment & Pinning System', () => {
     expect(sub?.get('content')).toBe('跨端实时协同批注测试');
 
     unbindA();
+  });
+
+  it('prevents cross-diagram contamination on switch and unbind', () => {
+    const doc1 = new Y.Doc();
+    const unbind1 = bindCommentsYjs(doc1, 'client-1');
+
+    useCommentsStore.getState().addComment({
+      id: 'comm-diag-1',
+      authorId: 'client-1',
+      authorName: 'U1',
+      authorColor: '#000',
+      content: 'Diagram 1 comment',
+      createdAt: 10,
+      resolved: false,
+      targetType: 'canvas',
+      position: { x: 10, y: 10 },
+      replies: [],
+      reactions: [],
+    });
+
+    expect(useCommentsStore.getState().comments.length).toBe(1);
+
+    unbind1();
+    expect(useCommentsStore.getState().comments.length).toBe(0);
+
+    const doc2 = new Y.Doc();
+    const unbind2 = bindCommentsYjs(doc2, 'client-1');
+    expect(useCommentsStore.getState().comments.length).toBe(0);
+
+    unbind2();
+  });
+
+  it('correctly resolves swimlane nested child node world coordinates and edge snapping', () => {
+    const nodes: FlowNode[] = [
+      { id: 'pool-1', type: 'pool', position: { x: 100, y: 100 }, data: { label: '审批泳池' }, width: 800, height: 400 },
+      { id: 'lane-1', type: 'lane', parentId: 'pool-1', position: { x: 0, y: 40 }, data: { label: '风控泳道' }, width: 800, height: 180 },
+      { id: 'step-1', type: 'process', parentId: 'lane-1', position: { x: 50, y: 30 }, data: { label: '反洗钱检查' }, width: 120, height: 60 },
+      { id: 'step-2', type: 'process', parentId: 'lane-1', position: { x: 250, y: 30 }, data: { label: '信用评分' }, width: 120, height: 60 },
+    ];
+
+    const edges: FlowEdge[] = [
+      { id: 'edge-step-1-2', source: 'step-1', target: 'step-2', data: { label: '通过审核' } },
+    ];
+
+    const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
+    const worldStep1 = getNodeWorldPosition(nodes[2], nodeMap);
+    expect(worldStep1).toEqual({ x: 150, y: 170 });
+
+    const clickPointInsideStep1 = { x: 180, y: 190 };
+    const candidates = nodes.filter((n) => {
+      const wp = getNodeWorldPosition(n, nodeMap);
+      const w = n.width || 120;
+      const h = n.height || 60;
+      return (
+        clickPointInsideStep1.x >= wp.x &&
+        clickPointInsideStep1.x <= wp.x + w &&
+        clickPointInsideStep1.y >= wp.y &&
+        clickPointInsideStep1.y <= wp.y + h
+      );
+    });
+
+    candidates.sort((a, b) => {
+      const isContainerA = a.type === 'lane' || a.type === 'pool' || a.type === 'group';
+      const isContainerB = b.type === 'lane' || b.type === 'pool' || b.type === 'group';
+      if (isContainerA !== isContainerB) return isContainerA ? 1 : -1;
+      const depthA = a.parentId ? 1 : 0;
+      const depthB = b.parentId ? 1 : 0;
+      return depthB - depthA;
+    });
+
+    expect(candidates[0].id).toBe('step-1');
+    expect(candidates[0].data.label).toBe('反洗钱检查');
+
+    const clickPointNearEdge = { x: 300, y: 200 };
+    const hitEdge = findEdgeAtPosition(edges, nodes, clickPointNearEdge, 20);
+    expect(hitEdge).not.toBeNull();
+    expect(hitEdge?.edge.id).toBe('edge-step-1-2');
   });
 });

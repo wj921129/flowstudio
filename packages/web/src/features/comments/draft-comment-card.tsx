@@ -6,7 +6,7 @@ import { useCollaboration } from '../collaboration/collaboration-provider';
 export const DraftCommentCard: React.FC = () => {
   const collab = useCollaboration();
   const currentUser = collab?.currentUser || { clientId: 'local', nickname: '我', color: '#6366f1' };
-  const { newCommentDraftPosition, newCommentDraftTarget, setNewCommentDraft, addComment } = useCommentsStore();
+  const { newCommentDraftPosition, newCommentDraftTarget, setNewCommentDraft, setCommentMode, addComment } = useCommentsStore();
 
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -81,7 +81,10 @@ export const DraftCommentCard: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => setNewCommentDraft(null)}
+              onClick={() => {
+                setNewCommentDraft(null);
+                setCommentMode(false);
+              }}
               className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer p-0.5"
             >
               <X className="w-3.5 h-3.5" />

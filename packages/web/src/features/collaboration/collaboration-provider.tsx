@@ -10,7 +10,7 @@ import { useAwareness, type AwarenessUserState } from './use-awareness.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
-import { bindCommentsYjs } from '../comments/index.js';
+import { bindCommentsYjs, useCommentsStore } from '../comments/index.js';
 
 export interface CollaborationContextValue {
   diagramId: string;
@@ -111,6 +111,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       d.destroy();
       u.destroy();
       useFlowStore.getState().resetDiagramState();
+      useCommentsStore.getState().reset();
       setSession(null);
     };
   }, [diagramId, wsUrl, currentUser.clientId]);

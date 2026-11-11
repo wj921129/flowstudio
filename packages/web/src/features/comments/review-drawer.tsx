@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { MessageSquare, Check, ChevronLeft, ChevronRight, X, AlertTriangle, Eye, CheckCircle2 } from 'lucide-react';
 import { useCommentsStore } from './comments-store';
@@ -17,17 +17,9 @@ export const ReviewDrawer: React.FC = () => {
 
   const { setViewport, getViewport } = useReactFlow();
 
-  if (!isReviewDrawerOpen) return null;
-
-  const filteredComments = filterMode === 'unresolved_only'
-    ? comments.filter((c) => !c.resolved)
-    : comments;
-
-  const currentIdx = filteredComments.findIndex((c) => c.id === activeCommentId);
-
-  const focusComment = (id: string) => {
+  const focusComment = useCallback((id: string) => {
     setActiveCommentId(id);
-    const target = comments.find((c) => c.id === id);
+    const target = useCommentsStore.getState().comments.find((c) => c.id === id);
     if (!target) return;
 
     const vp = getViewport();
@@ -39,17 +31,44 @@ export const ReviewDrawer: React.FC = () => {
       },
       { duration: 250 }
     );
-  };
+  }, [setActiveCommentId, getViewport, setViewport]);
 
-  const handleNext = () => {
+  const handleNext = useCallback(() => {
     const nextId = getNextCommentId('next');
     if (nextId) focusComment(nextId);
-  };
+  }, [getNextCommentId, focusComment]);
 
-  const handlePrev = () => {
+  const handlePrev = useCallback(() => {
     const prevId = getNextCommentId('prev');
     if (prevId) focusComment(prevId);
-  };
+  }, [getNextCommentId, focusComment]);
+
+  useEffect(() => {
+    if (!isReviewDrawerOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        handlePrev();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isReviewDrawerOpen, handleNext, handlePrev]);
+
+  if (!isReviewDrawerOpen) return null;
+
+  const filteredComments = filterMode === 'unresolved_only'
+    ? comments.filter((c) => !c.resolved)
+    : comments;
+
+  const currentIdx = filteredComments.findIndex((c) => c.id === activeCommentId);
 
   return (
     <aside

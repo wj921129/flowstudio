@@ -24,9 +24,7 @@ export function bindCommentsYjs(
   };
 
   const initial = readAllComments();
-  if (initial.length > 0) {
-    store.syncFromYjs(initial);
-  }
+  store.syncFromYjs(initial);
 
   const handleYjsChange = (events: Y.YEvent<any>[], transaction: Y.Transaction) => {
     const isRemote = transaction.origin !== localClientId;
@@ -78,5 +76,6 @@ export function bindCommentsYjs(
   return () => {
     commentsMap.unobserveDeep(handleYjsChange);
     store.setYjsSyncCallback(null);
+    store.reset();
   };
 }
