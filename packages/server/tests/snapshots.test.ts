@@ -196,6 +196,20 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
     expect(clientDoc.getMap('nodes').has('node-2')).toBe(true);
     expect(clientDoc.getMap('nodes').has('node-3')).toBe(false);
 
+    const aliasRes = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diagId}/snapshots/${snap.id}/restore`,
+      payload: { applyLocal: true },
+    });
+    expect(aliasRes.statusCode).toBe(200);
+    expect(aliasRes.json().mode).toBe('delta');
+    expect(typeof aliasRes.json().update).toBe('string');
+
+    const stillPersisted = new Y.Doc();
+    Y.applyUpdate(stillPersisted, server.repo.getYDocState(diagId)!);
+    expect(stillPersisted.getMap('nodes').has('node-2')).toBe(false);
+    expect(stillPersisted.getMap('nodes').has('node-3')).toBe(true);
+
     await server.app.close();
   }, 20000);
 });

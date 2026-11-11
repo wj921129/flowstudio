@@ -131,8 +131,8 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     if (!opts.writer) {
       return reply.status(500).send({ error: '文档写入引擎未配置' });
     }
-    const body = (request.body || {}) as { mode?: 'apply' | 'delta' };
-    if (body.mode === 'delta') {
+    const body = (request.body || {}) as { mode?: 'apply' | 'delta'; applyLocal?: boolean };
+    if (body.mode === 'delta' || body.applyLocal === true) {
       const delta = opts.writer.computeSnapshotRestoreUpdate(id, snapshotId);
       if (!delta.success) {
         return reply.status(400).send({ error: delta.error || '计算快照差量失败' });
