@@ -120,7 +120,7 @@ describe('后端审查整改第三轮', () => {
     }
   });
 
-  it('R1: scaffold 重建容器时，泳道内全锁子节点转为浮动并换算世界坐标', async () => {
+  it('S1: scaffold 保留锁定节点的祖先容器链，锁定节点本体与世界坐标零改写', async () => {
     const server = await buildServer({ dbPath: tmpDbPath });
     const diag = server.repo.createDiagram({ title: '锁定子节点悬挂图' });
 
@@ -160,24 +160,33 @@ describe('后端审查整改第三轮', () => {
       edges: [],
     });
     expect(result.success).toBe(true);
-    expect(result.warnings.some((w: string) => w.includes('转为浮动节点'))).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('已一并保留'))).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('下移至'))).toBe(true);
 
     const reloaded = loadDoc(server.repo, diag.id);
     const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
 
-    expect(nextNodes.has('locked-node')).toBe(true);
-    // 旧容器已被重建，锁定节点不得保留悬挂 parentId
-    expect(nextNodes.has('pool-1')).toBe(false);
-    expect(nextNodes.has('lane-old')).toBe(false);
+    // 祖先容器链被保留，锁定节点原样留在原泳道
+    expect(nextNodes.has('pool-1')).toBe(true);
+    expect(nextNodes.has('lane-old')).toBe(true);
     const locked = nextNodes.get('locked-node')!;
-    expect(locked.get('parentId')).toBeUndefined();
-    // 世界坐标 = 自身局部 (60,60) + 泳道 (0,40) + 泳池 (50,50)
-    expect(locked.get('position')).toEqual({ x: 110, y: 150 });
+    expect(locked.get('parentId')).toBe('lane-old');
+    expect(locked.get('position')).toEqual({ x: 60, y: 60 });
+    expect(worldOf(nextNodes, 'locked-node')).toEqual({ x: 110, y: 150 });
     expectNoDanglingParent(nextNodes);
 
-    // 新骨架正常创建
+    // 新骨架与旧容器共存，新池下移避让
     expect(nextNodes.has('n-new')).toBe(true);
     expect(nextNodes.get('n-new')!.get('parentId')).toBe('lane-new');
+    const pools: Array<{ id: string; pos: { x: number; y: number } }> = [];
+    nextNodes.forEach((nodeMap, id) => {
+      if (nodeMap.get('type') === 'pool') {
+        pools.push({ id, pos: nodeMap.get('position') as { x: number; y: number } });
+      }
+    });
+    expect(pools.length).toBe(2);
+    const newPool = pools.find((pool) => pool.id !== 'pool-1')!;
+    expect(newPool.pos.y).toBeGreaterThanOrEqual(340);
 
     await server.app.close();
   }, 20000);
