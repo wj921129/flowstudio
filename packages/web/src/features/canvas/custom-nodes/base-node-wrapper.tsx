@@ -54,7 +54,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const collab = useCollaboration();
 
-  const remoteSelector = collab?.remoteUsers.find((u) => u.selectedNodeIds.includes(id));
+  const remoteSelector = collab?.remoteUsers.find((u) => (u.selectedNodeIds ?? []).includes(id));
 
   let isConnecting = false;
   try {

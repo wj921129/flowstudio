@@ -375,4 +375,136 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(mockProvider.awareness.setLocalStateField).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('H3 & H4: 统一锚定锁批量守卫 (对齐/分布/成组/解散/批量改色)', () => {
+    it('H3: alignSelectedNodes 严格跳过 position/full 锁定节点，锁定节点原位不动', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const n1: FlowNode = {
+        id: 'n1',
+        type: 'process',
+        position: { x: 50, y: 100 },
+        width: 100,
+        height: 50,
+        data: { label: 'Node 1' },
+      };
+      const n2Locked: FlowNode = {
+        id: 'n2',
+        type: 'process',
+        position: { x: 200, y: 200 },
+        width: 100,
+        height: 50,
+        data: { label: 'Node 2 Locked', lockMode: 'position' },
+      };
+      const n3: FlowNode = {
+        id: 'n3',
+        type: 'process',
+        position: { x: 350, y: 300 },
+        width: 100,
+        height: 50,
+        data: { label: 'Node 3' },
+      };
+
+      store.setDiagram([n1, n2Locked, n3], []);
+      store.setSelectedNodes(['n1', 'n2', 'n3']);
+
+      // 触发左对齐 (targetValue = min(50, 200, 350) = 50)
+      store.alignSelectedNodes('left');
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const latestN1 = latestNodes.find((n) => n.id === 'n1')!;
+      const latestN2 = latestNodes.find((n) => n.id === 'n2')!;
+      const latestN3 = latestNodes.find((n) => n.id === 'n3')!;
+
+      expect(latestN1.position.x).toBe(50);
+      // n2 被锁定，坐标坚决保持 200 不被移动
+      expect(latestN2.position.x).toBe(200);
+      expect(latestN3.position.x).toBe(50);
+    });
+
+    it('H3: distributeSelectedNodes 严格跳过 position/full 锁定节点', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const n1: FlowNode = { id: 'd1', type: 'process', position: { x: 0, y: 0 }, width: 100, height: 50, data: { label: 'D1' } };
+      const n2Locked: FlowNode = { id: 'd2', type: 'process', position: { x: 80, y: 0 }, width: 100, height: 50, data: { label: 'D2 Locked', lockMode: 'full' } };
+      const n3: FlowNode = { id: 'd3', type: 'process', position: { x: 200, y: 0 }, width: 100, height: 50, data: { label: 'D3' } };
+
+      store.setDiagram([n1, n2Locked, n3], []);
+      store.setSelectedNodes(['d1', 'd2', 'd3']);
+
+      store.distributeSelectedNodes('horizontal');
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const latestD2 = latestNodes.find((n) => n.id === 'd2')!;
+      // d2 处于 full 锁定，位置保持初始 80 不变
+      expect(latestD2.position.x).toBe(80);
+    });
+
+    it('H3: groupSelectedNodes 与 ungroupNodes 对完全锁定 (full) 节点强拦截', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const gChild1: FlowNode = { id: 'gc1', type: 'process', position: { x: 10, y: 10 }, width: 100, height: 50, data: { label: 'GC1' } };
+      const gChild2Locked: FlowNode = {
+        id: 'gc2',
+        type: 'process',
+        position: { x: 120, y: 10 },
+        width: 100,
+        height: 50,
+        data: { label: 'GC2 Locked', lockMode: 'full' },
+      };
+
+      store.setDiagram([gChild1, gChild2Locked], []);
+      store.setSelectedNodes(['gc1', 'gc2']);
+
+      // 由于 gc2 处于 full 锁，不能被纳入新组合，有效节点不足 2 个，成组被拦截
+      const res = store.groupSelectedNodes();
+      expect(res).toBeNull();
+    });
+
+    it('H4: batchUpdateNodeData 严格拦截对 full 锁定节点的样式/属性更新', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const store = useFlowStore.getState();
+
+      const u1: FlowNode = { id: 'u1', type: 'process', position: { x: 0, y: 0 }, data: { label: 'U1', style: { borderColor: '#000' } } };
+      const u2Locked: FlowNode = {
+        id: 'u2',
+        type: 'process',
+        position: { x: 100, y: 0 },
+        data: { label: 'U2 Locked', lockMode: 'full', style: { borderColor: '#111' } },
+      };
+
+      store.setDiagram([u1, u2Locked], []);
+
+      // 批量改色
+      store.batchUpdateNodeData([
+        { id: 'u1', data: { style: { borderColor: '#3B82F6' } } },
+        { id: 'u2', data: { style: { borderColor: '#EF4444' } } },
+      ]);
+
+      const latestNodes = useFlowStore.getState().nodes;
+      const latestU1 = latestNodes.find((n) => n.id === 'u1')!;
+      const latestU2 = latestNodes.find((n) => n.id === 'u2')!;
+
+      expect(latestU1.data.style?.borderColor).toBe('#3B82F6');
+      // u2 处于 full 锁定，颜色保持原本的 #111，不被批量改色冲掉
+      expect(latestU2.data.style?.borderColor).toBe('#111');
+    });
+  });
+
+  describe('M5: 导出 CSS 变量解析 resolveCssVarColor', () => {
+    it('resolveCssVarColor 正确将 var(--fs-palette-*) 解析为具体的 HEX 色值', async () => {
+      const { resolveCssVarColor, sanitizeSvgColor } = await import('../src/lib/export-utils.js');
+
+      expect(resolveCssVarColor('var(--fs-palette-1)')).toBe('#3B82F6');
+      expect(resolveCssVarColor('var(--fs-palette-2)')).toBe('#10B981');
+      expect(resolveCssVarColor('var(--fs-palette-4)')).toBe('#EF4444');
+
+      // 经 sanitizeSvgColor 完整流程解析并校验
+      expect(sanitizeSvgColor('var(--fs-palette-1)')).toBe('#3B82F6');
+      expect(sanitizeSvgColor('var(--fs-palette-3)')).toBe('#F59E0B');
+    });
+  });
 });

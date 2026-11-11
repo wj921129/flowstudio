@@ -83,17 +83,38 @@ export const FlowCanvas: React.FC = () => {
     point: { x: number; y: number };
   } | null>(null);
 
-  // 监听并执行主讲人视角跟随
+  // 监听并执行主讲人视角与聚光灯带看跟随 (M1)
   useEffect(() => {
     if (!followingUserId || !collab?.remoteUsers) return;
     const targetUser = collab.remoteUsers.find((u) => u.clientId === followingUserId);
-    if (targetUser?.viewport) {
+    if (!targetUser) return;
+
+    if (targetUser.viewport) {
       setViewport(
         { x: targetUser.viewport.x, y: targetUser.viewport.y, zoom: targetUser.viewport.zoom },
         { duration: 150 }
       );
     }
-  }, [followingUserId, collab?.remoteUsers, setViewport]);
+
+    // 同步聚光灯带看高亮链路
+    if (targetUser.spotlightTargetId) {
+      if (!spotlightActive || spotlightTargetId !== targetUser.spotlightTargetId) {
+        toggleSpotlightMode(true);
+        setSpotlightTarget(targetUser.spotlightTargetId, 'all');
+      }
+    } else if (spotlightActive) {
+      toggleSpotlightMode(false);
+      setSpotlightTarget(null);
+    }
+  }, [
+    followingUserId,
+    collab?.remoteUsers,
+    setViewport,
+    spotlightActive,
+    spotlightTargetId,
+    toggleSpotlightMode,
+    setSpotlightTarget,
+  ]);
 
   // 计算因果链路聚光灯走查范围
   const spotlightResult = useMemo(() => {

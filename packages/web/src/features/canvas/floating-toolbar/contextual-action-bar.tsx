@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useFlowStore } from '../../../stores/flow-store';
 import { computeBoundingBox, toWorldPosition } from '../utils/group-calculator';
+import { isNodeLocked } from '../utils/node-lock-manager';
 import type { FlowNode } from '@flowstudio/shared';
 
 const PALETTE_COLORS = [
@@ -76,7 +77,12 @@ export const ContextualActionBar: React.FC = () => {
   const screenY = bbox.y * zoom + vpY - 12;
 
   const handleApplyColor = (colorVar: string) => {
-    const updates = targetNodes.map((node) => ({
+    const unlockedTargets = targetNodes.filter((n) => !isNodeLocked(n, 'content'));
+    if (unlockedTargets.length === 0 && targetNodes.length > 0) {
+      useFlowStore.getState().showToast('选中的节点已完全锁定，禁止修改样式');
+      return;
+    }
+    const updates = unlockedTargets.map((node) => ({
       id: node.id,
       data: {
         style: {

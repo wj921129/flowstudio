@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ViewportPortal } from '@xyflow/react';
 import { RotateCcw, Check, Info } from 'lucide-react';
-import type { AiBatchRecord, AiBatchEntityDiff, FlowNode, AiBatchRevertResult } from '@flowstudio/shared';
+import type { AiBatchRecord, AiBatchEntityDiff, FlowNode, FlowEdge, AiBatchRevertResult } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { useCollaboration } from './collaboration-provider';
 import { sanitizeDiagramId } from './ai-batch-banner';
@@ -16,6 +16,7 @@ export const AiBatchDiffOverlay: React.FC = () => {
   const aiReviewActive = useFlowStore((s) => s.aiReviewActive);
   const aiReviewBatchId = useFlowStore((s) => s.aiReviewBatchId);
   const nodes = useFlowStore((s) => s.nodes);
+  const edges = useFlowStore((s) => s.edges);
   const showToast = useFlowStore((s) => s.showToast);
   const collab = useCollaboration();
 
@@ -104,6 +105,8 @@ export const AiBatchDiffOverlay: React.FC = () => {
   }
 
   const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
+  const edgeMap = new Map<string, FlowEdge>(edges.map((e) => [e.id, e]));
+
   const getAbsoluteNodePos = (node: FlowNode): { x: number; y: number } => {
     if (node.parentId && nodeMap.has(node.parentId)) {
       const parent = nodeMap.get(node.parentId)!;
@@ -111,6 +114,15 @@ export const AiBatchDiffOverlay: React.FC = () => {
       return toWorldPosition(node.position, parentPos);
     }
     return { ...node.position };
+  };
+
+  const getAbsoluteBeforePos = (pos: { x: number; y: number }, parentId?: string): { x: number; y: number } => {
+    if (parentId && nodeMap.has(parentId)) {
+      const parent = nodeMap.get(parentId)!;
+      const parentPos = getAbsoluteNodePos(parent);
+      return toWorldPosition(pos, parentPos);
+    }
+    return { ...pos };
   };
 
   // 过滤未撤回、未被手动隐藏的 diff 实体
@@ -238,10 +250,12 @@ export const AiBatchDiffOverlay: React.FC = () => {
           );
         }
 
-        // 3. 被删节点原位幽灵预览 (绯红色虚线 Ghost Preview)
+        // 3. 被删节点原位幽灵预览 (绯红色虚线 Ghost Preview，M3: 换算绝对坐标)
         if (diff.opType === 'delete' && diff.entityType === 'node') {
           const beforeState = diff.beforeState || {};
-          const beforePos = (beforeState.position as { x: number; y: number }) || { x: 100, y: 100 };
+          const rawBeforePos = (beforeState.position as { x: number; y: number }) || { x: 100, y: 100 };
+          const beforeParentId = beforeState.parentId as string | undefined;
+          const beforePos = getAbsoluteBeforePos(rawBeforePos, beforeParentId);
           const beforeW = (beforeState.width as number) || 140;
           const beforeH = (beforeState.height as number) || 60;
           const beforeData = (beforeState.data as Record<string, unknown>) || {};
@@ -280,6 +294,106 @@ export const AiBatchDiffOverlay: React.FC = () => {
               </button>
             </div>
           );
+        }
+
+        // 4. 连线差异高亮与 Cherry-Pick 操作条 (M4: 支持连线增/改/删逐项审阅)
+        if (diff.entityType === 'edge') {
+          if (diff.opType === 'add' || diff.opType === 'update') {
+            const liveEdge = edgeMap.get(diff.entityId);
+            if (!liveEdge) return null;
+            const srcNode = nodeMap.get(liveEdge.source);
+            const tgtNode = nodeMap.get(liveEdge.target);
+            if (!srcNode || !tgtNode) return null;
+
+            const srcPos = getAbsoluteNodePos(srcNode);
+            const tgtPos = getAbsoluteNodePos(tgtNode);
+            const srcW = srcNode.width ?? 140;
+            const srcH = srcNode.height ?? 60;
+            const tgtW = tgtNode.width ?? 140;
+            const tgtH = tgtNode.height ?? 60;
+
+            const midX = (srcPos.x + srcW / 2 + tgtPos.x + tgtW / 2) / 2;
+            const midY = (srcPos.y + srcH / 2 + tgtPos.y + tgtH / 2) / 2;
+
+            const isAdd = diff.opType === 'add';
+            const badgeColor = isAdd ? 'bg-emerald-500' : 'bg-amber-500';
+            const badgeText = isAdd ? '+ AI 连线' : '✎ 连线修改';
+
+            return (
+              <div
+                key={`diff-edge-${diff.entityId}`}
+                style={{
+                  position: 'absolute',
+                  left: `${midX - 55}px`,
+                  top: `${midY - 14}px`,
+                  pointerEvents: 'auto',
+                }}
+                className="z-30 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur px-2 py-1 rounded-md shadow-lg text-white border border-slate-700 select-none animate-in fade-in"
+              >
+                <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${badgeColor} text-white`}>
+                  {badgeText}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleAcceptSingleItem(diff.entityId)}
+                  title="保留此连线"
+                  className="p-1 hover:bg-emerald-600 rounded text-emerald-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <Check className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRevertSingleItem(diff.entityId)}
+                  disabled={isReverting}
+                  title="撤回此连线 (Cherry-Pick)"
+                  className="p-1 hover:bg-rose-600 rounded text-rose-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RotateCcw className={`w-3 h-3 ${isReverting ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            );
+          }
+
+          if (diff.opType === 'delete') {
+            const beforeEdge = diff.beforeState || {};
+            const srcId = beforeEdge.source as string;
+            const tgtId = beforeEdge.target as string;
+            const srcNode = nodeMap.get(srcId);
+            const tgtNode = nodeMap.get(tgtId);
+            if (!srcNode || !tgtNode) return null;
+
+            const srcPos = getAbsoluteNodePos(srcNode);
+            const tgtPos = getAbsoluteNodePos(tgtNode);
+            const midX = (srcPos.x + (srcNode.width ?? 140) / 2 + tgtPos.x + (tgtNode.width ?? 140) / 2) / 2;
+            const midY = (srcPos.y + (srcNode.height ?? 60) / 2 + tgtPos.y + (tgtNode.height ?? 60) / 2) / 2;
+
+            return (
+              <div
+                key={`diff-del-edge-${diff.entityId}`}
+                style={{
+                  position: 'absolute',
+                  left: `${midX - 60}px`,
+                  top: `${midY - 14}px`,
+                  pointerEvents: 'auto',
+                }}
+                className="z-20 flex items-center gap-1.5 bg-rose-950/90 backdrop-blur px-2 py-1 rounded-md shadow-lg text-rose-200 border border-rose-800 select-none animate-in fade-in"
+              >
+                <span className="text-[9px] font-bold px-1 rounded bg-rose-600 text-white">
+                  − 已删连线
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleRevertSingleItem(diff.entityId)}
+                  disabled={isReverting}
+                  title="恢复此连线"
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  <RotateCcw className={`w-2.5 h-2.5 ${isReverting ? 'animate-spin' : ''}`} />
+                  <span>恢复</span>
+                </button>
+              </div>
+            );
+          }
         }
 
         return null;

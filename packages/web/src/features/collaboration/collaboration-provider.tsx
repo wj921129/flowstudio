@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import type { AwarenessUserState, UserIdentity } from '@flowstudio/shared';
+import type { UserIdentity } from '@flowstudio/shared';
 import type { CollaborationConnectionStatus } from './types.js';
 import { YjsDiagramBridge } from './yjs-doc-bridge.js';
 import { CollaborativeUndoManager } from './undo-manager.js';
 import { getOrCreateUserIdentity, saveUserNickname } from './user-identity.js';
-import { useAwareness } from './use-awareness.js';
+import { useAwareness, type AwarenessUserState } from './use-awareness.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
@@ -53,6 +53,8 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   const [session, setSession] = useState<CollaborationSession | null>(null);
 
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
+  const spotlightActive = useFlowStore((s) => s.spotlightActive);
+  const spotlightTargetId = useFlowStore((s) => s.spotlightTargetId);
 
   // 初始化协同会话：在统一的 useEffect 中创建与销毁，彻底杜绝 React 19 StrictMode 下 useMemo 持有已销毁 dead 实例的回归问题
   useEffect(() => {
@@ -121,6 +123,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     provider: session?.provider ?? null,
     currentUser,
     selectedNodeIds,
+    spotlightTargetId: spotlightActive ? spotlightTargetId : null,
   });
 
   const handleUpdateNickname = useCallback((name: string) => {

@@ -6,6 +6,7 @@
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
 import { getNodeDimensions } from './group-calculator.js';
 import { generateEdgeId } from '../../../lib/node-utils.js';
+import { isNodeLocked } from './node-lock-manager.js';
 
 /**
  * 递归计算节点的世界绝对坐标
@@ -267,8 +268,8 @@ export function splitEdgeAndInsertNode({
       // 顺推下游节点
       nextNodes = nextNodes.map((n) => {
         if (!downstreamSet.has(n.id)) return n;
-        // 锚定锁强约束：位置锁定 (position) 或完全锁定 (full) 的节点坚决禁止被推移
-        if (n.data?.lockMode === 'position' || n.data?.lockMode === 'full') {
+        // 统一锚定锁守卫：位置锁定 (position) 或完全锁定 (full) 的节点坚决禁止被推移
+        if (isNodeLocked(n, 'position')) {
           return n;
         }
         pushedNodeIds.push(n.id);
@@ -346,8 +347,8 @@ export function healOnDelete(
   edges: FlowEdge[]
 ): { canHeal: boolean; nextNodes: FlowNode[]; nextEdges: FlowEdge[]; healedEdge?: FlowEdge } {
   const targetNode = nodes.find((n) => n.id === nodeId);
-  // 锚定锁强约束：完全锁定 (full) 的节点禁止愈合删除
-  if (!targetNode || targetNode.data?.lockMode === 'full') {
+  // 统一锚定锁守卫：完全锁定 (full) 的节点禁止愈合删除
+  if (!targetNode || isNodeLocked(targetNode, 'delete')) {
     return {
       canHeal: false,
       nextNodes: nodes,

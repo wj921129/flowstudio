@@ -1,11 +1,18 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import type { AwarenessUserState, UserIdentity } from '@flowstudio/shared';
+import type { AwarenessUserState as SharedAwarenessUserState, UserIdentity } from '@flowstudio/shared';
+
+export type AwarenessUserState = SharedAwarenessUserState & {
+  spotlightTargetId?: string | null;
+  spotlightNodeIds?: string[];
+};
 
 export interface UseAwarenessOptions {
   provider: HocuspocusProvider | null;
   currentUser: UserIdentity;
   selectedNodeIds: string[];
+  spotlightTargetId?: string | null;
+  spotlightNodeIds?: string[];
 }
 
 /**
@@ -29,12 +36,22 @@ function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): bo
       item.viewport?.x === other.viewport?.x &&
       item.viewport?.y === other.viewport?.y &&
       item.viewport?.zoom === other.viewport?.zoom &&
-      joinIds(item.selectedNodeIds) === joinIds(other.selectedNodeIds)
+      joinIds(item.selectedNodeIds) === joinIds(other.selectedNodeIds) &&
+      item.spotlightTargetId === other.spotlightTargetId &&
+      joinIds(item.spotlightNodeIds) === joinIds(other.spotlightNodeIds) &&
+      item.isAi === other.isAi &&
+      item.agentName === other.agentName
     );
   });
 }
 
-export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwarenessOptions) {
+export function useAwareness({
+  provider,
+  currentUser,
+  selectedNodeIds,
+  spotlightTargetId,
+  spotlightNodeIds,
+}: UseAwarenessOptions) {
   const [remoteUsers, setRemoteUsers] = useState<AwarenessUserState[]>([]);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
@@ -45,6 +62,12 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
 
   const selectedNodeIdsRef = useRef(selectedNodeIds);
   selectedNodeIdsRef.current = selectedNodeIds;
+
+  const spotlightTargetIdRef = useRef(spotlightTargetId);
+  spotlightTargetIdRef.current = spotlightTargetId;
+
+  const spotlightNodeIdsRef = useRef(spotlightNodeIds);
+  spotlightNodeIdsRef.current = spotlightNodeIds;
 
   const providerRef = useRef(provider);
   providerRef.current = provider;
@@ -70,6 +93,8 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
         cursor: cursorRef.current,
         selectedNodeIds: selectedNodeIdsRef.current,
         viewport: viewportRef.current,
+        spotlightTargetId: spotlightTargetIdRef.current,
+        spotlightNodeIds: spotlightNodeIdsRef.current,
       };
 
       p.awareness.setLocalStateField('user', localState);
@@ -98,10 +123,10 @@ export function useAwareness({ provider, currentUser, selectedNodeIds }: UseAwar
     [broadcastLocalState]
   );
 
-  // 监听选中节点与当前身份变化，自动同步 Awareness
+  // 监听选中节点、聚光灯与当前身份变化，自动同步 Awareness
   useEffect(() => {
     broadcastLocalState(cursorRef.current, viewportRef.current);
-  }, [selectedNodeIds, currentUser, broadcastLocalState]);
+  }, [selectedNodeIds, currentUser, spotlightTargetId, spotlightNodeIds, broadcastLocalState]);
 
   // 监听远端 awareness 变更
   useEffect(() => {

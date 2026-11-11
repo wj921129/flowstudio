@@ -37,6 +37,7 @@ import {
 } from '../features/canvas/utils/alignment-snap';
 import type { YjsDiagramBridge } from '../features/collaboration/yjs-doc-bridge';
 import type { CollaborativeUndoManager } from '../features/collaboration/undo-manager';
+import { isNodeLocked } from '../features/canvas/utils/node-lock-manager';
 
 /**
  * 画布操作工具模式枚举
@@ -695,6 +696,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const nextNodes = nodes.map((n) => {
       if (updateMap.has(n.id)) {
         const patch = updateMap.get(n.id)!;
+        // 锚定锁守卫：完全锁定 (full) 的节点禁止批量修改内容与样式，除非是切换 lockMode 自身
+        if (isNodeLocked(n, 'content') && patch.lockMode === undefined) {
+          return n;
+        }
         return {
           ...n,
           data: {
@@ -860,8 +865,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const { nodes, edges, selectedNodeIds, historyPast } = get();
 
     const selectedSet = new Set(selectedNodeIds);
-    const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
-    if (targetNodes.length < 2) return null;
+    // 锚定锁守卫：过滤完全锁定 (full) 的节点，严禁修改其 parentId 与层级
+    const targetNodes = nodes.filter(
+      (n) => (selectedSet.has(n.id) || n.selected) && !isNodeLocked(n, 'hierarchy')
+    );
+    if (targetNodes.length < 2) {
+      if (nodes.some((n) => (selectedSet.has(n.id) || n.selected) && isNodeLocked(n, 'hierarchy'))) {
+        get().showToast('包含完全锁定节点，禁止重新分组');
+      }
+      return null;
+    }
 
     const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
     const getAbsolutePos = (node: FlowNode): { x: number; y: number } => {
@@ -958,9 +971,22 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         .map((n) => n.id);
     }
 
-    if (targetGroupIds.length === 0) return;
+    // 锚定锁守卫：若分组本身或其内部子节点包含 full-lock，禁止解散
+    const filteredGroupIds = targetGroupIds.filter((gid) => {
+      const gNode = nodes.find((n) => n.id === gid);
+      if (isNodeLocked(gNode, 'hierarchy')) return false;
+      const hasLockedChild = nodes.some((n) => n.parentId === gid && isNodeLocked(n, 'hierarchy'));
+      return !hasLockedChild;
+    });
 
-    const groupSet = new Set(targetGroupIds);
+    if (filteredGroupIds.length === 0) {
+      if (targetGroupIds.length > 0) {
+        get().showToast('该组合包含锁定节点，禁止解散');
+      }
+      return;
+    }
+
+    const groupSet = new Set(filteredGroupIds);
     const groupMap = new Map<string, FlowNode>();
     for (const n of nodes) {
       if (groupSet.has(n.id)) {
@@ -1054,7 +1080,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const targetIdSet = new Set(targetNodes.map((n) => n.id));
     const nextNodes = nodes.map((node) => {
-      if (!targetIdSet.has(node.id)) return node;
+      // 锚定锁守卫：位置锁定 (position) 或完全锁定 (full) 的节点 100% 保持不动
+      if (!targetIdSet.has(node.id) || isNodeLocked(node, 'position')) return node;
 
       const dim = getNodeDimensions(node);
       const nextPos = { ...node.position };
@@ -1109,7 +1136,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       const nextNodes = nodes.map((node) => {
-        if (posMap.has(node.id)) {
+        // 锚定锁守卫：位置锁定 (position) 或完全锁定 (full) 的节点保持不动
+        if (posMap.has(node.id) && !isNodeLocked(node, 'position')) {
           return {
             ...node,
             position: { ...node.position, x: posMap.get(node.id)! },
@@ -1133,7 +1161,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       const nextNodes = nodes.map((node) => {
-        if (posMap.has(node.id)) {
+        // 锚定锁守卫：位置锁定 (position) 或完全锁定 (full) 的节点保持不动
+        if (posMap.has(node.id) && !isNodeLocked(node, 'position')) {
           return {
             ...node,
             position: { ...node.position, y: posMap.get(node.id)! },
@@ -1183,6 +1212,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   resetDiagramState: () => {
+    centeredResizes.clear();
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
     set({
       nodes: [],
       edges: [],

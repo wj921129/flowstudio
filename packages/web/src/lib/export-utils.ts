@@ -4,6 +4,7 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
+import { flowNodeSchema, flowEdgeSchema } from '@flowstudio/shared';
 import { getNodeDimensions } from '../features/canvas/utils/group-calculator.js';
 import { getNodeWorldPosition } from '../features/canvas/utils/split-insert-manager.js';
 import { sanitizeNodes, sanitizeEdges } from './storage.js';
@@ -41,12 +42,57 @@ export function escapeXmlAttr(unsafe: unknown): string {
 }
 
 /**
+ * 调色板与主题内置 CSS 变量备用映射表
+ */
+const CSS_VAR_FALLBACK_MAP: Record<string, string> = {
+  '--fs-palette-1': '#3B82F6',
+  '--fs-palette-2': '#10B981',
+  '--fs-palette-3': '#F59E0B',
+  '--fs-palette-4': '#EF4444',
+  '--fs-palette-5': '#8B5CF6',
+  '--fs-palette-6': '#06B6D4',
+  '--fs-palette-7': '#64748B',
+  '--fs-palette-8': '#EC4899',
+  '--fs-border': '#CBD5E1',
+  '--fs-surface': '#FFFFFF',
+  '--fs-text': '#0F172A',
+  '--fs-text-muted': '#64748B',
+};
+
+/**
+ * 解析可能包含 var(--fs-*) 的 CSS 变量颜色，确保独立导出的 SVG/PNG 脱离宿主网页时不丢失颜色 (M5)
+ */
+export function resolveCssVarColor(color: unknown): string {
+  if (typeof color !== 'string') return '';
+  const trimmed = color.trim();
+  if (!trimmed.includes('var(')) return trimmed;
+
+  const match = /var\(\s*(--[a-zA-Z0-9_-]+)/.exec(trimmed);
+  if (match && match[1]) {
+    const varName = match[1];
+    if (typeof document !== 'undefined' && document.documentElement) {
+      try {
+        const computed = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        if (computed) return computed;
+      } catch {
+        // fallback to map
+      }
+    }
+    if (CSS_VAR_FALLBACK_MAP[varName]) {
+      return CSS_VAR_FALLBACK_MAP[varName];
+    }
+  }
+  return trimmed;
+}
+
+/**
  * 校验并清理 SVG 颜色值，仅允许合法 hex / rgb / rgba / hsl / hsla 与安全 CSS 颜色关键字，
  * 严防注入引号、括号或恶意脚本属性
  */
 export function sanitizeSvgColor(color: unknown, fallback = '#000000'): string {
   if (typeof color !== 'string') return fallback;
-  const trimmed = color.trim();
+  const resolved = resolveCssVarColor(color);
+  const trimmed = resolved.trim();
   // 16 进制颜色 (#fff, #ffffff, #ffffffff)
   if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) {
     return trimmed;
@@ -407,10 +453,15 @@ export interface ParsedDiagramJson {
 }
 
 /**
- * 校验并解析外部导入的 JSON 备份工程文件
+ * 校验并解析外部导入的 JSON 备份工程文件 (M8 / F12 强化校验)
  */
 export function validateAndParseDiagramJson(rawJson: string): ParsedDiagramJson {
   try {
+    // 限制导入文件大小防内存 DoS (10MB)
+    if (rawJson.length > 10 * 1024 * 1024) {
+      return { success: false, error: '导入的工程文件过大（超过 10MB 上限）' };
+    }
+
     const data = JSON.parse(rawJson);
     if (!data || typeof data !== 'object') {
       return { success: false, error: 'JSON 文件根节点必须为对象' };
@@ -424,7 +475,7 @@ export function validateAndParseDiagramJson(rawJson: string): ParsedDiagramJson 
     const rawNodes = data.nodes as FlowNode[];
     const rawEdges = Array.isArray(data.edges) ? (data.edges as FlowEdge[]) : [];
 
-    // 校验每个节点包含基本字段 id, type, position
+    // 校验每个节点包含基本字段合法性与有限数字坐标
     for (const node of rawNodes) {
       if (!node.id || typeof node.id !== 'string' || !node.type || typeof node.type !== 'string' || !node.position) {
         return { success: false, error: `节点数据不完整：缺少合法 id, type 或 position` };
@@ -437,10 +488,45 @@ export function validateAndParseDiagramJson(rawJson: string): ParsedDiagramJson 
       ) {
         return { success: false, error: `节点 ${node.id} 坐标不是有效的数字` };
       }
+      if (!node.data || typeof node.data !== 'object') {
+        node.data = { label: String(node.id), type: node.type as any };
+      } else if (!node.data.type) {
+        node.data.type = node.type as any;
+      }
     }
 
-    const sanitizedNodes = sanitizeNodes(rawNodes);
-    const sanitizedEdges = sanitizeEdges(rawEdges);
+    // 复用 shared 导出的 Zod Schema 深度结构校验
+    const validNodes: FlowNode[] = [];
+    for (const rawNode of rawNodes) {
+      const nodeRes = flowNodeSchema.safeParse(rawNode);
+      if (!nodeRes.success) {
+        const issue = nodeRes.error.issues[0];
+        return {
+          success: false,
+          error: `节点数据结构校验失败: ${issue?.path.join('.') || 'root'} - ${issue?.message || '格式错误'}`,
+        };
+      }
+      validNodes.push(nodeRes.data as FlowNode);
+    }
+
+    const validEdges: FlowEdge[] = [];
+    for (const rawEdge of rawEdges) {
+      if (!rawEdge.id || !rawEdge.source || !rawEdge.target) {
+        return { success: false, error: `连线数据不完整：缺少 id, source 或 target` };
+      }
+      const edgeRes = flowEdgeSchema.safeParse(rawEdge);
+      if (!edgeRes.success) {
+        const issue = edgeRes.error.issues[0];
+        return {
+          success: false,
+          error: `连线数据结构校验失败: ${issue?.path.join('.') || 'root'} - ${issue?.message || '格式错误'}`,
+        };
+      }
+      validEdges.push(edgeRes.data as FlowEdge);
+    }
+
+    const sanitizedNodes = sanitizeNodes(validNodes);
+    const sanitizedEdges = sanitizeEdges(validEdges);
 
     return {
       success: true,

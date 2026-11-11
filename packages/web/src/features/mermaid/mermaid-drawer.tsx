@@ -4,7 +4,7 @@
  *              100% 保留画布上既有同名节点的手工坐标、配色与锁定状态
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   X,
   Copy,
@@ -36,16 +36,38 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
 
   // 编辑器内的 Mermaid 代码
   const [editorText, setEditorText] = useState(canonicalMermaid);
+  const [isDirty, setIsDirty] = useState(false);
+  const [hasCanvasUpdate, setHasCanvasUpdate] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [syncSummary, setSyncSummary] = useState<string | null>(null);
 
-  // 打开抽屉或画布大幅变动时，若用户未脏编辑则自动同频代码
+  const lastCanonicalRef = useRef(canonicalMermaid);
+
+  // 首次打开抽屉时初始化代码与状态
   useEffect(() => {
     if (isOpen) {
       setEditorText(canonicalMermaid);
+      setIsDirty(false);
+      setHasCanvasUpdate(false);
       setSyncSummary(null);
+      lastCanonicalRef.current = canonicalMermaid;
     }
-  }, [isOpen, canonicalMermaid]);
+  }, [isOpen]);
+
+  // 画布变动时的自动同频与脏检查守卫 (M2: 脏编辑状态不自动覆盖冲掉用户代码)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (canonicalMermaid !== lastCanonicalRef.current) {
+      lastCanonicalRef.current = canonicalMermaid;
+      if (!isDirty) {
+        setEditorText(canonicalMermaid);
+        setHasCanvasUpdate(false);
+      } else {
+        setHasCanvasUpdate(true);
+      }
+    }
+  }, [isOpen, canonicalMermaid, isDirty]);
 
   // 一键复制 Mermaid 代码
   const handleCopy = useCallback(async () => {
@@ -62,7 +84,10 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
   // 重新从画布全量导出重置编辑器
   const handleResetFromCanvas = useCallback(() => {
     setEditorText(canonicalMermaid);
+    setIsDirty(false);
+    setHasCanvasUpdate(false);
     setSyncSummary(null);
+    lastCanonicalRef.current = canonicalMermaid;
     showToast('已从当前画布重新同频导出 Mermaid 代码');
   }, [canonicalMermaid, showToast]);
 
@@ -80,6 +105,8 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
       if (diffResult.ops.length === 0) {
         setSyncSummary('画布结构与 Mermaid 代码完全一致，无需改动');
         showToast('画布已是最新状态，无差异变更');
+        setIsDirty(false);
+        setHasCanvasUpdate(false);
         return;
       }
 
@@ -88,6 +115,8 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
 
       const summaryText = `增量融合完成：新增 ${addedNodes} 节点、${addedEdges} 连线，保留 ${diffResult.preservedNodeIds.length} 个既有节点原位坐标与锁定状态`;
       setSyncSummary(summaryText);
+      setIsDirty(false);
+      setHasCanvasUpdate(false);
       showToast(`⚡ ${summaryText}`);
     } catch (err: any) {
       console.error('[MermaidDrawer] 增量同步失败:', err);
@@ -140,11 +169,31 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
         </button>
       </div>
 
+      {/* 画布更新脏提示条 (M2) */}
+      {hasCanvasUpdate && isDirty && (
+        <div className="px-4 py-1.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800/50 text-[11px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <HelpCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="truncate">画布已更新，当前编辑未被覆盖</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleResetFromCanvas}
+            className="px-2 py-0.5 rounded bg-amber-200/60 dark:bg-amber-900/60 hover:bg-amber-300/60 text-amber-900 dark:text-amber-200 text-[10px] font-semibold transition-colors cursor-pointer shrink-0"
+          >
+            重新同频
+          </button>
+        </div>
+      )}
+
       {/* 代码编辑核心区域 */}
       <div className="flex-1 p-3 flex flex-col min-h-0 bg-[var(--fs-canvas-bg,#f8fafc)] dark:bg-[var(--fs-canvas-bg,#0b0f19)]">
         <textarea
           value={editorText}
-          onChange={(e) => setEditorText(e.target.value)}
+          onChange={(e) => {
+            setEditorText(e.target.value);
+            setIsDirty(true);
+          }}
           spellCheck={false}
           className="w-full flex-1 p-3 font-mono text-xs leading-relaxed rounded-xl border border-fs-border bg-fs-surface text-fs-text focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none shadow-inner"
           placeholder="flowchart LR&#10;  A[开始] --> B[处理]&#10;  B --> C{是否通过}&#10;  C -->|是| D[(数据库)]"

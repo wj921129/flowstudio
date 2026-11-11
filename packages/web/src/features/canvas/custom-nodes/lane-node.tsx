@@ -10,6 +10,7 @@ import type { FlowNodeData } from '@flowstudio/shared';
 import { Trash2 } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { useFlowStore } from '../../../stores/flow-store';
+import { isNodeLocked } from '../utils/node-lock-manager';
 
 export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected, parentId } = props;
@@ -56,24 +57,40 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
     e.stopPropagation();
     const st = useFlowStore.getState();
 
+    const currentLane = st.nodes.find((n) => n.id === id);
+    if (isNodeLocked(currentLane, 'delete')) {
+      st.showToast('该泳道已被完全锁定，禁止删除');
+      return;
+    }
+
+    const children = st.nodes.filter((n) => n.parentId === id);
+    const hasLockedChild = children.some((n) => isNodeLocked(n, 'delete'));
+    if (hasLockedChild) {
+      st.showToast('该泳道内包含锁定的节点，禁止删除');
+      return;
+    }
+
     // 高危防误触二次确认护栏：当泳道内部包含子节点时提示确认
-    const childrenIds = st.nodes.filter((n) => n.parentId === id).map((n) => n.id);
-    if (childrenIds.length > 0) {
+    if (children.length > 0) {
       const ok = window.confirm(
-        `该泳道内包含 ${childrenIds.length} 个步骤节点，删除泳道将同时清除所有内部节点与连线，是否确定删除？`
+        `该泳道内包含 ${children.length} 个步骤节点，删除泳道将同时清除所有内部节点与连线，是否确定删除？`
       );
       if (!ok) return;
     }
 
-    const pool = parentId ? st.nodes.find((n) => n.id === parentId) : null;
-    if (pool) {
-      const remainingOrder = ((pool.data?.laneOrder as string[]) || []).filter((lid) => lid !== id);
-      st.updateNodeData(pool.id, { laneOrder: remainingOrder });
-    }
-
-    // 选中本节点并调用 deleteSelected：自动级联删除子节点与连线，并完整保留撤销历史栈（修复误调 setDiagram 导致清空本地 Undo 栈的 Bug）
+    // 选中本节点并调用 deleteSelected：自动级联删除子节点与连线，并完整保留撤销历史栈
     st.setSelectedNodes([id]);
     st.deleteSelected();
+
+    // 确认已删除后再更新父 Pool 的 laneOrder，避免锁跳过导致的顺序错位 (L4)
+    const afterNodes = useFlowStore.getState().nodes;
+    if (!afterNodes.some((n) => n.id === id)) {
+      const pool = parentId ? afterNodes.find((n) => n.id === parentId) : null;
+      if (pool) {
+        const remainingOrder = ((pool.data?.laneOrder as string[]) || []).filter((lid) => lid !== id);
+        st.updateNodeData(pool.id, { laneOrder: remainingOrder });
+      }
+    }
   };
 
   return (
