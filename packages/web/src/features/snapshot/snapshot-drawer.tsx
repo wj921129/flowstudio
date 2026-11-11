@@ -81,11 +81,13 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
 
       if (collab?.doc) {
         const deltaRes = await apiClient.restoreSnapshot(diagramId, snapshotId, { mode: 'delta' });
-        if (deltaRes.success && deltaRes.update) {
-          const binary = Uint8Array.from(atob(deltaRes.update), (c) => c.charCodeAt(0));
-          collab.undoManager?.stopCapturing?.();
-          Y.applyUpdate(collab.doc, binary, `snapshot-restore:${snapshotId}`);
-          collab.undoManager?.stopCapturing?.();
+        if (deltaRes.success) {
+          if (deltaRes.update) {
+            const binary = Uint8Array.from(atob(deltaRes.update), (c) => c.charCodeAt(0));
+            collab.undoManager?.stopCapturing?.();
+            Y.applyUpdate(collab.doc, binary, `snapshot-restore:${snapshotId}`);
+            collab.undoManager?.stopCapturing?.();
+          }
           onToast?.(`已成功恢复至「${label}」版本`);
           onClose();
           return;
