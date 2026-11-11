@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import { initDatabase } from './db/database.js';
 import { DiagramRepository } from './db/diagram-repository.js';
 import { createCollaborationServer } from './collaboration/hocuspocus.js';
+import { DocumentWriter } from './collaboration/document-writer.js';
 import { diagramRoutes } from './routes/diagrams.js';
 import { mcpPlugin } from './mcp/mcp-server.js';
 import { AiBatchManager } from './collaboration/ai-batch-manager.js';
@@ -21,6 +22,8 @@ export interface ServerContext {
   app: FastifyInstance;
   repo: DiagramRepository;
   hocuspocus: Hocuspocus;
+  writer: DocumentWriter;
+  aiBatchManager: AiBatchManager;
 }
 
 
@@ -31,7 +34,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   const db = initDatabase(options.dbPath);
   const repo = new DiagramRepository(db);
   const hocuspocus = createCollaborationServer(repo);
-  const aiBatchManager = new AiBatchManager(repo);
+  const writer = new DocumentWriter(repo, hocuspocus);
+  const aiBatchManager = new AiBatchManager(repo, writer);
 
   // 跨域支持
   await app.register(cors, {
@@ -47,6 +51,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     prefix: '/api/diagrams',
     repo,
     aiBatchManager,
+    writer,
   });
 
   // 注册 MCP 端点 (JSON-RPC 2.0 / Streamable HTTP)
@@ -54,6 +59,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     prefix: '/mcp',
     repo,
     batchManager: aiBatchManager,
+    writer,
   });
 
   // 辅助函数：将 Fastify WebSocket 连接转发至 Hocuspocus ClientConnection
@@ -130,5 +136,5 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     db.close();
   });
 
-  return { app, repo, hocuspocus };
+  return { app, repo, hocuspocus, writer, aiBatchManager };
 }

@@ -27,7 +27,7 @@ describe('AI Batch Management & Safe Rollback', () => {
     }
   });
 
-  it('records AI batches and performs clean rollback when untouched by human users', () => {
+  it('records AI batches and performs clean rollback when untouched by human users', async () => {
     const db = initDatabase(tmpDbPath);
     const repo = new DiagramRepository(db);
     const batchManager = new AiBatchManager(repo);
@@ -84,7 +84,7 @@ describe('AI Batch Management & Safe Rollback', () => {
     expect(batchManager.getBatches(diag.id).length).toBe(1);
 
     // 3. 执行撤回该批次
-    const revertRes = batchManager.revertBatch(diag.id, 'batch-001');
+    const revertRes = await batchManager.revertBatch(diag.id, 'batch-001');
     expect(revertRes.success).toBe(true);
     expect(revertRes.skippedCount).toBe(0);
 
@@ -107,7 +107,7 @@ describe('AI Batch Management & Safe Rollback', () => {
     db.close();
   });
 
-  it('safely skips reverting an AI node if a human user subsequently connected new edges to it', () => {
+  it('safely skips reverting an AI node if a human user subsequently connected new edges to it', async () => {
     const db = initDatabase(tmpDbPath);
     const repo = new DiagramRepository(db);
     const batchManager = new AiBatchManager(repo);
@@ -150,7 +150,7 @@ describe('AI Batch Management & Safe Rollback', () => {
     repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(docHuman));
 
     // 3. 执行撤回：由于同事手动连了线，node-ai-protected 应受到保护不被强制删除
-    const revertRes = batchManager.revertBatch(diag.id, 'batch-002');
+    const revertRes = await batchManager.revertBatch(diag.id, 'batch-002');
     expect(revertRes.success).toBe(true);
     expect(revertRes.skippedCount).toBe(1);
 

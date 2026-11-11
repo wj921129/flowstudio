@@ -7,6 +7,15 @@ import WebSocket from 'ws';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { buildServer } from '../src/server.js';
 
+async function waitUntil(predicate: () => boolean, timeout = 3000, interval = 25): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  return predicate();
+}
+
 describe('M4 Quality Gate: End-to-End Human-AI Co-Governance Verification', () => {
   let tmpDbPath: string;
 
@@ -145,7 +154,14 @@ describe('M4 Quality Gate: End-to-End Human-AI Co-Governance Verification', () =
     expect(applyOpsRes.statusCode).toBe(200);
     const applyOpsJson = JSON.parse(applyOpsRes.json().result.content[0].text);
     expect(applyOpsJson.success).toBe(true);
+    expect(applyOpsJson.live).toBe(true);
     const aiBatchId = applyOpsJson.batchId;
+
+    // 在线断言（AC1）：无需刷新、无需重连，人类客户端应实时收到 AI 增量变更
+    const liveAiNodeVisible = await waitUntil(() =>
+      humanDoc.getMap('nodes').has('step-ai-anti-fraud'),
+    );
+    expect(liveAiNodeVisible).toBe(true);
 
     // 7. 模拟用户对 AI 本次增量修改不满意，点击“撤回此次 AI 修改”
     const revertRes = await server.app.inject({
@@ -155,8 +171,14 @@ describe('M4 Quality Gate: End-to-End Human-AI Co-Governance Verification', () =
     expect(revertRes.statusCode).toBe(200);
     expect(revertRes.json().success).toBe(true);
 
+    // 在线断言（AC3）：撤回同样通过 Live Doc 实时广播到在线客户端
+    const liveAiNodeRemoved = await waitUntil(() =>
+      !humanDoc.getMap('nodes').has('step-ai-anti-fraud'),
+    );
+    expect(liveAiNodeRemoved).toBe(true);
+
     // 等待协同消息广播并同步至客户端
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 300));
 
     // 8. 终极断言：
     // - AI 增量添加的 step-ai-anti-fraud 已被完全移除

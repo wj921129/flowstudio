@@ -136,6 +136,14 @@ export interface EdgeStyleData {
 }
 
 /**
+ * 节点锚定锁模式
+ * - 'none': 未锁定（默认可自由编辑）
+ * - 'position': 坐标锁定，允许改文案/样式，禁止移动与自动排版
+ * - 'full': 完全锁定，禁止移动、修改与删除（AI 修改需跳过并告警）
+ */
+export type NodeLockMode = 'none' | 'position' | 'full';
+
+/**
  * 流程图节点携带的数据负载 (FlowNode.data)
  */
 export interface FlowNodeData {
@@ -143,6 +151,8 @@ export interface FlowNodeData {
   label: string;
   /** 节点类型 */
   type: FlowNodeType;
+  /** 节点锚定锁模式（默认 'none'） */
+  lockMode?: NodeLockMode;
   /** 所属父容器或 Group ID */
   parentId?: string;
   /** 组合形态：true 为显式容器框(带标题和底色)，false/undefined 为纯逻辑组合 */
@@ -339,6 +349,113 @@ export interface AwarenessUserState {
   cursor: { x: number; y: number } | null;
   /** 当前选中的节点 ID 集合 */
   selectedNodeIds: string[];
+  /** 当前画布视口偏移与缩放（用于局域网评审跟随带看） */
+  viewport?: { x: number; y: number; zoom: number };
+  /** 当前聚光灯高亮的因果链路节点 ID 集合 */
+  spotlightNodeIds?: string[];
+  /** 是否为 AI 协作者身份 */
+  isAi?: boolean;
+  /** AI 协作者名称（如 Agent / 模型名） */
+  agentName?: string;
+}
+
+/**
+ * AI 批次实体类型
+ */
+export type AiBatchEntityType = 'node' | 'edge';
+
+/**
+ * AI 批次实体操作类型
+ */
+export type AiBatchOpType = 'add' | 'update' | 'delete';
+
+/**
+ * AI 批次实体级 Diff 明细
+ */
+export interface AiBatchEntityDiff {
+  /** 实体唯一 ID（节点或连线） */
+  entityId: string;
+  /** 实体类型 */
+  entityType: AiBatchEntityType;
+  /** 操作类型 */
+  opType: AiBatchOpType;
+  /** 操作前完整状态快照（add 为 null） */
+  beforeState: Record<string, unknown> | null;
+  /** 操作后完整状态快照（delete 为 null） */
+  afterState: Record<string, unknown> | null;
+  /** 该项是否已被撤回/采纳 */
+  reverted?: boolean;
+}
+
+/**
+ * AI 批次状态
+ */
+export type AiBatchStatus = 'active' | 'partially_reverted' | 'reverted';
+
+/**
+ * 持久化 AI 批次账本记录
+ */
+export interface AiBatchRecord {
+  /** 批次唯一标识 */
+  batchId: string;
+  /** 所属图表 ID */
+  diagramId: string;
+  /** AI 协作者名称 */
+  agentName?: string;
+  /** 批次变更摘要 */
+  summary: string;
+  /** 批次当前状态 */
+  status: AiBatchStatus;
+  /** 实体级 Diff 明细 */
+  diffs: AiBatchEntityDiff[];
+  /** 创建时间 (ISO 8601 字符串) */
+  createdAt: string;
+}
+
+/**
+ * 撤回时被安全跳过的明细（人类已二次修改或已锁定）
+ */
+export interface AiBatchSkippedDetail {
+  /** 实体 ID */
+  entityId: string;
+  /** 实体类型 */
+  entityType: AiBatchEntityType;
+  /** 被跳过的具体字段（如 label / position / style） */
+  field?: string;
+  /** 跳过原因 */
+  reason: string;
+}
+
+/**
+ * 单点/多点精细化撤回（Cherry-Pick）请求契约
+ */
+export interface RevertBatchItemsRequest {
+  /** 需要撤回的实体 ID 列表 */
+  entityIds: string[];
+}
+
+/**
+ * AI 批次撤回结果契约
+ */
+export interface AiBatchRevertResult {
+  /** 是否执行成功 */
+  success: boolean;
+  /** 是否有实际改动 */
+  reverted: boolean;
+  /** 批次 ID */
+  batchId: string;
+  /** 图表 ID */
+  diagramId: string;
+  /** 已成功撤回的实体 ID 列表 */
+  revertedEntityIds: string[];
+  /** 被安全跳过的明细 */
+  skipped: AiBatchSkippedDetail[];
+  /** 跳过数量 */
+  skippedCount: number;
+  /** 批次撤回后的最新状态 */
+  status: AiBatchStatus;
+  /** 面向用户的提示文案 */
+  message: string;
 }
 
 /**

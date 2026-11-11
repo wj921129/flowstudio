@@ -1,6 +1,12 @@
 import type Database from 'better-sqlite3';
 import * as Y from 'yjs';
-import type { DiagramSummary, SnapshotSummary } from '@flowstudio/shared';
+import type {
+  AiBatchEntityDiff,
+  AiBatchRecord,
+  AiBatchStatus,
+  DiagramSummary,
+  SnapshotSummary,
+} from '@flowstudio/shared';
 
 interface SnapshotRow {
   id: string;
@@ -19,6 +25,16 @@ interface DiagramRow {
   ydoc_state: Buffer | null;
   created_at: string;
   updated_at: string;
+}
+
+interface AiBatchRow {
+  batch_id: string;
+  diagram_id: string;
+  agent_name: string | null;
+  summary: string;
+  status: string;
+  diffs: string;
+  created_at: string;
 }
 
 export class DiagramRepository {
@@ -128,8 +144,8 @@ export class DiagramRepository {
         const doc = new Y.Doc();
         Y.applyUpdate(doc, rawState);
         doc.getMap('meta').set('title', title);
-        const nextUpdate = Buffer.from(Y.encodeStateAsUpdate(doc));
-        this.db.prepare(`UPDATE diagrams SET ydoc_state = ? WHERE id = ?`).run(nextUpdate, id);
+        // 走增量合并落库，避免在线协同期间被整包覆盖
+        this.saveYDocState(id, Y.encodeStateAsUpdate(doc));
       }
     }
 
@@ -206,31 +222,40 @@ export class DiagramRepository {
   }
 
   /**
-   * 保存 Y.Doc 二进制状态更新（支持 ON CONFLICT 插入保底）
+   * 保存 Y.Doc 二进制状态更新（CRDT 增量合并写回）
+   *
+   * 防覆盖关键点：若库中已有状态，必须通过 `Y.mergeUpdates` 合并后再落库，
+   * 严禁整包 `SET ydoc_state = excluded.ydoc_state`，否则在线同事未落库的改动会被静默冲掉。
+   * 同时若图表已被删除（行不存在），直接丢弃这次残余防抖写入，杜绝“删图复活”。
    */
   saveYDocState(id: string, update: Uint8Array, titleFromMeta?: string): void {
-    const now = new Date().toISOString();
-    const buf = Buffer.from(update);
+    const existing = this.db
+      .prepare<[string], { ydoc_state: Buffer | null }>(`SELECT ydoc_state FROM diagrams WHERE id = ?`)
+      .get(id);
 
-    if (titleFromMeta && titleFromMeta.trim().length > 0) {
-      const stmt = this.db.prepare(`
-        INSERT INTO diagrams (id, title, description, thumbnail, ydoc_state, created_at, updated_at)
-        VALUES (?, ?, '', '', ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          ydoc_state = excluded.ydoc_state,
-          title = excluded.title,
-          updated_at = excluded.updated_at
-      `);
-      stmt.run(id, titleFromMeta.trim(), buf, now, now);
+    if (!existing) {
+      // 图表已删除：忽略尚未落库的防抖残余更新
+      return;
+    }
+
+    const merged =
+      existing.ydoc_state && existing.ydoc_state.byteLength > 0
+        ? Y.mergeUpdates([new Uint8Array(existing.ydoc_state), update])
+        : update;
+
+    const now = new Date().toISOString();
+    const cleanTitle = titleFromMeta?.trim();
+
+    if (cleanTitle && cleanTitle.length > 0) {
+      this.db
+        .prepare(
+          `UPDATE diagrams SET ydoc_state = ?, title = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(Buffer.from(merged), cleanTitle, now, id);
     } else {
-      const stmt = this.db.prepare(`
-        INSERT INTO diagrams (id, title, description, thumbnail, ydoc_state, created_at, updated_at)
-        VALUES (?, '未命名流程图', '', '', ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          ydoc_state = excluded.ydoc_state,
-          updated_at = excluded.updated_at
-      `);
-      stmt.run(id, buf, now, now);
+      this.db
+        .prepare(`UPDATE diagrams SET ydoc_state = ?, updated_at = ? WHERE id = ?`)
+        .run(Buffer.from(merged), now, id);
     }
   }
 
@@ -307,98 +332,82 @@ export class DiagramRepository {
   }
 
   /**
-   * 将指定快照无损差异恢复写回当前文档
-   * 计算目标快照与当前版本的差异，作为一次普通 Yjs 修改写回，实现在线协作者实时平滑同步且可撤销
+   * 写入一条 AI 批次账本记录（已存在则覆盖）
    */
-  restoreSnapshot(diagramId: string, snapshotId: string): { success: boolean; error?: string } {
-    const targetState = this.getSnapshotState(snapshotId);
-    if (!targetState) {
-      return { success: false, error: '目标快照不存在' };
-    }
-
-    const currentState = this.getYDocState(diagramId);
-    if (!currentState) {
-      return { success: false, error: '目标图表不存在' };
-    }
-
-    // 载入快照文档与当前文档
-    const snapDoc = new Y.Doc();
-    Y.applyUpdate(snapDoc, targetState);
-
-    const currDoc = new Y.Doc();
-    Y.applyUpdate(currDoc, currentState);
-
-    const snapNodesMap = snapDoc.getMap<Y.Map<unknown>>('nodes');
-    const snapEdgesMap = snapDoc.getMap<Y.Map<unknown>>('edges');
-    const snapMetaMap = snapDoc.getMap<unknown>('meta');
-
-    const currNodesMap = currDoc.getMap<Y.Map<unknown>>('nodes');
-    const currEdgesMap = currDoc.getMap<Y.Map<unknown>>('edges');
-    const currMetaMap = currDoc.getMap<unknown>('meta');
-
-    // 在普通事务中应用差异写回
-    currDoc.transact(() => {
-      // 1. 同步 Meta
-      const snapTitle = snapMetaMap.get('title');
-      if (typeof snapTitle === 'string') {
-        currMetaMap.set('title', snapTitle);
-      }
-
-      // 2. 覆盖与添加快照中的节点
-      const targetNodeIds = new Set<string>();
-      snapNodesMap.forEach((nodeMap, id) => {
-        targetNodeIds.add(id);
-        let currNodeMap = currNodesMap.get(id);
-        if (!currNodeMap) {
-          currNodeMap = new Y.Map<unknown>();
-          currNodesMap.set(id, currNodeMap);
-        }
-        nodeMap.forEach((val, key) => {
-          currNodeMap!.set(key, val);
-        });
-      });
-
-      // 删除当前文档中多出的不存在于快照的节点
-      const currNodeIds = Array.from(currNodesMap.keys());
-      for (const id of currNodeIds) {
-        if (!targetNodeIds.has(id)) {
-          currNodesMap.delete(id);
-        }
-      }
-
-      // 3. 覆盖与添加快照中的连线
-      const targetEdgeIds = new Set<string>();
-      snapEdgesMap.forEach((edgeMap, id) => {
-        targetEdgeIds.add(id);
-        let currEdgeMap = currEdgesMap.get(id);
-        if (!currEdgeMap) {
-          currEdgeMap = new Y.Map<unknown>();
-          currEdgesMap.set(id, currEdgeMap);
-        }
-        edgeMap.forEach((val, key) => {
-          currEdgeMap!.set(key, val);
-        });
-      });
-
-      // 删除多余连线
-      const currEdgeIds = Array.from(currEdgesMap.keys());
-      for (const id of currEdgeIds) {
-        if (!targetEdgeIds.has(id)) {
-          currEdgesMap.delete(id);
-        }
-      }
-    }, 'snapshot-restore');
-
-    // 持久化更新
-    const nextUpdate = Y.encodeStateAsUpdate(currDoc);
-    const snapTitle = snapMetaMap.get('title');
-    this.saveYDocState(
-      diagramId,
-      nextUpdate,
-      typeof snapTitle === 'string' ? snapTitle : undefined
+  insertAiBatch(record: AiBatchRecord): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO ai_batches (batch_id, diagram_id, agent_name, summary, status, diffs, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(batch_id) DO UPDATE SET
+        agent_name = excluded.agent_name,
+        summary = excluded.summary,
+        status = excluded.status,
+        diffs = excluded.diffs
+    `);
+    stmt.run(
+      record.batchId,
+      record.diagramId,
+      record.agentName ?? null,
+      record.summary,
+      record.status,
+      JSON.stringify(record.diffs),
+      record.createdAt,
     );
+  }
 
-    return { success: true };
+  /**
+   * 查询指定图表最近的 AI 批次（含实体级 Diff 明细）
+   */
+  listAiBatches(diagramId: string, limit = 20): AiBatchRecord[] {
+    const stmt = this.db.prepare<[string, number], AiBatchRow>(`
+      SELECT batch_id, diagram_id, agent_name, summary, status, diffs, created_at
+      FROM ai_batches
+      WHERE diagram_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(diagramId, limit).map((row) => this.mapAiBatchRow(row));
+  }
+
+  /**
+   * 查询指定图表的单个 AI 批次
+   */
+  getAiBatch(diagramId: string, batchId: string): AiBatchRecord | null {
+    const stmt = this.db.prepare<[string, string], AiBatchRow>(`
+      SELECT batch_id, diagram_id, agent_name, summary, status, diffs, created_at
+      FROM ai_batches
+      WHERE diagram_id = ? AND batch_id = ?
+    `);
+    const row = stmt.get(diagramId, batchId);
+    return row ? this.mapAiBatchRow(row) : null;
+  }
+
+  /**
+   * 更新批次状态与 Diff 明细（撤回后回写账本）
+   */
+  updateAiBatch(batchId: string, status: AiBatchStatus, diffs: AiBatchEntityDiff[]): void {
+    this.db
+      .prepare(`UPDATE ai_batches SET status = ?, diffs = ? WHERE batch_id = ?`)
+      .run(status, JSON.stringify(diffs), batchId);
+  }
+
+  private mapAiBatchRow(row: AiBatchRow): AiBatchRecord {
+    let diffs: AiBatchEntityDiff[] = [];
+    try {
+      const parsed = JSON.parse(row.diffs);
+      if (Array.isArray(parsed)) diffs = parsed as AiBatchEntityDiff[];
+    } catch {
+      diffs = [];
+    }
+    return {
+      batchId: row.batch_id,
+      diagramId: row.diagram_id,
+      agentName: row.agent_name ?? undefined,
+      summary: row.summary,
+      status: (row.status as AiBatchStatus) ?? 'active',
+      diffs,
+      createdAt: row.created_at,
+    };
   }
 
   private mapRowToSummary(row: DiagramRow): DiagramSummary {

@@ -16,7 +16,9 @@ describe('SqlitePersistenceExtension', () => {
 
   it('loads existing Y.Doc state from SQLite and stores updates back', async () => {
     const diagram = repo.createDiagram({ title: '初始标题' });
+    // 模拟真实协同客户端：先应用既有状态，再在同一文档上增量编辑
     const seedDoc = new Y.Doc();
+    Y.applyUpdate(seedDoc, repo.getYDocState(diagram.id)!);
     seedDoc.getMap('meta').set('title', '协同修改后标题');
     seedDoc.getMap('nodes').set('n1', new Y.Map([['id', 'n1']]));
 

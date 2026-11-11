@@ -8,4 +8,5 @@ export * from './types.js';
 export * from './node-registry.js';
 export * from './constants.js';
 export * from './schemas/index.js';
+export * from './mermaid-bridge.js';
 

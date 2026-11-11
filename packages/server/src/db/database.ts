@@ -41,6 +41,19 @@ export function initDatabase(dbPath: string = 'data/flowstudio.sqlite'): Databas
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshots_diagram_id ON snapshots(diagram_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ai_batches (
+      batch_id TEXT PRIMARY KEY,
+      diagram_id TEXT NOT NULL,
+      agent_name TEXT,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      diffs TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(diagram_id) REFERENCES diagrams(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_batches_diagram_id ON ai_batches(diagram_id, created_at DESC);
   `);
 
   return db;

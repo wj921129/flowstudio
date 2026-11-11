@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as Y from 'yjs';
 import { initDatabase } from '../src/db/database.js';
 import { DiagramRepository } from '../src/db/diagram-repository.js';
+import { DocumentWriter } from '../src/collaboration/document-writer.js';
 import { buildServer } from '../src/server.js';
 
 describe('Server Snapshots & Lossless Delta Rollback', () => {
@@ -26,9 +27,10 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
     }
   });
 
-  it('creates snapshots, lists them chronologically, and restores with lossless delta rollback', () => {
+  it('creates snapshots, lists them chronologically, and restores with lossless delta rollback', async () => {
     const db = initDatabase(tmpDbPath);
     const repo = new DiagramRepository(db);
+    const writer = new DocumentWriter(repo);
 
     const diag = repo.createDiagram({ title: '版本测试图' });
 
@@ -75,7 +77,7 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
     expect(list[1].id).toBe(snap1!.id);
 
     // 6. 执行恢复到快照 1
-    const restoreRes = repo.restoreSnapshot(diag.id, snap1!.id);
+    const restoreRes = await writer.restoreSnapshot(diag.id, snap1!.id);
     expect(restoreRes.success).toBe(true);
 
     // 7. 读取恢复后的文档状态进行断言

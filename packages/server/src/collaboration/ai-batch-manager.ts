@@ -1,138 +1,389 @@
 /**
- * @fileoverview AI 批次修改内存账本与安全撤回管理器
- * @description 记录服务端生命周期内所有 AI MCP 批次，提供可逆撤回算法，保护同事的手工后续改动
+ * @fileoverview AI 批次持久化账本与字段级防冲突撤回管理器
+ * @description 记录每次 AI 调用的实体级 Diff 明细并落库 SQLite；
+ *              撤回时逐字段比对，仅当当前值仍等于 AI 写入后的值才还原，
+ *              人类已二次修改的字段安全跳过并记入 skipped 明细。
  */
 
 import * as Y from 'yjs';
+import type {
+  AiBatchEntityDiff,
+  AiBatchRecord,
+  AiBatchRevertResult,
+  AiBatchSkippedDetail,
+  AiBatchStatus,
+} from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import { DocumentWriter } from './document-writer.js';
+import {
+  applyMapState,
+  mapMatchesState,
+  revertMapFields,
+  snapshotMap,
+} from './entity-state.js';
 
-export interface AiBatchRecord {
+export interface LegacyBatchInput {
   batchId: string;
   diagramId: string;
   summary: string;
-  createdNodeIds: string[];
-  createdEdgeIds: string[];
-  updatedNodeBackups: Array<{ id: string; oldData: Record<string, unknown> }>;
   createdAt: string;
+  agentName?: string;
+  status?: AiBatchStatus;
+  diffs?: AiBatchEntityDiff[];
+  createdNodeIds?: string[];
+  createdEdgeIds?: string[];
+  updatedNodeBackups?: Array<{ id: string; oldData: Record<string, unknown> }>;
 }
 
 export class AiBatchManager {
-  // 内存批次账本: diagramId -> AiBatchRecord[]
-  private batchesMap = new Map<string, AiBatchRecord[]>();
+  private writer: DocumentWriter;
 
-  constructor(private repo: DiagramRepository) {}
-
-  /**
-   * 记录一次新的 AI 批次
-   */
-  recordBatch(batch: AiBatchRecord): void {
-    const list = this.batchesMap.get(batch.diagramId) || [];
-    list.unshift(batch); // 最新的排在前面
-    // 保留最近 20 批
-    if (list.length > 20) {
-      list.length = 20;
-    }
-    this.batchesMap.set(batch.diagramId, list);
+  constructor(
+    private repo: DiagramRepository,
+    writer?: DocumentWriter,
+  ) {
+    this.writer = writer ?? new DocumentWriter(repo);
   }
 
   /**
-   * 查询指定图表最近的有效 AI 批次列表
+   * 记录一次新的 AI 批次（支持新 diffs 契约与旧版字段入参）
+   */
+  recordBatch(input: LegacyBatchInput): void {
+    const record = this.normalizeBatch(input);
+    this.repo.insertAiBatch(record);
+  }
+
+  /**
+   * 查询指定图表最近的有效 AI 批次列表（含 diffs 明细）
    */
   getBatches(diagramId: string): AiBatchRecord[] {
-    return this.batchesMap.get(diagramId) || [];
+    return this.repo.listAiBatches(diagramId);
   }
 
   /**
-   * 撤回指定的 AI 批次
-   * 算法：
-   * 1. 检查 batch 中的创建项与更新项；
-   * 2. 若创建的节点之后被同事连了新线或修改了数据，跳过该项并计数；
-   * 3. 否则删除创建的节点和连线，还原更新前的值；
-   * 4. 事务写回 Y.Doc。
+   * 撤回指定的 AI 批次（全部未撤回项）
    */
-  revertBatch(diagramId: string, batchId: string): {
-    success: boolean;
-    reverted: boolean;
-    skippedCount: number;
-    message: string;
-  } {
-    const list = this.batchesMap.get(diagramId) || [];
-    const batchIndex = list.findIndex((b) => b.batchId === batchId);
-    if (batchIndex === -1) {
-      return {
-        success: false,
-        reverted: false,
-        skippedCount: 0,
-        message: '未找到指定 AI 批次（可能服务已重启或已被撤回）',
-      };
+  async revertBatch(diagramId: string, batchId: string): Promise<AiBatchRevertResult> {
+    const batch = this.repo.getAiBatch(diagramId, batchId);
+    if (!batch) {
+      return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
     }
 
-    const batch = list[batchIndex];
-    const rawState = this.repo.getYDocState(diagramId);
-    if (!rawState) {
-      return { success: false, reverted: false, skippedCount: 0, message: '图表不存在' };
+    const targets = batch.diffs.filter((diff) => !diff.reverted);
+    if (targets.length === 0) {
+      return this.failure(diagramId, batchId, '该批次所有变更均已撤回');
     }
 
-    const doc = new Y.Doc();
-    Y.applyUpdate(doc, rawState);
+    return this.performRevert(batch, targets);
+  }
 
-    const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
-    const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+  /**
+   * 单点/多点精细化撤回（Cherry-Pick）：仅回滚指定实体
+   */
+  async revertItems(
+    diagramId: string,
+    batchId: string,
+    entityIds: string[],
+  ): Promise<AiBatchRevertResult> {
+    const batch = this.repo.getAiBatch(diagramId, batchId);
+    if (!batch) {
+      return this.failure(diagramId, batchId, '未找到指定 AI 批次（可能已被撤回或账本不存在）');
+    }
 
-    let skippedCount = 0;
+    const targetSet = new Set(entityIds);
+    const targets = batch.diffs.filter(
+      (diff) => targetSet.has(diff.entityId) && !diff.reverted,
+    );
 
-    doc.transact(() => {
-      // 1. 还原被修改的节点属性
-      for (const backup of batch.updatedNodeBackups) {
-        const nm = nodesMap.get(backup.id);
-        if (nm) {
-          nm.set('data', backup.oldData);
-        }
-      }
+    if (targets.length === 0) {
+      return this.failure(diagramId, batchId, '指定实体不在该批次中或已撤回');
+    }
 
-      // 2. 检查由该批次创建的节点：若之后被别人连了新线，则保护并跳过
-      const batchCreatedEdgeSet = new Set(batch.createdEdgeIds);
-      for (const nodeId of batch.createdNodeIds) {
-        // 查找与该节点相连的所有线
-        let connectedToOtherEdge = false;
-        edgesMap.forEach((em) => {
-          const s = em.get('source');
-          const t = em.get('target');
-          const edgeId = em.get('id') as string;
-          if ((s === nodeId || t === nodeId) && !batchCreatedEdgeSet.has(edgeId)) {
-            connectedToOtherEdge = true;
+    return this.performRevert(batch, targets);
+  }
+
+  private async performRevert(
+    batch: AiBatchRecord,
+    targets: AiBatchEntityDiff[],
+  ): Promise<AiBatchRevertResult> {
+    const diagramId = batch.diagramId;
+    const batchId = batch.batchId;
+    const skipped: AiBatchSkippedDetail[] = [];
+    const revertedEntityIds = new Set<string>();
+    const processedDiffs = new Set<AiBatchEntityDiff>();
+    const batchAddedEdgeIds = new Set(
+      batch.diffs
+        .filter((diff) => diff.entityType === 'edge' && diff.opType === 'add')
+        .map((diff) => diff.entityId),
+    );
+    const batchAddedEdgeDiffs = new Map(
+      batch.diffs
+        .filter((diff) => diff.entityType === 'edge' && diff.opType === 'add')
+        .map((diff) => [diff.entityId, diff]),
+    );
+
+    await this.writer.mutate(diagramId, `ai-revert:${batchId}`, (doc) => {
+      const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
+      const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+
+      // 逆序回放：同一实体多次修改时，先撤销最后一次
+      for (const diff of [...targets].reverse()) {
+        const map = diff.entityType === 'node' ? nodesMap : edgesMap;
+        const current = map.get(diff.entityId);
+
+        if (diff.opType === 'add') {
+          if (!current) {
+            revertedEntityIds.add(diff.entityId);
+            processedDiffs.add(diff);
+            continue;
           }
-        });
 
-        if (connectedToOtherEdge) {
-          skippedCount++;
-        } else {
-          nodesMap.delete(nodeId);
+          if (diff.afterState && !mapMatchesState(current, diff.afterState)) {
+            skipped.push({
+              entityId: diff.entityId,
+              entityType: diff.entityType,
+              reason: '实体已被人工修改，安全跳过',
+            });
+            continue;
+          }
+
+          if (diff.entityType === 'node') {
+            const humanAttached = hasHumanAttachedEdge(edgesMap, diff.entityId, batchAddedEdgeIds);
+            if (humanAttached) {
+              skipped.push({
+                entityId: diff.entityId,
+                entityType: 'node',
+                reason: '该节点已被人工新增连线，安全跳过删除',
+              });
+              continue;
+            }
+          }
+
+          map.delete(diff.entityId);
+          revertedEntityIds.add(diff.entityId);
+          processedDiffs.add(diff);
+
+          // 级联清理同批次创建的悬挂连线，避免留下指向空节点的脏边
+          if (diff.entityType === 'node') {
+            for (const [edgeId, edgeDiff] of batchAddedEdgeDiffs) {
+              if (processedDiffs.has(edgeDiff)) continue;
+              const after = edgeDiff.afterState;
+              if (!after) continue;
+              if (after.source !== diff.entityId && after.target !== diff.entityId) continue;
+
+              const edgeMap = edgesMap.get(edgeId);
+              if (!edgeMap) {
+                processedDiffs.add(edgeDiff);
+                revertedEntityIds.add(edgeId);
+                continue;
+              }
+
+              if (!mapMatchesState(edgeMap, after)) {
+                // 连线已被人工二次修改，保留人工成果
+                continue;
+              }
+
+              edgesMap.delete(edgeId);
+              processedDiffs.add(edgeDiff);
+              revertedEntityIds.add(edgeId);
+            }
+          }
+          continue;
+        }
+
+        if (diff.opType === 'update') {
+          if (!current) {
+            skipped.push({
+              entityId: diff.entityId,
+              entityType: diff.entityType,
+              reason: '实体已不存在，无法还原',
+            });
+            continue;
+          }
+
+          const outcome = revertMapFields(current, diff.beforeState, diff.afterState);
+          for (const field of outcome.skippedFields) {
+            skipped.push({
+              entityId: diff.entityId,
+              entityType: diff.entityType,
+              field,
+              reason: `字段 ${field} 已被人工修改，安全跳过`,
+            });
+          }
+          revertedEntityIds.add(diff.entityId);
+          processedDiffs.add(diff);
+          continue;
+        }
+
+        // opType === 'delete'：完整恢复被 AI 删除的实体
+        if (current) {
+          skipped.push({
+            entityId: diff.entityId,
+            entityType: diff.entityType,
+            reason: '实体已被人工重建或仍存在，安全跳过',
+          });
+          continue;
+        }
+
+        if (diff.beforeState) {
+          const restored = new Y.Map<unknown>();
+          applyMapState(restored, diff.beforeState);
+          map.set(diff.entityId, restored);
+          revertedEntityIds.add(diff.entityId);
+          processedDiffs.add(diff);
         }
       }
+    });
 
-      // 3. 删除该批次创建的连线
-      for (const edgeId of batch.createdEdgeIds) {
-        edgesMap.delete(edgeId);
+    const nextDiffs = batch.diffs.map((diff) => {
+      if (processedDiffs.has(diff)) return { ...diff, reverted: true };
+      if (revertedEntityIds.has(diff.entityId) && !diff.reverted) {
+        return { ...diff, reverted: true };
       }
-    }, 'revert-ai-batch');
+      return diff;
+    });
 
-    // 写入 SQLite
-    this.repo.saveYDocState(diagramId, Y.encodeStateAsUpdate(doc));
+    const allReverted = nextDiffs.every((diff) => diff.reverted);
+    // 存在被跳过的字段/实体时，批次只能算部分撤回，绝不能谎报为完全撤回
+    const status: AiBatchStatus =
+      skipped.length > 0 || !allReverted ? 'partially_reverted' : 'reverted';
 
-    // 从列表中移除该已撤回批次
-    list.splice(batchIndex, 1);
-    this.batchesMap.set(diagramId, list);
+    this.repo.updateAiBatch(batchId, status, nextDiffs);
 
-    const message = skippedCount > 0
-      ? `已撤回该批次（其中 ${skippedCount} 项已被同事修改或连线，未强制删除）`
-      : '已成功撤回该次 AI 修改';
+    const revertedIds = Array.from(revertedEntityIds);
+    const message = skipped.length > 0
+      ? `已撤回 ${revertedIds.length} 项，跳过 ${skipped.length} 项人工修改`
+      : `已成功撤回 ${revertedIds.length} 项 AI 修改`;
 
     return {
       success: true,
-      reverted: true,
-      skippedCount,
+      reverted: revertedIds.length > 0,
+      batchId,
+      diagramId,
+      revertedEntityIds: revertedIds,
+      skipped,
+      skippedCount: skipped.length,
+      status,
       message,
     };
   }
+
+  private normalizeBatch(input: LegacyBatchInput): {
+    batchId: string;
+    diagramId: string;
+    agentName?: string;
+    summary: string;
+    status: AiBatchStatus;
+    diffs: AiBatchEntityDiff[];
+    createdAt: string;
+  } {
+    if (Array.isArray(input.diffs)) {
+      return {
+        batchId: input.batchId,
+        diagramId: input.diagramId,
+        agentName: input.agentName,
+        summary: input.summary,
+        status: input.status ?? 'active',
+        diffs: input.diffs.map((diff) => ({
+          entityId: diff.entityId,
+          entityType: diff.entityType,
+          opType: diff.opType,
+          beforeState: diff.beforeState ?? null,
+          afterState: diff.afterState ?? null,
+          reverted: diff.reverted ?? false,
+        })),
+        createdAt: input.createdAt,
+      };
+    }
+
+    // 旧版入参兼容：从当前冷文档补全实体级快照
+    const diffs: AiBatchEntityDiff[] = [];
+    const state = this.repo.getYDocState(input.diagramId);
+    const doc = state ? (() => {
+      const d = new Y.Doc();
+      Y.applyUpdate(d, state);
+      return d;
+    })() : null;
+    const nodesMap = doc?.getMap<Y.Map<unknown>>('nodes');
+    const edgesMap = doc?.getMap<Y.Map<unknown>>('edges');
+
+    for (const nodeId of input.createdNodeIds ?? []) {
+      const node = nodesMap?.get(nodeId);
+      diffs.push({
+        entityId: nodeId,
+        entityType: 'node',
+        opType: 'add',
+        beforeState: null,
+        afterState: node ? snapshotMap(node) : null,
+      });
+    }
+
+    for (const edgeId of input.createdEdgeIds ?? []) {
+      const edge = edgesMap?.get(edgeId);
+      diffs.push({
+        entityId: edgeId,
+        entityType: 'edge',
+        opType: 'add',
+        beforeState: null,
+        afterState: edge ? snapshotMap(edge) : null,
+      });
+    }
+
+    for (const backup of input.updatedNodeBackups ?? []) {
+      const node = nodesMap?.get(backup.id);
+      const currentState = node ? snapshotMap(node) : null;
+      diffs.push({
+        entityId: backup.id,
+        entityType: 'node',
+        opType: 'update',
+        beforeState: currentState
+          ? { ...currentState, data: backup.oldData }
+          : { data: backup.oldData },
+        afterState: currentState,
+      });
+    }
+
+    if (doc) doc.destroy();
+
+    return {
+      batchId: input.batchId,
+      diagramId: input.diagramId,
+      agentName: input.agentName,
+      summary: input.summary,
+      status: input.status ?? 'active',
+      diffs,
+      createdAt: input.createdAt,
+    };
+  }
+
+  private failure(diagramId: string, batchId: string, message: string): AiBatchRevertResult {
+    return {
+      success: false,
+      reverted: false,
+      batchId,
+      diagramId,
+      revertedEntityIds: [],
+      skipped: [],
+      skippedCount: 0,
+      status: 'active',
+      message,
+    };
+  }
+}
+
+function hasHumanAttachedEdge(
+  edgesMap: Y.Map<Y.Map<unknown>>,
+  nodeId: string,
+  batchAddedEdgeIds: Set<string>,
+): boolean {
+  let attached = false;
+  edgesMap.forEach((edgeMap, edgeId) => {
+    if (attached) return;
+    const source = edgeMap.get('source');
+    const target = edgeMap.get('target');
+    if ((source === nodeId || target === nodeId) && !batchAddedEdgeIds.has(edgeId)) {
+      attached = true;
+    }
+  });
+  return attached;
 }

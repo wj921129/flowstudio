@@ -4,10 +4,18 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
+import type { ZodType } from 'zod';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
+import type { DocumentWriter } from '../collaboration/document-writer.js';
 import { AiCollaborator } from './ai-collaborator.js';
-import type { McpToolDefinition } from './types.js';
+import type { McpOp, McpToolDefinition } from './types.js';
+import {
+  applyOpsInputSchema,
+  autoLayoutInputSchema,
+  getSelectionInputSchema,
+  scaffoldDiagramInputSchema,
+} from './op-schemas.js';
 
 export const MCP_TOOLS: McpToolDefinition[] = [
   {
@@ -105,14 +113,19 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'apply_ops',
-    description: '以原子事务批量执行增量编辑操作（添加节点、更新标签、删除、跨泳道连线等），自动触发前置快照并进行局部保护排版',
+    description:
+      '以原子事务批量执行增量编辑操作（add_node / update_node / delete_node / connect / disconnect / ' +
+      'move_node / move_to_lane / update_edge / add_lane / insert_between），自动触发前置快照、' +
+      '记录实体级 Diff 账本并遵守节点锚定锁',
     inputSchema: {
       type: 'object',
       properties: {
         diagramId: { type: 'string', description: '图表 ID' },
+        agentName: { type: 'string', description: '可选，AI 协作者名称（写入批次账本）' },
         ops: {
           type: 'array',
-          description: '增量原子操作列表',
+          description:
+            '增量原子操作列表；insert_between 支持在 source -> target 之间断线串接新节点并顺推下游',
           items: { type: 'object' },
         },
       },
@@ -136,10 +149,30 @@ export const MCP_TOOLS: McpToolDefinition[] = [
 export interface McpPluginOptions {
   repo: DiagramRepository;
   batchManager?: AiBatchManager;
+  writer?: DocumentWriter;
+}
+
+/**
+ * 使用 Zod 校验 MCP 工具入参，失败时抛出带可读明细的错误
+ */
+function parseOrThrow<T>(schema: ZodType<T>, payload: unknown, toolName: string): T {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`工具 ${toolName} 入参校验失败: ${details}`);
+  }
+  return parsed.data;
 }
 
 export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, options) => {
-  const collaborator = new AiCollaborator(options.repo, 'http://127.0.0.1:3000', options.batchManager);
+  const collaborator = new AiCollaborator(
+    options.repo,
+    'http://127.0.0.1:3000',
+    options.batchManager,
+    options.writer,
+  );
 
   fastify.post('/', async (request, reply) => {
     const body = (request.body || {}) as {
@@ -201,16 +234,29 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
             toolResult = await collaborator.getDiagram(args.diagramId);
             break;
           case 'get_selection':
-            toolResult = await collaborator.getSelection(args.diagramId, args.nickname);
+            toolResult = await collaborator.getSelection(
+              args.diagramId,
+              parseOrThrow(getSelectionInputSchema, args, 'get_selection').nickname,
+            );
             break;
           case 'scaffold_diagram':
-            toolResult = await collaborator.scaffoldDiagram(args);
+            toolResult = await collaborator.scaffoldDiagram(
+              parseOrThrow(scaffoldDiagramInputSchema, args, 'scaffold_diagram'),
+            );
             break;
-          case 'apply_ops':
-            toolResult = await collaborator.applyOps(args);
+          case 'apply_ops': {
+            const validated = parseOrThrow(applyOpsInputSchema, args, 'apply_ops');
+            toolResult = await collaborator.applyOps({
+              diagramId: validated.diagramId,
+              agentName: validated.agentName,
+              ops: validated.ops as unknown as McpOp[],
+            });
             break;
+          }
           case 'auto_layout':
-            toolResult = await collaborator.autoLayout(args);
+            toolResult = await collaborator.autoLayout(
+              parseOrThrow(autoLayoutInputSchema, args, 'auto_layout'),
+            );
             break;
           default:
             return reply.status(404).send({

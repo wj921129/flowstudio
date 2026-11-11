@@ -13,14 +13,34 @@ export interface McpToolDefinition {
   };
 }
 
+export interface McpInsertNodeSpec {
+  id?: string;
+  type?: string;
+  label: string;
+  laneId?: string;
+  style?: Record<string, unknown>;
+}
+
 export type McpOp =
   | { op: 'add_node'; type: string; label: string; id?: string; laneId?: string; style?: Record<string, unknown> }
   | { op: 'update_node'; id: string; label?: string; style?: Record<string, unknown> }
   | { op: 'delete_node'; id: string }
   | { op: 'connect'; source: string; target: string; label?: string; style?: Record<string, unknown> }
   | { op: 'disconnect'; edgeId?: string; source?: string; target?: string }
-  | { op: 'add_lane'; label: string; id?: string }
-  | { op: 'move_to_lane'; nodeId: string; laneId: string };
+  | { op: 'add_lane'; label: string; id?: string; poolId?: string }
+  | { op: 'move_to_lane'; nodeId: string; laneId: string }
+  | { op: 'move_node'; id: string; position: { x: number; y: number } }
+  | { op: 'update_edge'; id: string; label?: string; style?: Record<string, unknown> }
+  | {
+      op: 'insert_between';
+      source: string;
+      target: string;
+      node: McpInsertNodeSpec;
+      edgeLabel?: string;
+      upstreamLabel?: string;
+      downstreamLabel?: string;
+      direction?: 'RIGHT' | 'DOWN';
+    };
 
 export interface CompactDiagram {
   id: string;
@@ -32,6 +52,7 @@ export interface CompactDiagram {
     label: string;
     laneId?: string;
     position: { x: number; y: number };
+    lockMode?: 'none' | 'position' | 'full';
   }>;
   edges: Array<{
     id: string;

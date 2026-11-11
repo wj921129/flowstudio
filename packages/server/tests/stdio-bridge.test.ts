@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { buildServer } from '../src/server.js';
 
 describe('MCP stdio Bridge Script (flowstudio-mcp.cjs)', () => {
@@ -30,7 +31,10 @@ describe('MCP stdio Bridge Script (flowstudio-mcp.cjs)', () => {
     const addr = server.app.server.address() as { port: number };
     const mcpHttpUrl = `http://127.0.0.1:${addr.port}/mcp`;
 
-    const scriptPath = path.resolve(process.cwd(), 'scripts/flowstudio-mcp.cjs');
+    const scriptPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../scripts/flowstudio-mcp.cjs',
+    );
 
     // 拉起 stdio 桥接进程
     const child = spawn(process.execPath, [scriptPath, '--url', mcpHttpUrl], {

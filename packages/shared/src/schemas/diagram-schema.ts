@@ -13,9 +13,12 @@ export const dimensionsSchema = z.object({
   height: z.number(),
 });
 
+export const nodeLockModeSchema = z.enum(['none', 'position', 'full']);
+
 export const flowNodeDataSchema = z.object({
   label: z.string(),
   type: flowNodeTypeSchema,
+  lockMode: nodeLockModeSchema.optional(),
   parentId: z.string().optional(),
   isFrame: z.boolean().optional(),
   isCollapsed: z.boolean().optional(),
@@ -96,4 +99,27 @@ export const awarenessUserStateSchema = z.object({
   color: z.string().min(1),
   cursor: xyPositionSchema.nullable(),
   selectedNodeIds: z.array(z.string()),
+  viewport: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      zoom: z.number(),
+    })
+    .optional(),
+  spotlightNodeIds: z.array(z.string()).optional(),
+  isAi: z.boolean().optional(),
+  agentName: z.string().optional(),
+});
+
+export const revertBatchItemsRequestSchema = z.object({
+  entityIds: z.array(z.string().min(1)).min(1, '至少需要指定一个待撤回实体'),
+});
+
+export const aiBatchEntityDiffSchema = z.object({
+  entityId: z.string().min(1),
+  entityType: z.enum(['node', 'edge']),
+  opType: z.enum(['add', 'update', 'delete']),
+  beforeState: z.record(z.string(), z.unknown()).nullable(),
+  afterState: z.record(z.string(), z.unknown()).nullable(),
+  reverted: z.boolean().optional(),
 });
