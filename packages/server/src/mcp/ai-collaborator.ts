@@ -733,6 +733,29 @@ export class AiCollaborator {
       const nodeLabel = (nodeMap: Y.Map<unknown> | null) =>
         ((nodeMap?.get('data') as Record<string, unknown> | undefined)?.label as string) || '未命名';
 
+      const hasFullLockedDescendant = (containerId: string): boolean => {
+        const children = new Map<string, string[]>();
+        nodesMap.forEach((map, id) => {
+          const parentId = map.get('parentId');
+          if (typeof parentId !== 'string') return;
+          const bucket = children.get(parentId);
+          if (bucket) bucket.push(id);
+          else children.set(parentId, [id]);
+        });
+        const stack = [...(children.get(containerId) ?? [])];
+        const visited = new Set<string>();
+        while (stack.length > 0) {
+          const currentId = stack.pop()!;
+          if (visited.has(currentId)) continue;
+          visited.add(currentId);
+          const map = nodesMap.get(currentId);
+          if (!map) continue;
+          if (getNodeLockMode(map) === 'full') return true;
+          stack.push(...(children.get(currentId) ?? []));
+        }
+        return false;
+      };
+
       const isBlocked = (nodeMap: Y.Map<unknown>, action: 'modify' | 'delete' | 'move'): boolean => {
         const lockMode = getNodeLockMode(nodeMap);
         if (lockMode === 'full') {
@@ -847,6 +870,12 @@ export class AiCollaborator {
               break;
             }
             if (isBlocked(nodeMap, 'delete')) break;
+            if (hasFullLockedDescendant(op.id)) {
+              warnings.push(
+                `容器 ${op.id}(${nodeLabel(nodeMap)}) 内含人工锁定节点，禁止整体删除`,
+              );
+              break;
+            }
 
             recordDelete('node', op.id, snapshotMap(nodeMap));
             const cascadedEdgeIds: string[] = [];

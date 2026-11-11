@@ -90,6 +90,15 @@ function worldOf(nodes: Y.Map<Y.Map<unknown>>, id: string): { x: number; y: numb
   return world;
 }
 
+function expectNoDanglingParent(nodes: Y.Map<Y.Map<unknown>>): void {
+  nodes.forEach((map, id) => {
+    const parentId = map.get('parentId');
+    if (typeof parentId === 'string') {
+      expect(nodes.has(parentId), `节点 ${id} 悬挂父容器 ${parentId}`).toBe(true);
+    }
+  });
+}
+
 function seedPool(
   repo: DiagramRepository,
   diagramId: string,
@@ -578,6 +587,154 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
     expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
     expect(nodes.get('lane-b')!.get('width')).toBe(400);
     expect(nodes.get('lane-b')!.get('height')).toBe(200);
+
+    await server.app.close();
+  }, 20000);
+
+  it('P0-1a: delete_node 含 full 锁后代的泳道/泳池被整体拦截', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '容器删除保护图' });
+
+    const doc = new Y.Doc();
+    const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+    nodes.set(
+      'pool-1',
+      makeNode('pool-1', '泳池', { x: 50, y: 50 }, {
+        type: 'pool',
+        width: 400,
+        height: 440,
+        data: { orientation: 'horizontal', headerSize: 40, laneOrder: ['lane-a', 'lane-b'] },
+      }),
+    );
+    nodes.set(
+      'lane-a',
+      makeNode('lane-a', '泳道A', { x: 0, y: 40 }, {
+        type: 'lane',
+        parentId: 'pool-1',
+        width: 400,
+        height: 200,
+      }),
+    );
+    nodes.set(
+      'lane-b',
+      makeNode('lane-b', '泳道B', { x: 0, y: 240 }, {
+        type: 'lane',
+        parentId: 'pool-1',
+        width: 400,
+        height: 200,
+      }),
+    );
+    nodes.set(
+      'locked-child',
+      makeNode('locked-child', '锁定子节点', { x: 40, y: 40 }, {
+        parentId: 'lane-a',
+        lockMode: 'full',
+      }),
+    );
+    nodes.set(
+      'free-child',
+      makeNode('free-child', '自由子节点', { x: 40, y: 140 }, { parentId: 'lane-a' }),
+    );
+    server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+
+    const laneDelete = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'delete_node', id: 'lane-a' }],
+    });
+    expect(laneDelete.success).toBe(true);
+    expect(laneDelete.appliedCount).toBe(0);
+    expect(laneDelete.warnings.some((w: string) => w.includes('内含人工锁定节点'))).toBe(true);
+
+    const poolDelete = await callTool(server, 2, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'delete_node', id: 'pool-1' }],
+    });
+    expect(poolDelete.success).toBe(true);
+    expect(poolDelete.appliedCount).toBe(0);
+    expect(poolDelete.warnings.some((w: string) => w.includes('内含人工锁定节点'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nextNodes.has('pool-1')).toBe(true);
+    expect(nextNodes.has('lane-a')).toBe(true);
+    expect(nextNodes.has('lane-b')).toBe(true);
+    expect(nextNodes.has('locked-child')).toBe(true);
+    expect(nextNodes.has('free-child')).toBe(true);
+    expect(nextNodes.get('locked-child')!.get('parentId')).toBe('lane-a');
+    expect(nextNodes.get('locked-child')!.get('position')).toEqual({ x: 40, y: 40 });
+    expect(worldOf(nextNodes, 'locked-child')).toEqual({ x: 90, y: 130 });
+    expect(nextNodes.get('free-child')!.get('parentId')).toBe('lane-a');
+    expectNoDanglingParent(nextNodes);
+
+    await server.app.close();
+  }, 20000);
+
+  it('P0-1b: delete_node 含 full 锁后代的 group 同样整体拦截', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '分组删除保护图' });
+
+    const doc = new Y.Doc();
+    const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+    nodes.set(
+      'pool-1',
+      makeNode('pool-1', '泳池', { x: 50, y: 50 }, {
+        type: 'pool',
+        width: 400,
+        height: 440,
+        data: { orientation: 'horizontal', headerSize: 40, laneOrder: ['lane-a'] },
+      }),
+    );
+    nodes.set(
+      'lane-a',
+      makeNode('lane-a', '泳道A', { x: 0, y: 40 }, {
+        type: 'lane',
+        parentId: 'pool-1',
+        width: 400,
+        height: 200,
+      }),
+    );
+    nodes.set(
+      'group-1',
+      makeNode('group-1', '分组', { x: 20, y: 20 }, {
+        type: 'group',
+        parentId: 'lane-a',
+        width: 300,
+        height: 150,
+      }),
+    );
+    nodes.set(
+      'inner-node',
+      makeNode('inner-node', '内部锁定节点', { x: 10, y: 10 }, {
+        parentId: 'group-1',
+        lockMode: 'full',
+      }),
+    );
+    server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+
+    const groupDelete = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'delete_node', id: 'group-1' }],
+    });
+    expect(groupDelete.success).toBe(true);
+    expect(groupDelete.appliedCount).toBe(0);
+    expect(groupDelete.warnings.some((w: string) => w.includes('内含人工锁定节点'))).toBe(true);
+
+    const laneDelete = await callTool(server, 2, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [{ op: 'delete_node', id: 'lane-a' }],
+    });
+    expect(laneDelete.success).toBe(true);
+    expect(laneDelete.appliedCount).toBe(0);
+    expect(laneDelete.warnings.some((w: string) => w.includes('内含人工锁定节点'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nextNodes.has('group-1')).toBe(true);
+    expect(nextNodes.has('inner-node')).toBe(true);
+    expect(nextNodes.get('inner-node')!.get('parentId')).toBe('group-1');
+    expect(nextNodes.get('inner-node')!.get('position')).toEqual({ x: 10, y: 10 });
+    expect(worldOf(nextNodes, 'inner-node')).toEqual({ x: 80, y: 120 });
+    expectNoDanglingParent(nextNodes);
 
     await server.app.close();
   }, 20000);
