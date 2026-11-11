@@ -99,6 +99,7 @@ function seedPool(
     laneBY?: number;
     poolHeight?: number;
     laneALock?: string;
+    laneBLock?: string;
     laneBLockedChild?: boolean;
   } = {},
 ): void {
@@ -132,6 +133,7 @@ function seedPool(
       parentId: 'pool-1',
       width: 400,
       height: laneBHeight,
+      lockMode: options.laneBLock,
     }),
   );
   nodes.set('node-a', makeNode('node-a', '节点A', { x: 40, y: 40 }, { parentId: 'lane-a' }));
@@ -146,6 +148,63 @@ function seedPool(
       }),
     );
   }
+  repo.saveYDocState(diagramId, Y.encodeStateAsUpdate(doc));
+}
+
+function seedNested(
+  repo: DiagramRepository,
+  diagramId: string,
+  mode: 'locked-inner' | 'locked-group',
+): void {
+  const doc = new Y.Doc();
+  const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+  nodes.set(
+    'pool-1',
+    makeNode('pool-1', '泳池', { x: 50, y: 50 }, {
+      type: 'pool',
+      width: 400,
+      height: 940,
+      data: { orientation: 'horizontal', headerSize: 40, laneOrder: ['lane-a', 'lane-b'] },
+    }),
+  );
+  nodes.set(
+    'lane-a',
+    makeNode('lane-a', '泳道A', { x: 0, y: 40 }, {
+      type: 'lane',
+      parentId: 'pool-1',
+      width: 400,
+      height: 200,
+    }),
+  );
+  nodes.set(
+    'lane-b',
+    makeNode('lane-b', '泳道B', { x: 0, y: 240 }, {
+      type: 'lane',
+      parentId: 'pool-1',
+      width: 400,
+      height: 200,
+    }),
+  );
+  nodes.set('node-a', makeNode('node-a', '节点A', { x: 40, y: 40 }, { parentId: 'lane-a' }));
+  nodes.set('node-c', makeNode('node-c', '节点C', { x: 40, y: 40 }, { parentId: 'lane-a' }));
+  doc.getMap<Y.Map<unknown>>('edges').set('edge-ac', makeEdge('edge-ac', 'node-a', 'node-c'));
+  nodes.set(
+    'group-1',
+    makeNode('group-1', '分组', { x: 20, y: 20 }, {
+      type: 'group',
+      parentId: 'lane-b',
+      width: 300,
+      height: 150,
+      lockMode: mode === 'locked-group' ? 'full' : undefined,
+    }),
+  );
+  nodes.set(
+    'inner-node',
+    makeNode('inner-node', '内部节点', { x: 30, y: 30 }, {
+      parentId: 'group-1',
+      lockMode: mode === 'locked-inner' ? 'full' : undefined,
+    }),
+  );
   repo.saveYDocState(diagramId, Y.encodeStateAsUpdate(doc));
 }
 
@@ -353,6 +412,172 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
     expect(laneBPos.x).toBe(laneAPos.x + laneAWidth);
     expect(laneBPos.y).toBe(0);
     expect(poolWidth).toBeGreaterThanOrEqual(laneBPos.x + 200);
+
+    await server.app.close();
+  }, 20000);
+
+  it('T2a: insert_between 经 group 传递识别锁定后代，兄弟泳道禁止移动', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: 'group 嵌套顺延图' });
+    seedNested(server.repo, diag.id, 'locked-inner');
+
+    const applied = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [
+        {
+          op: 'insert_between',
+          source: 'node-a',
+          target: 'node-c',
+          direction: 'DOWN',
+          node: { id: 'node-insert', type: 'process', label: '插入节点' },
+        },
+      ],
+    });
+    expect(applied.success).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
+    expect(nodes.get('lane-b')!.get('width')).toBe(400);
+    expect(nodes.get('lane-b')!.get('height')).toBe(200);
+    expect(nodes.get('group-1')!.get('position')).toEqual({ x: 20, y: 20 });
+    expect(nodes.get('inner-node')!.get('position')).toEqual({ x: 30, y: 30 });
+    expect(worldOf(nodes, 'inner-node')).toEqual({ x: 100, y: 340 });
+
+    await server.app.close();
+  }, 20000);
+
+  it('T2b: auto_layout 经 group 传递识别锁定后代，泳道与锁定节点均原位', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: 'group 嵌套排版图' });
+    seedNested(server.repo, diag.id, 'locked-inner');
+
+    const result = await callTool(server, 1, 'auto_layout', {
+      diagramId: diag.id,
+      direction: 'RIGHT',
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('含锁定子节点'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
+    expect(nodes.get('group-1')!.get('position')).toEqual({ x: 20, y: 20 });
+    expect(nodes.get('inner-node')!.get('position')).toEqual({ x: 30, y: 30 });
+    expect(worldOf(nodes, 'inner-node')).toEqual({ x: 100, y: 340 });
+
+    await server.app.close();
+  }, 20000);
+
+  it('T1a: 锁定 group 内部未锁定后代整体冻结，auto_layout 不重排', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '锁定分组排版图' });
+    seedNested(server.repo, diag.id, 'locked-group');
+
+    const result = await callTool(server, 1, 'auto_layout', {
+      diagramId: diag.id,
+      direction: 'RIGHT',
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('位于锁定容器内'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
+    expect(nodes.get('group-1')!.get('position')).toEqual({ x: 20, y: 20 });
+    expect(nodes.get('inner-node')!.get('position')).toEqual({ x: 30, y: 30 });
+    expect(worldOf(nodes, 'inner-node')).toEqual({ x: 100, y: 340 });
+
+    await server.app.close();
+  }, 20000);
+
+  it('T1b: insert_between 顺推跳过锁定祖先下的后代节点', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '锁定容器顺推图' });
+
+    const doc = new Y.Doc();
+    const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+    nodes.set(
+      'pool-1',
+      makeNode('pool-1', '泳池', { x: 50, y: 50 }, {
+        type: 'pool',
+        width: 400,
+        height: 940,
+        data: { orientation: 'horizontal', headerSize: 40, laneOrder: ['lane-a'] },
+      }),
+    );
+    nodes.set(
+      'lane-a',
+      makeNode('lane-a', '泳道A', { x: 0, y: 40 }, {
+        type: 'lane',
+        parentId: 'pool-1',
+        width: 400,
+        height: 600,
+      }),
+    );
+    nodes.set(
+      'group-1',
+      makeNode('group-1', '分组', { x: 20, y: 20 }, {
+        type: 'group',
+        parentId: 'lane-a',
+        width: 300,
+        height: 150,
+        lockMode: 'full',
+      }),
+    );
+    nodes.set('node-c', makeNode('node-c', '节点C', { x: 30, y: 30 }, { parentId: 'group-1' }));
+    nodes.set('node-a', makeNode('node-a', '节点A', { x: 40, y: 300 }, { parentId: 'lane-a' }));
+    doc.getMap<Y.Map<unknown>>('edges').set('edge-ac', makeEdge('edge-ac', 'node-a', 'node-c'));
+    server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+
+    const applied = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [
+        {
+          op: 'insert_between',
+          source: 'node-a',
+          target: 'node-c',
+          direction: 'DOWN',
+          node: { id: 'node-insert', type: 'process', label: '插入节点' },
+        },
+      ],
+    });
+    expect(applied.success).toBe(true);
+    expect(applied.warnings.some((w: string) => w.includes('位于锁定容器内'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nextNodes.get('node-c')!.get('position')).toEqual({ x: 30, y: 30 });
+    expect(worldOf(nextNodes, 'node-c')).toEqual({ x: 100, y: 140 });
+
+    await server.app.close();
+  }, 20000);
+
+  it('T4: 泳道自身锁定同样在兄弟重排中保持原位', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '锁定泳道重排图' });
+    seedPool(server.repo, diag.id, { laneBLock: 'position' });
+
+    const applied = await callTool(server, 1, 'apply_ops', {
+      diagramId: diag.id,
+      ops: [
+        {
+          op: 'insert_between',
+          source: 'node-a',
+          target: 'node-c',
+          direction: 'DOWN',
+          node: { id: 'node-insert', type: 'process', label: '插入节点' },
+        },
+      ],
+    });
+    expect(applied.success).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('lane-a')!.get('height')).toBe(440);
+    expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
+    expect(nodes.get('lane-b')!.get('width')).toBe(400);
+    expect(nodes.get('lane-b')!.get('height')).toBe(200);
 
     await server.app.close();
   }, 20000);

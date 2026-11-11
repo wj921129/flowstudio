@@ -403,8 +403,15 @@ export class AiCollaborator {
         if (!ancestor) break;
         if (!protectedNodeIds.has(cursor)) {
           protectedNodeIds.add(cursor);
-          const ancestorType = ancestor.snapshot.type === 'pool' ? '泳池' : '泳道';
-          warnings.push(`${ancestorType} ${cursor} 含人工完全锁定节点，已一并保留`);
+          const ancestorType = ancestor.snapshot.type;
+          const typeName = ancestorType === 'pool'
+            ? '泳池'
+            : ancestorType === 'lane'
+              ? '泳道'
+              : ancestorType === 'group'
+                ? '分组'
+                : '容器';
+          warnings.push(`${typeName} ${cursor} 含人工完全锁定节点，已一并保留`);
         }
         cursor = ancestor.snapshot.parentId as string | undefined;
       }
@@ -1120,6 +1127,30 @@ export class AiCollaborator {
               }
             }
 
+            const lockedRelated = new Set<string>();
+            const markLockedChain = (startId: string) => {
+              let cursor: string | undefined = startId;
+              const seen = new Set<string>();
+              while (cursor && !seen.has(cursor)) {
+                seen.add(cursor);
+                lockedRelated.add(cursor);
+                cursor = nodesMap.get(cursor)?.get('parentId') as string | undefined;
+              }
+            };
+            nodesMap.forEach((map, id) => {
+              if (getNodeLockMode(map) !== 'none') markLockedChain(id);
+            });
+            const underLockedAncestor = (id: string): boolean => {
+              let cursor = nodesMap.get(id)?.get('parentId') as string | undefined;
+              const seen = new Set<string>([id]);
+              while (cursor && !seen.has(cursor)) {
+                seen.add(cursor);
+                if (getNodeLockMode(nodesMap.get(cursor)) !== 'none') return true;
+                cursor = nodesMap.get(cursor)?.get('parentId') as string | undefined;
+              }
+              return false;
+            };
+
             const minTargetMain =
               direction === 'DOWN'
                 ? newNodeWorld.y + DEFAULT_NODE_HEIGHT + INSERT_GAP
@@ -1133,10 +1164,13 @@ export class AiCollaborator {
                 if (!nodeMap) continue;
                 const type = nodeMap.get('type');
                 if (type === 'pool' || type === 'lane') continue;
-                const lockMode = getNodeLockMode(nodeMap);
-                if (lockMode !== 'none') {
+                if (
+                  getNodeLockMode(nodeMap) !== 'none'
+                  || lockedRelated.has(downstreamId)
+                  || underLockedAncestor(downstreamId)
+                ) {
                   warnings.push(
-                    `节点 ${downstreamId}(${nodeLabel(nodeMap)}) 已锁定坐标，未参与下游顺推`,
+                    `节点 ${downstreamId}(${nodeLabel(nodeMap)}) 位于锁定容器内或已锁定，未参与下游顺推`,
                   );
                   continue;
                 }
@@ -1218,17 +1252,13 @@ export class AiCollaborator {
               }
             }
 
-            // 含锁定子节点的泳道不得被移动/重排
             const lanesWithLockedChild = new Set<string>();
-            nodesMap.forEach((nodeMap) => {
-              if (getNodeLockMode(nodeMap) === 'none') return;
-              const nodeType = nodeMap.get('type');
-              if (nodeType === 'pool' || nodeType === 'lane') return;
-              const parentId = nodeMap.get('parentId');
-              if (typeof parentId === 'string' && nodesMap.get(parentId)?.get('type') === 'lane') {
-                lanesWithLockedChild.add(parentId);
+            for (const relatedId of lockedRelated) {
+              const relatedMap = nodesMap.get(relatedId);
+              if (relatedMap?.get('type') === 'lane' && getNodeLockMode(relatedMap) === 'none') {
+                lanesWithLockedChild.add(relatedId);
               }
-            });
+            }
 
             for (const poolId of touchedPoolIds) {
               const poolMap = nodesMap.get(poolId);
@@ -1437,6 +1467,39 @@ export class AiCollaborator {
     // 否则会按 ELK 虚拟落点留出错误空档或与移动后的兄弟节点重叠。
     const laneById = new Map(graph.lanes.map((lane) => [lane.id, lane]));
     const poolById = new Map(graph.pools.map((pool) => [pool.id, pool]));
+
+    const parentOf = new Map<string, string | undefined>();
+    graph.pools.forEach((pool) => parentOf.set(pool.id, undefined));
+    graph.lanes.forEach((lane) => parentOf.set(lane.id, lane.parentId));
+    graph.children.forEach((child) => parentOf.set(child.id, child.parentId));
+    const lockedAny = new Set<string>([
+      ...graph.pools.filter((pool) => pool.locked).map((pool) => pool.id),
+      ...graph.lanes.filter((lane) => lane.locked).map((lane) => lane.id),
+      ...lockedIds,
+    ]);
+    const frozenIds = new Set<string>();
+    const markAncestorChain = (startId: string) => {
+      let cursor: string | undefined = startId;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        frozenIds.add(cursor);
+        cursor = parentOf.get(cursor);
+      }
+    };
+    lockedAny.forEach(markAncestorChain);
+    for (const child of graph.children) {
+      let cursor: string | undefined = parentOf.get(child.id);
+      const seen = new Set<string>([child.id]);
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        if (lockedAny.has(cursor)) {
+          markAncestorChain(child.id);
+          break;
+        }
+        cursor = parentOf.get(cursor);
+      }
+    }
     const sizingPositions = new Map(globalPositions);
     for (const child of graph.children) {
       if (!child.locked || !child.parentId) continue;
@@ -1449,12 +1512,10 @@ export class AiCollaborator {
       });
     }
 
-    // 含锁定子节点（position/full）的泳道不得被移动/重排，保持原几何
     const laneHasLockedChild = new Set<string>();
-    for (const child of graph.children) {
-      if (child.locked && child.parentId && laneById.has(child.parentId)) {
-        laneHasLockedChild.add(child.parentId);
-      }
+    for (const frozenId of frozenIds) {
+      const frozenLane = laneById.get(frozenId);
+      if (frozenLane && !frozenLane.locked) laneHasLockedChild.add(frozenId);
     }
 
     // 预先计算容器几何与子节点局部坐标，mutate 回调内只做同步 Yjs 写入
@@ -1570,9 +1631,8 @@ export class AiCollaborator {
       }
     }
 
-    // 浮动节点（不属于任何泳道）沿用 ELK 全局坐标；所属泳道被锁定的节点保持原位
     for (const child of graph.children) {
-      if (childPositions.has(child.id)) continue;
+      if (childPositions.has(child.id) || frozenIds.has(child.id)) continue;
       if (child.parentId && graph.lanes.some((lane) => lane.id === child.parentId)) continue;
       const pos = sizingPositions.get(child.id);
       if (pos) childPositions.set(child.id, pos);
@@ -1626,8 +1686,12 @@ export class AiCollaborator {
       }
 
       for (const child of graph.children) {
-        if (lockedIds.has(child.id)) {
-          warnings.push(`节点 ${child.id} 已锁定坐标，排版保持原位`);
+        if (lockedIds.has(child.id) || frozenIds.has(child.id)) {
+          warnings.push(
+            lockedIds.has(child.id)
+              ? `节点 ${child.id} 已锁定坐标，排版保持原位`
+              : `节点 ${child.id} 位于锁定容器内，排版保持原位`,
+          );
           continue;
         }
         const pos = childPositions.get(child.id);
