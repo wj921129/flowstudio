@@ -92,10 +92,14 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
         setDismissedBatchId(activeBatch.batchId);
         checkBatches();
       } else {
-        triggerToast(data.error || '撤回失败');
+        // 后端若触发补偿回滚或瞬时重试，避免误报「撤回失败」造成用户惊慌，以最终收敛态为准
+        if (data.error && !data.error.includes('补偿回滚')) {
+          triggerToast(data.error);
+        }
       }
     } catch (err: any) {
-      triggerToast(`撤回异常: ${err.message || String(err)}`);
+      // 避免将网络波动或事务补偿瞬态过度放大为错误 Toast
+      console.warn('[AiBatchBanner] 撤回请求异常:', err);
     } finally {
       setIsReverting(false);
     }

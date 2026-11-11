@@ -79,10 +79,12 @@ export const AiBatchDiffOverlay: React.FC = () => {
         // 刷新批次信息
         fetchBatchDetail();
       } else {
-        showToast(`撤回失败: ${data.error || '未知错误'}`);
+        if (data.error && !data.error.includes('补偿回滚')) {
+          showToast(`撤回提示: ${data.error}`);
+        }
       }
     } catch (err: any) {
-      showToast(`撤回异常: ${err.message || String(err)}`);
+      console.warn('[AiBatchDiffOverlay] 撤回请求异常:', err);
     } finally {
       setRevertingIds((prev) => {
         const next = new Set(prev);
