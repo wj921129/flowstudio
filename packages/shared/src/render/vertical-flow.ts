@@ -2,7 +2,7 @@ import { getDefaultNodeSize } from '../node-registry.js';
 import type { NormalizedSpec } from '../spec/normalize.js';
 import type { SpecNode } from '../spec/types.js';
 import type { FlowEdge, FlowNode, FlowNodeType, XYPosition } from '../types.js';
-import { BRANCH_GAP, BRANCH_VGAP, LOOP_RISE, LOOP_SIDE, MAIN_GAP } from './constants.js';
+import { ANNOT_COL_GAP, ANNOT_COL_SIZE, ANNOT_GAP, BRANCH_GAP, BRANCH_VGAP, LOOP_RISE, LOOP_SIDE, MAIN_GAP } from './constants.js';
 import type { RenderContext, RenderResult } from './types.js';
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -42,17 +42,47 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
   const CX = ctx.origin.x + maxMainW / 2;
   const trunkRight = CX + maxMainW / 2;
   let cursor = ctx.origin.y;
+  let annotRight = trunkRight - BRANCH_GAP;
+  let annotCursor = ctx.origin.y;
   for (const m of mains) {
+    const anns = n.nodes.filter((x) => x.role === 'annotation' && x.attachTo === m.id);
+    const cols: Array<Array<typeof anns[number]>> = [];
+    for (let i = 0; i < anns.length; i += ANNOT_COL_SIZE) cols.push(anns.slice(i, i + ANNOT_COL_SIZE));
+    const colMetrics = cols.map((col) => {
+      const sizes = col.map((a) => fixedBox(a.id) ?? flowSizeOf(a));
+      return {
+        w: Math.max(...sizes.map((s) => s.width)),
+        h: sizes.reduce((acc, s) => acc + s.height, 0) + ANNOT_GAP * (sizes.length - 1),
+      };
+    });
+    const blockH = Math.max(0, ...colMetrics.map((c) => c.h));
     const f = fixedBox(m.id);
+    const s = f ?? flowSizeOf(m);
+    let y: number;
     if (f) {
-      pos.set(m.id, f);
+      y = f.y;
       cursor = Math.max(cursor, f.y + f.height + MAIN_GAP);
-      continue;
+    } else {
+      y = avoid(CX - s.width / 2, cursor, s.width, s.height);
+      cursor = y + s.height + MAIN_GAP;
     }
-    const s = flowSizeOf(m);
-    const y = avoid(CX - s.width / 2, cursor, s.width, s.height);
-    pos.set(m.id, { x: CX - s.width / 2, y, width: s.width, height: s.height });
-    cursor = y + s.height + MAIN_GAP;
+    pos.set(m.id, { x: f ? f.x : CX - s.width / 2, y, width: s.width, height: s.height });
+    const blockTop = cols.length > 0 ? Math.max(annotCursor, y + s.height / 2 - blockH / 2) : 0;
+    let colX = trunkRight + BRANCH_GAP;
+    cols.forEach((col, ci) => {
+      let ay = blockTop;
+      for (const a of col) {
+        const af = fixedBox(a.id);
+        const as = af ?? flowSizeOf(a);
+        pos.set(a.id, af ?? { x: colX + (colMetrics[ci].w - as.width) / 2, y: ay, width: as.width, height: as.height });
+        ay += as.height + ANNOT_GAP;
+      }
+      colX += colMetrics[ci].w + ANNOT_COL_GAP;
+    });
+    if (cols.length > 0) {
+      annotRight = Math.max(annotRight, colX - ANNOT_COL_GAP);
+      annotCursor = blockTop + blockH + ANNOT_GAP;
+    }
   }
 
   const groups = new Map<string, string[]>();
@@ -86,7 +116,8 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
     const firstW = (fixedBox(roots[0]) ?? flowSizeOf(nodeOf(roots[0]))).width;
     let center = from.x + from.width + BRANCH_GAP + firstW / 2;
     const leftmost = center - blockW / 2;
-    if (leftmost < trunkRight + MAIN_GAP) center += trunkRight + MAIN_GAP - leftmost;
+    const bound = Math.max(trunkRight + MAIN_GAP, annotRight + BRANCH_GAP);
+    if (leftmost < bound) center += bound - leftmost;
     let blockY = Math.max(from.y + from.height / 2 - (fixedBox(roots[0]) ?? flowSizeOf(nodeOf(roots[0]))).height / 2, RC);
     blockY = avoid(center - blockW / 2, blockY, blockW, blockH);
     RC = blockY + blockH + BRANCH_VGAP;
@@ -125,7 +156,7 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
     });
   }
   for (const src of n.nodes) {
-    if (!pos.has(src.id)) warnings.push(`节点 ${src.id} 未参与 vertical-flow 布局（附注几何由 timeline 规则承载）`);
+    if (!pos.has(src.id)) warnings.push(`节点 ${src.id} 未参与布局，跳过`);
   }
 
   const edges: FlowEdge[] = [];
@@ -152,6 +183,11 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
     } else if (e.kind === 'annotate') {
       sourceHandle = 'right';
       targetHandle = 'left';
+      const midX = trunkRight + BRANCH_GAP / 2;
+      waypoints = [
+        { x: midX, y: a.y + a.height / 2 },
+        { x: midX, y: b.y + b.height / 2 },
+      ];
     } else if (b.x >= a.x + a.width) {
       sourceHandle = 'right';
       targetHandle = 'left';
