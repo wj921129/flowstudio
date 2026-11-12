@@ -1,6 +1,13 @@
 import type { FlowNode } from '../../src/types.js';
 import type { RenderResult } from '../../src/render/types.js';
 import type { DiagramSpec } from '../../src/spec/types.js';
+import { DIAGRAM_PRESETS } from '../../src/spec/presets.js';
+
+export function preset(id: string): DiagramSpec {
+  const p = DIAGRAM_PRESETS.find((x) => x.id === id);
+  if (!p) throw new Error(`缺少预设 ${id}`);
+  return p.spec;
+}
 
 export function noOverlap(nodes: FlowNode[]): boolean {
   for (let i = 0; i < nodes.length; i++) {

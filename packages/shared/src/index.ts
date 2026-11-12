@@ -16,4 +16,8 @@ export * from './snapshot-diff.js';
 export * from './spec/types.js';
 export * from './spec/spec-schema.js';
 export * from './spec/normalize.js';
+export * from './spec/presets.js';
+export * from './render/types.js';
+export * from './render/constants.js';
+export * from './render/index.js';
 
