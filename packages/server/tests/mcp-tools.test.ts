@@ -66,6 +66,30 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     await server.app.close();
   });
 
+  it('returns 202 with empty body for notifications/initialized', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/mcp',
+      payload: { jsonrpc: '2.0', method: 'notifications/initialized' },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toBe('');
+    await server.app.close();
+  });
+
+  it('answers ping with matching id and empty result', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/mcp',
+      payload: { jsonrpc: '2.0', id: 7, method: 'ping' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ jsonrpc: '2.0', id: 7, result: {} });
+    await server.app.close();
+  });
+
   it('runs complete AI collaboration workflow: create -> scaffold -> get -> apply_ops -> auto_snapshot', async () => {
     const server = await buildServer({ dbPath: tmpDbPath });
 

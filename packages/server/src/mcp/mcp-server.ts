@@ -182,7 +182,11 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
       params?: any;
     };
 
-    const requestId = body.id ?? 1;
+    if (body.id === undefined) {
+      return reply.code(202).send();
+    }
+
+    const requestId = body.id;
 
     // 1. 初始化握手
     if (body.method === 'initialize') {
@@ -200,7 +204,7 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
       };
     }
 
-    if (body.method === 'notifications/initialized' || body.method === 'ping') {
+    if (body.method === 'ping') {
       return { jsonrpc: '2.0', id: requestId, result: {} };
     }
 
