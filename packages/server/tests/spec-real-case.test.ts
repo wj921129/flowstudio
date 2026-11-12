@@ -3,9 +3,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as Y from 'yjs';
-import type { FlowNode } from '@flowstudio/shared';
+import type { FlowEdge, FlowNode } from '@flowstudio/shared';
 import { buildServer } from '../src/server.js';
-import { buildSvnSpec, noOverlap } from '../../shared/tests/helpers/render-asserts.js';
+import { buildSvnSpec, buildYeepaySpec, noOverlap } from '../../shared/tests/helpers/render-asserts.js';
 
 type Server = Awaited<ReturnType<typeof buildServer>>;
 
@@ -52,6 +52,56 @@ describe('真实案例闭环：SVN 时间线 15 步 + 25 附注', () => {
       data: m.get('data') as FlowNode['data'],
     }));
     return nodes;
+  });
+
+  const fullEdges = (id: string) => server.writer.readDocument(id, (doc) => {
+    const edges: FlowEdge[] = [];
+    doc.getMap<Y.Map<unknown>>('edges').forEach((m) => edges.push({
+      id: m.get('id') as string,
+      source: m.get('source') as string,
+      target: m.get('target') as string,
+      sourceHandle: m.get('sourceHandle') as string | undefined,
+      targetHandle: m.get('targetHandle') as string | undefined,
+      data: m.get('data') as FlowEdge['data'],
+    }));
+    return edges;
+  });
+
+  it('易宝限额真实案例：jump 跨段旁路端到端渲染、二次渲染零增删', async () => {
+    const id = (await callTool(server, 'create_diagram', { title: '易宝回归' })).data.id as string;
+    const res = await callTool(server, 'scaffold_diagram', { diagramId: id, spec: buildYeepaySpec() });
+    expect(res.isError, res.text).toBe(false);
+    expect(res.data.message).toContain('48 个节点');
+    expect(res.data.message).toContain('56 条连线');
+
+    const nodes = await fullNodes(id);
+    const edges = await fullEdges(id);
+    expect(nodes.length).toBe(48);
+    expect(edges.length).toBe(56);
+
+    const trunk = ['d4', 'd8', 'd9', 'd11', 'd12', 'd13', 'e1'];
+    const trunkCenters = new Set(trunk.map((k) => {
+      const n = nodes.find((x) => x.id === k)!;
+      return n.position.x + n.width! / 2;
+    }));
+    expect(trunkCenters.size).toBe(1);
+    for (const k of trunk) expect(nodes.find((n) => n.id === k)!.data!.role).toBe('main');
+
+    const jumps = edges.filter((e) => e.data!.kind === 'jump');
+    expect(jumps.map((e) => `${e.source}->${e.target}`).sort()).toEqual(['d4->d8', 'd9->d11']);
+    const maxRight = Math.max(...nodes.map((n) => n.position.x + n.width!));
+    for (const j of jumps) {
+      expect(j.sourceHandle).toBe('right');
+      expect(j.targetHandle).toBe('right');
+      const waypoints = j.data!.waypoints!;
+      expect(waypoints.length).toBe(2);
+      expect(waypoints.every((p) => p.x > maxRight)).toBe(true);
+    }
+
+    await callTool(server, 'scaffold_diagram', { diagramId: id, spec: buildYeepaySpec() });
+    const last = server.aiBatchManager.getBatches(id)[0];
+    expect(last.diffs.some((d) => d.opType === 'delete')).toBe(false);
+    expect(last.diffs.some((d) => d.opType === 'add')).toBe(false);
   });
 
   it('相连主干净距恒 50、附注折列、全图无重叠', async () => {

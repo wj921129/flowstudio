@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { normalizeSpec, SpecError } from '../src/spec/normalize.js';
 import type { DiagramSpec } from '../src/spec/types.js';
 import { diagramSpecSchema } from '../src/spec/spec-schema.js';
+import { buildYeepaySpec } from './helpers/render-asserts.js';
 
 const retry: DiagramSpec = {
   paradigm: 'vertical-flow',
@@ -107,6 +108,19 @@ describe('DiagramSpec 语义校验与推断', () => {
       nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
       edges: [{ from: 'a', to: 'b', kind: 'branch' }, { from: 'a', to: 'b', kind: 'jump' }],
     })).toThrow(SpecError);
+  });
+
+  it('易宝限额真实案例：jump 旁路不降级主干、附注宿主全在主干', () => {
+    const n = normalizeSpec(buildYeepaySpec());
+    expect(n.mainOrder).toEqual(['s0', 'd1', 'd2', 'p1', 'd3', 'd4', 'p2', 'd5', 'd6', 'd7', 'd8', 'd9', 'p3', 'd10', 'd11', 'd12', 'p4', 'd13', 'e1']);
+    expect(n.nodes.filter((x) => x.role === 'main').length).toBe(19);
+    expect(n.nodes.filter((x) => x.role === 'branch').length).toBe(20);
+    expect(n.nodes.filter((x) => x.role === 'annotation').length).toBe(9);
+    expect(n.edges.filter((e) => e.kind === 'jump').map((e) => `${e.from}->${e.to}`).sort()).toEqual(['d4->d8', 'd9->d11']);
+    const byId = new Map(n.nodes.map((x) => [x.id, x]));
+    for (const ann of n.nodes.filter((x) => x.role === 'annotation')) {
+      expect(byId.get(ann.attachTo!)!.role).toBe('main');
+    }
   });
 
   it('loop 指向拓扑序更晚的节点报 SpecError', () => {
