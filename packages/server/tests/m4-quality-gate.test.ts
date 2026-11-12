@@ -72,17 +72,20 @@ describe('M4 Quality Gate: End-to-End Human-AI Co-Governance Verification', () =
           arguments: {
             diagramId: diagId,
             title: '风控信审全流程',
-            lanes: [
-              { id: 'lane-user', label: '申请人' },
-              { id: 'lane-risk', label: '风控系统' },
-            ],
-            nodes: [
-              { id: 'step-apply', type: 'start-end', label: '用户提交申请', laneId: 'lane-user' },
-              { id: 'step-score', type: 'process', label: '自动化模型评分', laneId: 'lane-risk' },
-            ],
-            edges: [
-              { source: 'step-apply', target: 'step-score', label: '推送数据' },
-            ],
+            spec: {
+              paradigm: 'swimlane',
+              lanes: [
+                { id: 'lane-user', label: '申请人' },
+                { id: 'lane-risk', label: '风控系统' },
+              ],
+              nodes: [
+                { id: 'step-apply', type: 'start-end', label: '用户提交申请', laneId: 'lane-user' },
+                { id: 'step-score', type: 'process', label: '自动化模型评分', laneId: 'lane-risk' },
+              ],
+              edges: [
+                { from: 'step-apply', to: 'step-score', label: '推送数据' },
+              ],
+            },
           },
         },
       },

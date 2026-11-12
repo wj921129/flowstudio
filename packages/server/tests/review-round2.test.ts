@@ -146,21 +146,24 @@ describe('后端审查整改第二轮', () => {
     const result = await callTool(server, 2, 'scaffold_diagram', {
       diagramId,
       title: '泳道坐标图',
-      lanes: [
-        { id: 'lane-a', label: '泳道A' },
-        { id: 'lane-b', label: '泳道B' },
-      ],
-      nodes: [
-        { id: 'n1', type: 'start-end', label: '起点', laneId: 'lane-a' },
-        { id: 'n2', type: 'process', label: '步骤', laneId: 'lane-a' },
-        { id: 'n3', type: 'decision', label: '判断', laneId: 'lane-b' },
-        { id: 'n4', type: 'process', label: '处理', laneId: 'lane-b' },
-      ],
-      edges: [
-        { source: 'n1', target: 'n2' },
-        { source: 'n2', target: 'n3' },
-        { source: 'n3', target: 'n4' },
-      ],
+      spec: {
+        paradigm: 'swimlane',
+        lanes: [
+          { id: 'lane-a', label: '泳道A' },
+          { id: 'lane-b', label: '泳道B' },
+        ],
+        nodes: [
+          { id: 'n1', type: 'start-end', label: '起点', laneId: 'lane-a' },
+          { id: 'n2', type: 'process', label: '步骤', laneId: 'lane-a' },
+          { id: 'n3', type: 'decision', label: '判断', laneId: 'lane-b' },
+          { id: 'n4', type: 'process', label: '处理', laneId: 'lane-b' },
+        ],
+        edges: [
+          { from: 'n1', to: 'n2' },
+          { from: 'n2', to: 'n3' },
+          { from: 'n3', to: 'n4' },
+        ],
+      },
     });
     expect(result.success).toBe(true);
 
@@ -340,8 +343,11 @@ describe('后端审查整改第二轮', () => {
 
     const result = await callTool(server, 1, 'scaffold_diagram', {
       diagramId: diag.id,
-      nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
-      edges: [],
+      spec: {
+        paradigm: 'vertical-flow',
+        nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
+        edges: [],
+      },
     });
     expect(result.success).toBe(true);
     expect(result.warnings.some((w: string) => w.includes('完全锁定'))).toBe(true);

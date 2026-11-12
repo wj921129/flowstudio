@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { diagramSpecSchema } from '@flowstudio/shared';
 
 const positionSchema = z.object({ x: z.number(), y: z.number() });
 
@@ -117,25 +118,8 @@ export const applyOpsInputSchema = z.object({
 export const scaffoldDiagramInputSchema = z.object({
   diagramId: z.string().min(1),
   title: z.string().optional(),
-  lanes: z
-    .array(z.object({ id: z.string().min(1), label: z.string().min(1) }))
-    .optional(),
-  nodes: z.array(
-    z.object({
-      id: z.string().min(1),
-      type: flowNodeTypeSchema,
-      label: z.string().min(1),
-      laneId: z.string().min(1).optional(),
-    }),
-  ),
-  edges: z.array(
-    z.object({
-      source: z.string().min(1),
-      target: z.string().min(1),
-      label: z.string().optional(),
-    }),
-  ),
   agentName: z.string().optional(),
+  spec: diagramSpecSchema,
 });
 
 export const autoLayoutInputSchema = z.object({

@@ -52,7 +52,7 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     });
     expect(listRes.statusCode).toBe(200);
     const tools = listRes.json().result.tools;
-    expect(tools.length).toBe(7);
+    expect(tools.length).toBe(8);
 
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain('list_diagrams');
@@ -125,19 +125,22 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
           arguments: {
             diagramId,
             title: '供应链采购协同流程',
-            lanes: [
-              { id: 'lane-dept', label: '业务部门' },
-              { id: 'lane-finance', label: '财务中心' },
-            ],
-            nodes: [
-              { id: 'n-submit', type: 'start-end', label: '提交采购单', laneId: 'lane-dept' },
-              { id: 'n-approve', type: 'decision', label: '财务预算审批', laneId: 'lane-finance' },
-              { id: 'n-pay', type: 'process', label: '银行出纳打款', laneId: 'lane-finance' },
-            ],
-            edges: [
-              { source: 'n-submit', target: 'n-approve', label: '提审' },
-              { source: 'n-approve', target: 'n-pay', label: '通过' },
-            ],
+            spec: {
+              paradigm: 'swimlane',
+              lanes: [
+                { id: 'lane-dept', label: '业务部门' },
+                { id: 'lane-finance', label: '财务中心' },
+              ],
+              nodes: [
+                { id: 'n-submit', type: 'start-end', label: '提交采购单', laneId: 'lane-dept' },
+                { id: 'n-approve', type: 'decision', label: '财务预算审批', laneId: 'lane-finance' },
+                { id: 'n-pay', type: 'process', label: '银行出纳打款', laneId: 'lane-finance' },
+              ],
+              edges: [
+                { from: 'n-submit', to: 'n-approve', label: '提审' },
+                { from: 'n-approve', to: 'n-pay', label: '通过' },
+              ],
+            },
           },
         },
       },

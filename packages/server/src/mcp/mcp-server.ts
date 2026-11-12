@@ -4,7 +4,8 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
+import { DIAGRAM_PRESETS, diagramSpecSchema } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import type { DocumentWriter } from '../collaboration/document-writer.js';
@@ -62,53 +63,18 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'scaffold_diagram',
-    description: '一次性生成结构化骨架（支持横向泳道 Pool + 多个 Lane，或常规流程图），服务端自动排版并生成前置备份快照',
+    description:
+      '以 DiagramSpec 语义规范生成或重渲染图表（vertical-flow / timeline-annotated / swimlane / tiered-dag / tree 五范式确定性排版：' +
+      '主干恒距、分支同行右置、回环上方侧路、附注连续右列、pool→lane→节点层级），与现状差量写入并生成前置备份快照',
     inputSchema: {
       type: 'object',
       properties: {
         diagramId: { type: 'string', description: '图表 ID' },
         title: { type: 'string', description: '可选更新标题' },
-        lanes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              label: { type: 'string' },
-            },
-            required: ['id', 'label'],
-          },
-          description: '泳道定义列表（若有则自动创建 Pool 与 Lane 容器）',
-        },
-        nodes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              type: { type: 'string', description: '节点类型，如 process, decision, io, database, start-end 等' },
-              label: { type: 'string' },
-              laneId: { type: 'string', description: '归属的泳道 ID' },
-            },
-            required: ['id', 'type', 'label'],
-          },
-          description: '业务节点定义列表',
-        },
-        edges: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              source: { type: 'string' },
-              target: { type: 'string' },
-              label: { type: 'string' },
-            },
-            required: ['source', 'target'],
-          },
-          description: '连线定义列表',
-        },
+        agentName: { type: 'string', description: '可选 AI 协作者名称（写入批次账本）' },
+        spec: z.toJSONSchema(diagramSpecSchema),
       },
-      required: ['diagramId', 'nodes', 'edges'],
+      required: ['diagramId', 'spec'],
     },
   },
   {
@@ -142,6 +108,14 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         direction: { type: 'string', enum: ['RIGHT', 'DOWN'], description: '排版方向：RIGHT (横向) 或 DOWN (纵向)' },
       },
       required: ['diagramId'],
+    },
+  },
+  {
+    name: 'list_templates',
+    description: '列出 8 个范式预设（含完整 DiagramSpec 语义结构），供复制修改后提交 scaffold_diagram，降低出图试错成本',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
   },
 ];
@@ -261,6 +235,9 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
             toolResult = await collaborator.autoLayout(
               parseOrThrow(autoLayoutInputSchema, args, 'auto_layout'),
             );
+            break;
+          case 'list_templates':
+            toolResult = DIAGRAM_PRESETS;
             break;
           default:
             return reply.status(404).send({

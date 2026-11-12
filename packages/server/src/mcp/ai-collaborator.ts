@@ -6,8 +6,9 @@
 
 import * as Y from 'yjs';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import type { AiBatchEntityDiff } from '@flowstudio/shared';
-import { getNodeRegistryEntry } from '@flowstudio/shared';
+import type { AiBatchEntityDiff, DiagramSpec, FlowEdge, FlowNode, NodeLockMode } from '@flowstudio/shared';
+import { getNodeRegistryEntry, normalizeSpec, renderSpec } from '@flowstudio/shared';
+import { diffRendered } from './spec-ops.js';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import { DocumentWriter } from '../collaboration/document-writer.js';
@@ -345,203 +346,51 @@ export class AiCollaborator {
     diagramId: string;
     title?: string;
     agentName?: string;
-    lanes?: Array<{ id: string; label: string }>;
-    nodes: Array<{ id: string; type: string; label: string; laneId?: string }>;
-    edges: Array<{ source: string; target: string; label?: string }>;
+    spec: DiagramSpec;
   }) {
     if (!this.repo.getDiagramById(input.diagramId)) {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    // 写入前一次性读取现有文档（锚定锁判定 + 删除 Diff 快照）。
-    // mutate 回调必须保持同步纯 Yjs 修改，所有 IO 前移。
     const existing = await this.writer.readDocument(input.diagramId, (doc) => {
-      const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
-      const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
-      const nodes: Array<{ id: string; fullLocked: boolean; snapshot: Record<string, unknown> }> = [];
-      nodesMap.forEach((nodeMap, id) => {
-        nodes.push({
-          id,
-          fullLocked: getNodeLockMode(nodeMap) === 'full',
-          snapshot: snapshotMap(nodeMap),
-        });
+      const nodes: FlowNode[] = [];
+      const edges: FlowEdge[] = [];
+      const locks = new Map<string, NodeLockMode>();
+      doc.getMap<Y.Map<unknown>>('nodes').forEach((nodeMap, id) => {
+        nodes.push(snapshotMap(nodeMap) as unknown as FlowNode);
+        locks.set(id, getNodeLockMode(nodeMap));
       });
-      const edges: Array<{
-        id: string;
-        source?: string;
-        target?: string;
-        snapshot: Record<string, unknown>;
-      }> = [];
-      edgesMap.forEach((edgeMap, id) => {
-        edges.push({
-          id,
-          source: edgeMap.get('source') as string | undefined,
-          target: edgeMap.get('target') as string | undefined,
-          snapshot: snapshotMap(edgeMap),
-        });
+      doc.getMap<Y.Map<unknown>>('edges').forEach((edgeMap) => {
+        edges.push(snapshotMap(edgeMap) as unknown as FlowEdge);
       });
-      return { nodes, edges };
+      return { nodes, edges, locks };
     });
 
     this.writer.createSnapshot(input.diagramId, 'AI 生成骨架前快照', 'ai_batch');
 
-    const warnings: string[] = [];
-    const keptNodeIds = new Set(
-      existing.nodes.filter((node) => node.fullLocked).map((node) => node.id),
+    const protectedIds = new Set<string>();
+    for (const n of existing.nodes) {
+      if ((existing.locks.get(n.id) ?? 'none') !== 'full') continue;
+      protectedIds.add(n.id);
+      let cursor = n.parentId;
+      const seen = new Set([n.id]);
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        protectedIds.add(cursor);
+        cursor = existing.nodes.find((x) => x.id === cursor)?.parentId;
+      }
+    }
+    const ancestorWarnings = [...protectedIds]
+      .filter((id) => (existing.locks.get(id) ?? 'none') !== 'full')
+      .map((id) => `容器 ${id} 含人工完全锁定节点，已一并保留`);
+    const fixed = new Map(
+      existing.nodes
+        .filter((n) => (existing.locks.get(n.id) ?? 'none') !== 'none' || protectedIds.has(n.id))
+        .map((n) => [n.id, { position: n.position, width: n.width ?? DEFAULT_NODE_WIDTH, height: n.height ?? DEFAULT_NODE_HEIGHT }]),
     );
-    for (const node of existing.nodes) {
-      if (node.fullLocked) {
-        warnings.push(`节点 ${node.id} 已被人类完全锁定，保留原节点，未参与骨架重建`);
-      }
-    }
-
-    const existingById = new Map(existing.nodes.map((node) => [node.id, node]));
-
-    // 锚定锁红线：full 锁定节点的本体字段与世界坐标绝对不动。
-    // 保留其祖先容器链（lane/pool），锁定节点原样留在原泳道，禁止转浮动改写。
-    const protectedNodeIds = new Set(keptNodeIds);
-    for (const nodeId of keptNodeIds) {
-      let cursor = existingById.get(nodeId)?.snapshot.parentId;
-      const visited = new Set<string>([nodeId]);
-      while (typeof cursor === 'string' && !visited.has(cursor)) {
-        visited.add(cursor);
-        const ancestor = existingById.get(cursor);
-        if (!ancestor) break;
-        if (!protectedNodeIds.has(cursor)) {
-          protectedNodeIds.add(cursor);
-          const ancestorType = ancestor.snapshot.type;
-          const typeName = ancestorType === 'pool'
-            ? '泳池'
-            : ancestorType === 'lane'
-              ? '泳道'
-              : ancestorType === 'group'
-                ? '分组'
-                : '容器';
-          warnings.push(`${typeName} ${cursor} 含人工完全锁定节点，已一并保留`);
-        }
-        cursor = ancestor.snapshot.parentId as string | undefined;
-      }
-    }
-
-    // 保留容器占据的世界坐标下边界，用于新骨架池下移避让
-    let protectedMaxBottom = -Infinity;
-    for (const node of existing.nodes) {
-      if (!protectedNodeIds.has(node.id)) continue;
-      let worldY = (node.snapshot.position as LayoutPoint | undefined)?.y ?? 0;
-      let cursor = node.snapshot.parentId as string | undefined;
-      const visited = new Set<string>([node.id]);
-      while (typeof cursor === 'string' && !visited.has(cursor)) {
-        visited.add(cursor);
-        const ancestor = existingById.get(cursor);
-        if (!ancestor) break;
-        worldY += (ancestor.snapshot.position as LayoutPoint | undefined)?.y ?? 0;
-        cursor = ancestor.snapshot.parentId as string | undefined;
-      }
-      const height = (node.snapshot.height as number | undefined) ?? DEFAULT_NODE_HEIGHT;
-      protectedMaxBottom = Math.max(protectedMaxBottom, worldY + height);
-    }
-
-    const hasLanes = Boolean(input.lanes && input.lanes.length > 0);
-    const poolId = hasLanes ? this.newEntityId('pool') : undefined;
-    const poolOrigin = protectedMaxBottom === -Infinity
-      ? { x: 50, y: 50 }
-      : { x: 50, y: Math.max(50, protectedMaxBottom + 100) };
-    if (hasLanes && protectedMaxBottom !== -Infinity) {
-      warnings.push(
-        `已保留含人工锁定节点的旧泳道/泳池，新骨架池下移至 y=${poolOrigin.y} 避免重叠`,
-      );
-    }
-    const laneIds = hasLanes
-      ? input.lanes!.map((lane) => lane.id).filter((laneId) => {
-          if (protectedNodeIds.has(laneId)) {
-            warnings.push(`泳道 ${laneId} 已被人工锁定节点占用，跳过该泳道重建`);
-            return false;
-          }
-          return true;
-        })
-      : [];
-    const placeableLaneIds = new Set(laneIds);
-
-    // 既有锁定节点不参与 ELK 布局，避免占用虚拟落点导致布局失真（S7）
-    const layoutNodeIds = new Set(
-      input.nodes.filter((node) => !keptNodeIds.has(node.id)).map((node) => node.id),
-    );
-    const layoutEdges: Array<{ id: string; sources: string[]; targets: string[] }> = [];
-    input.edges.forEach((edge, idx) => {
-      if (!layoutNodeIds.has(edge.source) || !layoutNodeIds.has(edge.target)) {
-        warnings.push(
-          `连线端点 ${edge.source} -> ${edge.target} 未纳入本次骨架布局（可能已被人类锁定或不存在），布局阶段忽略`,
-        );
-        return;
-      }
-      layoutEdges.push({ id: `e-${idx}`, sources: [edge.source], targets: [edge.target] });
-    });
-
-    const layoutResult = await elkInstance.layout({
-      id: 'root',
-      layoutOptions: {
-        'elk.algorithm': 'layered',
-        'elk.direction': 'RIGHT',
-        'elk.spacing.nodeNode': '60',
-        'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-      },
-      children: input.nodes
-        .filter((node) => !keptNodeIds.has(node.id))
-        .map((n) => {
-          const size = getRegistrySize(n.type);
-          return { id: n.id, width: size.width, height: size.height };
-        }),
-      edges: layoutEdges,
-    });
-
-    const posMap = new Map<string, { x: number; y: number }>();
-    for (const child of layoutResult.children ?? []) {
-      posMap.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
-    }
-
-    // ELK 只产出全局坐标；这里按泳道分组换算为泳道局部坐标，
-    // 确保写入带 parentId 的子节点后能真正落在泳道容器内。
-    const placement = laneIds.length > 0
-      ? computeSwimlanePlacement({
-          horizontal: true,
-          laneIds,
-          children: input.nodes
-            .filter(
-              (node) =>
-                node.laneId
-                && placeableLaneIds.has(node.laneId)
-                && !keptNodeIds.has(node.id),
-            )
-            .map((node) => {
-              const size = getRegistrySize(node.type);
-              return {
-                id: node.id,
-                laneId: node.laneId!,
-                width: size.width,
-                height: size.height,
-              };
-            }),
-          globalPositions: posMap,
-        })
-      : null;
-
-    const poolHeight = placement?.poolSize.height
-      ?? LANE_HEADER_SIZE + (input.lanes?.length ?? 0) * 200;
-
-    // 未归属任何泳道的节点排到池下方，避免与泳道容器重叠
-    const floatingPositions = new Map<string, LayoutPoint>();
-    if (hasLanes) {
-      const floatingNodes = input.nodes
-        .filter((node) => !placement?.childPositions.has(node.id))
-        .sort((a, b) => (posMap.get(a.id)?.x ?? 0) - (posMap.get(b.id)?.x ?? 0));
-      floatingNodes.forEach((node, index) => {
-        const size = getRegistrySize(node.type);
-        floatingPositions.set(node.id, {
-          x: poolOrigin.x + index * (size.width + INSERT_GAP),
-          y: poolOrigin.y + poolHeight + 100,
-        });
-      });
-    }
+    const rendered = renderSpec(input.spec, { fixed });
+    const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none');
+    const mainOrder = normalizeSpec(input.spec).mainOrder;
 
     const batchId = this.newBatchId('ai-scaffold');
     const outcome = await this.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
@@ -549,141 +398,77 @@ export class AiCollaborator {
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
       const metaMap = doc.getMap<unknown>('meta');
       const diffs: AiBatchEntityDiff[] = [];
-
-      // 锁定节点及其祖先容器链原样保留，本体字段与世界坐标零改写
-      for (const node of existing.nodes) {
-        if (protectedNodeIds.has(node.id)) continue;
-        diffs.push({
-          entityId: node.id,
-          entityType: 'node',
-          opType: 'delete',
-          beforeState: node.snapshot,
-          afterState: null,
-        });
-        nodesMap.delete(node.id);
-      }
-      for (const edge of existing.edges) {
-        const keepForLocked = Boolean(
-          edge.source && edge.target && protectedNodeIds.has(edge.source) && protectedNodeIds.has(edge.target),
-        );
-        if (keepForLocked) continue;
-        diffs.push({
-          entityId: edge.id,
-          entityType: 'edge',
-          opType: 'delete',
-          beforeState: edge.snapshot,
-          afterState: null,
-        });
-        edgesMap.delete(edge.id);
-      }
-
-      if (input.title) {
-        metaMap.set('title', input.title.trim());
-      }
-
-      const registerNode = (id: string, nodeMap: Y.Map<unknown>) => {
-        nodesMap.set(id, nodeMap);
-        diffs.push({
-          entityId: id,
-          entityType: 'node',
-          opType: 'add',
-          beforeState: null,
-          afterState: snapshotMap(nodeMap),
-        });
+      const recordDelete = (entityType: 'node' | 'edge', id: string, map: Y.Map<unknown>) => {
+        diffs.push({ entityId: id, entityType, opType: 'delete', beforeState: snapshotMap(map), afterState: null });
       };
-
-      if (hasLanes && poolId) {
-        const poolMap = new Y.Map<unknown>();
-        poolMap.set('id', poolId);
-        poolMap.set('type', 'pool');
-        poolMap.set('position', { ...poolOrigin });
-        poolMap.set('width', placement?.poolSize.width ?? 900);
-        poolMap.set('height', placement?.poolSize.height ?? poolHeight);
-        poolMap.set('data', {
-          label: input.title || '业务泳道池',
-          type: 'pool',
-          orientation: 'horizontal',
-          laneOrder: input.lanes!.map((l) => l.id).filter((id) => placeableLaneIds.has(id)),
-          headerSize: LANE_HEADER_SIZE,
-        });
-        registerNode(poolId, poolMap);
-
-        input.lanes!.forEach((lane, idx) => {
-          if (!placeableLaneIds.has(lane.id)) return;
-          const frame = placement?.laneFrames.get(lane.id);
-          const laneMap = new Y.Map<unknown>();
-          laneMap.set('id', lane.id);
-          laneMap.set('type', 'lane');
-          laneMap.set('parentId', poolId);
-          laneMap.set('extent', 'parent');
-          laneMap.set('position', frame
-            ? { x: frame.x, y: frame.y }
-            : { x: 0, y: LANE_HEADER_SIZE + idx * 200 });
-          laneMap.set('width', frame?.width ?? 900);
-          laneMap.set('height', frame?.height ?? 200);
-          laneMap.set('data', { label: lane.label, type: 'lane', laneTitle: lane.label });
-          registerNode(lane.id, laneMap);
-        });
+      for (const id of diff.deleteEdgeIds) {
+        const m = edgesMap.get(id);
+        if (m) {
+          recordDelete('edge', id, m);
+          edgesMap.delete(id);
+        }
       }
-
-      for (const node of input.nodes) {
-        if (nodesMap.has(node.id)) {
-          warnings.push(`节点 ${node.id} 已存在（可能为完全锁定节点），跳过重建`);
-          continue;
+      for (const id of diff.deleteNodeIds) {
+        const m = nodesMap.get(id);
+        if (m) {
+          recordDelete('node', id, m);
+          nodesMap.delete(id);
         }
-        const nodeMap = new Y.Map<unknown>();
-        nodeMap.set('id', node.id);
-        nodeMap.set('type', node.type || 'process');
-        nodeMap.set(
-          'position',
-          placement?.childPositions.get(node.id)
-            ?? floatingPositions.get(node.id)
-            ?? posMap.get(node.id)
-            ?? { x: 50, y: 50 },
-        );
-        const regSize = getRegistrySize(node.type || 'process');
-        nodeMap.set('width', regSize.width);
-        nodeMap.set('height', regSize.height);
-        if (node.laneId && placeableLaneIds.has(node.laneId)) {
-          nodeMap.set('parentId', node.laneId);
-          nodeMap.set('extent', 'parent');
-        } else if (node.laneId) {
-          warnings.push(`目标泳道 ${node.laneId} 未在本次骨架中创建，节点 ${node.id} 按浮动放置`);
-        }
-        nodeMap.set('data', { label: node.label, type: node.type || 'process' });
-        registerNode(node.id, nodeMap);
       }
-
-      input.edges.forEach((edge) => {
-        if (!nodesMap.has(edge.source) || !nodesMap.has(edge.target)) {
-          warnings.push(`连线端点不存在 (${edge.source} -> ${edge.target})，跳过创建`);
-          return;
+      const writeNode = (n: FlowNode) => {
+        const m = new Y.Map<unknown>();
+        m.set('id', n.id);
+        m.set('type', n.type);
+        m.set('position', n.position);
+        m.set('width', n.width);
+        m.set('height', n.height);
+        if (n.parentId) {
+          m.set('parentId', n.parentId);
+          m.set('extent', n.extent ?? 'parent');
         }
-        const edgeId = this.newEntityId('edge');
-        const edgeMap = new Y.Map<unknown>();
-        edgeMap.set('id', edgeId);
-        edgeMap.set('source', edge.source);
-        edgeMap.set('target', edge.target);
-        edgeMap.set('type', 'orthogonal');
-        edgeMap.set('data', { label: edge.label });
-        edgesMap.set(edgeId, edgeMap);
-        diffs.push({
-          entityId: edgeId,
-          entityType: 'edge',
-          opType: 'add',
-          beforeState: null,
-          afterState: snapshotMap(edgeMap),
-        });
-      });
-
-      return { diffs, warnings };
+        m.set('data', n.data);
+        nodesMap.set(n.id, m);
+        diffs.push({ entityId: n.id, entityType: 'node', opType: 'add', beforeState: null, afterState: snapshotMap(m) });
+      };
+      const writeEdge = (e: FlowEdge) => {
+        const m = new Y.Map<unknown>();
+        m.set('id', e.id);
+        m.set('source', e.source);
+        m.set('target', e.target);
+        m.set('type', e.type ?? 'orthogonal');
+        if (e.sourceHandle) m.set('sourceHandle', e.sourceHandle);
+        if (e.targetHandle) m.set('targetHandle', e.targetHandle);
+        m.set('data', e.data ?? {});
+        edgesMap.set(e.id, m);
+        diffs.push({ entityId: e.id, entityType: 'edge', opType: 'add', beforeState: null, afterState: snapshotMap(m) });
+      };
+      for (const n of diff.addNodes) writeNode(n);
+      for (const e of diff.addEdges) writeEdge(e);
+      for (const { id, patch } of diff.updateNodes) {
+        const m = nodesMap.get(id);
+        if (!m) continue;
+        const before = snapshotMap(m);
+        for (const [k, v] of Object.entries(patch)) m.set(k, v);
+        diffs.push({ entityId: id, entityType: 'node', opType: 'update', beforeState: before, afterState: snapshotMap(m) });
+      }
+      for (const { id, patch } of diff.updateEdges) {
+        const m = edgesMap.get(id);
+        if (!m) continue;
+        const before = snapshotMap(m);
+        for (const [k, v] of Object.entries(patch)) m.set(k, v);
+        diffs.push({ entityId: id, entityType: 'edge', opType: 'update', beforeState: before, afterState: snapshotMap(m) });
+      }
+      metaMap.set('paradigm', input.spec.paradigm);
+      metaMap.set('mainOrder', mainOrder);
+      if (input.title) metaMap.set('title', input.title.trim());
+      return { diffs, warnings: [...rendered.warnings, ...diff.warnings, ...ancestorWarnings] };
     });
 
     this.batchManager.recordBatch({
       batchId,
       diagramId: input.diagramId,
       agentName: input.agentName,
-      summary: `AI 生成骨架：${input.nodes.length} 个节点、${input.edges.length} 条连线`,
+      summary: `AI 生成骨架：${rendered.nodes.length} 个节点、${rendered.edges.length} 条连线`,
       status: 'active',
       diffs: outcome.result.diffs,
       createdAt: new Date().toISOString(),
@@ -692,7 +477,7 @@ export class AiCollaborator {
     return {
       success: true,
       batchId,
-      message: `已成功生成包含 ${input.nodes.length} 个节点、${input.edges.length} 条连线的骨架`,
+      message: `已成功按 ${input.spec.paradigm} 范式渲染 ${rendered.nodes.length} 个节点、${rendered.edges.length} 条连线`,
       warnings: outcome.result.warnings,
       live: outcome.live,
       url: `${this.serverBaseUrl}/#${input.diagramId}`,

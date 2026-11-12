@@ -155,9 +155,12 @@ describe('后端审查整改第三轮', () => {
 
     const result = await callTool(server, 1, 'scaffold_diagram', {
       diagramId: diag.id,
-      lanes: [{ id: 'lane-new', label: '新泳道' }],
-      nodes: [{ id: 'n-new', type: 'process', label: '新节点', laneId: 'lane-new' }],
-      edges: [],
+      spec: {
+        paradigm: 'swimlane',
+        lanes: [{ id: 'lane-new', label: '新泳道' }],
+        nodes: [{ id: 'n-new', type: 'process', label: '新节点', laneId: 'lane-new' }],
+        edges: [],
+      },
     });
     expect(result.success).toBe(true);
     expect(result.warnings.some((w: string) => w.includes('已一并保留'))).toBe(true);
@@ -202,37 +205,42 @@ describe('后端审查整改第三轮', () => {
     doc.getMap<Y.Map<unknown>>('edges').set('edge-old', makeEdge('edge-old', 'free-node', 'locked-a'));
     server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
 
-    const result = await callTool(server, 1, 'scaffold_diagram', {
-      diagramId: diag.id,
-      nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
-      edges: [
-        { source: 'n-new', target: 'locked-a' },
-        { source: 'n-new', target: 'ghost-node' },
-      ],
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/mcp',
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'scaffold_diagram',
+          arguments: {
+            diagramId: diag.id,
+            spec: {
+              paradigm: 'vertical-flow',
+              nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
+              edges: [
+                { from: 'n-new', to: 'locked-a' },
+                { from: 'n-new', to: 'ghost-node' },
+              ],
+            },
+          },
+        },
+      },
     });
-    expect(result.success).toBe(true);
-    expect(result.warnings.some((w: string) => w.includes('布局阶段忽略'))).toBe(true);
+    const body = res.json();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain('连线端点不存在');
 
     const reloaded = loadDoc(server.repo, diag.id);
     const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
     const nextEdges = reloaded.getMap<Y.Map<unknown>>('edges');
 
-    // 锁定节点被保留，因此指向它的边仍可创建；不存在端点的边必须跳过
+    // 校验失败不产生任何写入：锁定节点与自由节点原样保留
     expect(nextNodes.has('locked-a')).toBe(true);
-    expect(nextNodes.has('n-new')).toBe(true);
-    expect(nextNodes.has('free-node')).toBe(false);
-
-    const edgeList: Array<{ source?: string; target?: string }> = [];
-    nextEdges.forEach((edgeMap) => {
-      edgeList.push({
-        source: edgeMap.get('source') as string | undefined,
-        target: edgeMap.get('target') as string | undefined,
-      });
-    });
-    expect(
-      edgeList.some((edge) => edge.source === 'n-new' && edge.target === 'locked-a'),
-    ).toBe(true);
-    expect(edgeList.some((edge) => edge.source === 'ghost-node' || edge.target === 'ghost-node')).toBe(false);
+    expect(nextNodes.has('free-node')).toBe(true);
+    expect(nextNodes.has('n-new')).toBe(false);
+    expect(nextEdges.has('edge-old')).toBe(true);
 
     await server.app.close();
   }, 20000);

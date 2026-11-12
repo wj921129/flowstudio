@@ -1,6 +1,6 @@
 import type { NormalizedSpec } from '../spec/normalize.js';
 import type { FlowEdge, FlowNode } from '../types.js';
-import { LANE_HEADER, LANE_PAD } from './constants.js';
+import { LANE_HEADER, LANE_PAD, MAIN_GAP } from './constants.js';
 import type { RenderContext, RenderResult } from './types.js';
 import { renderVerticalFlow } from './vertical-flow.js';
 
@@ -63,10 +63,18 @@ export function renderSwimlane(n: NormalizedSpec, ctx: RenderContext): RenderRes
     frameY += height;
   }
 
+  let poolY = ctx.origin.y;
+  if (ctx.fixed.size > 0) {
+    const bottom = Math.max(...[...ctx.fixed.values()].map((f) => f.position.y + f.height));
+    if (bottom + MAIN_GAP > poolY) {
+      poolY = bottom + MAIN_GAP;
+      warnings.push(`新骨架池下移至 y=${poolY} 避让人工保留容器`);
+    }
+  }
   nodes.unshift({
     id: poolId,
     type: 'pool',
-    position: { x: ctx.origin.x, y: ctx.origin.y },
+    position: { x: ctx.origin.x, y: poolY },
     width: poolW,
     height: frameY,
     data: {
