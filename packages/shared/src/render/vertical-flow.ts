@@ -160,6 +160,8 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
   }
 
   const edges: FlowEdge[] = [];
+  const maxRight = Math.max(0, ...[...pos.values()].map((p) => p.x + p.width));
+  let jumpLane = 0;
   for (const e of n.edges) {
     const a = pos.get(e.from);
     const b = pos.get(e.to);
@@ -191,6 +193,14 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
           { x: sideX, y: b.y + b.height / 2 },
         ];
       }
+    } else if (e.kind === 'jump') {
+      sourceHandle = 'right';
+      targetHandle = 'right';
+      const sideX = maxRight + LOOP_SIDE * ++jumpLane;
+      waypoints = [
+        { x: sideX, y: a.y + a.height / 2 },
+        { x: sideX, y: b.y + b.height / 2 },
+      ];
     } else if (e.kind === 'annotate') {
       sourceHandle = 'right';
       targetHandle = 'left';

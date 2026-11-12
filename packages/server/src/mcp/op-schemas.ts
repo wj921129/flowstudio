@@ -63,7 +63,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     source: z.string().min(1),
     target: z.string().min(1),
     label: z.string().optional(),
-    kind: z.enum(['next', 'branch', 'loop', 'annotate', 'tree']).optional(),
+    kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
     style: styleSchema.optional(),
   }),
   z.object({

@@ -18,7 +18,7 @@ export const specNodeSchema = z.object({
 export const specEdgeSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
-  kind: z.enum(['next', 'branch', 'loop', 'annotate', 'tree']).optional(),
+  kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
   label: z.string().optional(),
 });
 

@@ -25,7 +25,7 @@ export type McpOp =
   | { op: 'add_node'; type: string; label: string; id?: string; laneId?: string; role?: 'main' | 'branch' | 'annotation'; attachTo?: string; style?: Record<string, unknown> }
   | { op: 'update_node'; id: string; label?: string; style?: Record<string, unknown> }
   | { op: 'delete_node'; id: string }
-  | { op: 'connect'; source: string; target: string; label?: string; kind?: 'next' | 'branch' | 'loop' | 'annotate' | 'tree'; style?: Record<string, unknown> }
+  | { op: 'connect'; source: string; target: string; label?: string; kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree'; style?: Record<string, unknown> }
   | { op: 'disconnect'; edgeId?: string; source?: string; target?: string }
   | { op: 'add_lane'; label: string; id?: string; poolId?: string }
   | { op: 'move_to_lane'; nodeId: string; laneId: string }
@@ -63,6 +63,6 @@ export interface CompactDiagram {
     source: string;
     target: string;
     label?: string;
-    kind?: 'next' | 'branch' | 'loop' | 'annotate' | 'tree';
+    kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree';
   }>;
 }

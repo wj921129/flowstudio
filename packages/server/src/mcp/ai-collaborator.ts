@@ -630,7 +630,7 @@ export class AiCollaborator {
         target: string,
         label?: string,
         style?: Record<string, unknown>,
-        kind?: 'next' | 'branch' | 'loop' | 'annotate' | 'tree',
+        kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree',
       ) => {
         const edgeId = this.newEntityId('edge');
         const edgeMap = new Y.Map<unknown>();

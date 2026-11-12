@@ -2,7 +2,7 @@ import type { FlowNodeType } from '../types.js';
 
 export type Paradigm = 'vertical-flow' | 'timeline-annotated' | 'swimlane' | 'tiered-dag' | 'tree';
 export type SpecRole = 'main' | 'branch' | 'annotation';
-export type SpecEdgeKind = 'next' | 'branch' | 'loop' | 'annotate' | 'tree';
+export type SpecEdgeKind = 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree';
 
 export interface SpecNode {
   id: string;

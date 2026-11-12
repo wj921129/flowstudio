@@ -144,6 +144,14 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
     if (a === undefined || b === undefined) throw new SpecError(`loop 边端点必须是主干或分支: ${e.from} -> ${e.to}`);
     if (b >= a) throw new SpecError(`loop 边必须指向拓扑序更早的节点: ${e.from} -> ${e.to}`);
   }
+  for (const e of edges.filter((x) => x.kind === 'jump')) {
+    const from = byId.get(e.from)!;
+    const to = byId.get(e.to)!;
+    if (from.role !== 'main' || to.role !== 'main') throw new SpecError(`jump 边端点必须是主干节点: ${e.from} -> ${e.to}`);
+    const a = order.get(e.from);
+    const b = order.get(e.to);
+    if (a === undefined || b === undefined || b <= a) throw new SpecError(`jump 边必须指向拓扑序更晚的主干节点: ${e.from} -> ${e.to}`);
+  }
 
   if (s.paradigm === 'tiered-dag') {
     const adj = new Map<string, string[]>();

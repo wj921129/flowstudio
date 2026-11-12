@@ -75,6 +75,40 @@ describe('DiagramSpec 语义校验与推断', () => {
     })).toThrow(SpecError);
   });
 
+  it('jump 边跨段旁路不污染主干角色', () => {
+    const n = normalizeSpec({
+      paradigm: 'vertical-flow',
+      nodes: [
+        { id: 'd1', label: '命中？', type: 'decision' },
+        { id: 'p1', label: '中段处理' },
+        { id: 'd2', label: '下游判定', type: 'decision' },
+        { id: 'end', label: '结束', type: 'start-end' },
+      ],
+      edges: [
+        { from: 'd1', to: 'p1', label: '是' },
+        { from: 'p1', to: 'd2' },
+        { from: 'd1', to: 'd2', kind: 'jump', label: '否' },
+        { from: 'd2', to: 'end' },
+      ],
+    });
+    expect(n.nodes.every((x) => x.role === 'main')).toBe(true);
+    expect(n.mainOrder).toEqual(['d1', 'p1', 'd2', 'end']);
+    expect(n.nodes.find((x) => x.id === 'd2')!.role).toBe('main');
+  });
+
+  it('jump 边端点非主干或指向更早节点报 SpecError', () => {
+    expect(() => normalizeSpec({
+      paradigm: 'vertical-flow',
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+      edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'a', kind: 'jump' }],
+    })).toThrow(SpecError);
+    expect(() => normalizeSpec({
+      paradigm: 'vertical-flow',
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+      edges: [{ from: 'a', to: 'b', kind: 'branch' }, { from: 'a', to: 'b', kind: 'jump' }],
+    })).toThrow(SpecError);
+  });
+
   it('loop 指向拓扑序更晚的节点报 SpecError', () => {
     expect(() => normalizeSpec({
       paradigm: 'vertical-flow',

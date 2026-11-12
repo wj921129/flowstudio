@@ -93,6 +93,32 @@ describe('vertical-flow 几何约定', () => {
     expect(noOverlap(r.nodes)).toBe(true);
   });
 
+  it('jump 跨段旁路走最右外侧侧路且主干角色不变', () => {
+    const r = renderVerticalFlow(normalizeSpec({
+      paradigm: 'vertical-flow',
+      nodes: [
+        { id: 'd1', label: '命中？', type: 'decision' },
+        { id: 'p1', label: '中段处理' },
+        { id: 'd2', label: '下游判定', type: 'decision' },
+        { id: 'end', label: '结束', type: 'start-end' },
+      ],
+      edges: [
+        { from: 'd1', to: 'p1', label: '是' },
+        { from: 'p1', to: 'd2' },
+        { from: 'd1', to: 'd2', kind: 'jump', label: '否' },
+        { from: 'd2', to: 'end' },
+      ],
+    }), ctx);
+    const jump = r.edges.find((e) => e.data!.kind === 'jump')!;
+    expect(jump.sourceHandle).toBe('right');
+    expect(jump.targetHandle).toBe('right');
+    const maxRight = Math.max(...r.nodes.map((n) => n.position.x + n.width!));
+    expect(jump.data!.waypoints!.every((p) => p.x > maxRight)).toBe(true);
+    expect(jump.data!.waypoints![0].y).toBe(byId(r, 'd1').position.y + byId(r, 'd1').height! / 2);
+    expect(jump.data!.waypoints![1].y).toBe(byId(r, 'd2').position.y + byId(r, 'd2').height! / 2);
+    expect(noOverlap(r.nodes)).toBe(true);
+  });
+
   it('idPrefix 作用于实体与边端点', () => {
     const r = renderVerticalFlow(normalizeSpec(retrySpec), { ...ctx, idPrefix: 'x_' });
     expect(r.nodes.every((n) => n.id.startsWith('x_'))).toBe(true);

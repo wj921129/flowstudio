@@ -88,6 +88,33 @@ describe('apply_ops 语义化与 get_diagram 语义读回', () => {
     expect(branch.kind).toBe('branch');
   });
 
+  it('scaffold 接受 jump 跨段旁路且主干角色保持', async () => {
+    const id = (await callTool(server, 'create_diagram', { title: '跨段旁路' })).data.id as string;
+    const res = await callTool(server, 'scaffold_diagram', {
+      diagramId: id,
+      spec: {
+        paradigm: 'vertical-flow',
+        nodes: [
+          { id: 'd1', label: '命中？', type: 'decision' },
+          { id: 'p1', label: '中段处理' },
+          { id: 'd2', label: '下游判定', type: 'decision' },
+          { id: 'end', label: '结束', type: 'start-end' },
+        ],
+        edges: [
+          { from: 'd1', to: 'p1', label: '是' },
+          { from: 'p1', to: 'd2' },
+          { from: 'd1', to: 'd2', kind: 'jump', label: '否' },
+          { from: 'd2', to: 'end' },
+        ],
+      },
+    });
+    expect(res.isError, res.text).toBe(false);
+    const view = (await callTool(server, 'get_diagram', { diagramId: id })).data;
+    expect(view.mainOrder).toEqual(['d1', 'p1', 'd2', 'end']);
+    expect(view.edges.find((e: any) => e.source === 'd1' && e.target === 'd2').kind).toBe('jump');
+    expect(view.nodes.every((n: any) => n.role === 'main')).toBe(true);
+  });
+
   it('update_node 改文案不丢 role/attachTo', async () => {
     const id = await seeded();
     await callTool(server, 'apply_ops', {
