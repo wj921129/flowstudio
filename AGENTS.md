@@ -13,3 +13,4 @@
 4. **Vibe-Coding 极简规范**：零注释且紧凑排版；严禁挂载传统前端/后端 guard 守卫；审查普通问题最多 1 次复审，严重 Bug 最多 3 次闭环。
 5. **Mem0 记忆规范**：优先 Hook 自动注入；固定 `project="flowstudio"`；score > 0.55；单句中文 ≤ 100 字且严格执行四不录入。
 6. **Git 交付流水线**：日常开发在 `dev` 分支；改码后自动 `git commit`（规范格式+中文 Title）并 `git push origin dev`；重大变更主动建议合入 master 并经老板授权。
+7. **画图改造联动 MCP**：涉及画图改造（渲染/布局/节点/连线/泳道语义、ops 契约等）时，必须评估对 MCP 服务的影响并同步改造（tools 入参/校验、`apply_ops`、`scaffold_diagram`、快照差量等链路），保证人机两侧语义一致，严禁只改单侧留下断层。
