@@ -56,7 +56,8 @@ export async function executePlan(diagramId: string, plan: CopilotDryRunPlan): P
     if (plan.tool === 'scaffold_diagram') {
       const payload = {
         diagramId,
-        ...plan.scaffold,
+        title: plan.spec?.title,
+        spec: plan.spec,
       };
       const res = await callMcpTool('scaffold_diagram', payload);
       return {

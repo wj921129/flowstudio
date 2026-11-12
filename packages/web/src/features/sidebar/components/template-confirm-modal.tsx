@@ -44,7 +44,7 @@ export const TemplateConfirmModal: React.FC<TemplateConfirmModalProps> = ({
             <span className="font-semibold text-fs-primary ml-1">
               「{template.title}」
             </span>
-            （包含 {template.nodes.length} 个节点，{template.edges.length} 条连线）。
+            （包含 {template.spec.nodes.length} 个节点，{template.spec.edges.length} 条连线）。
           </p>
           <div className="p-2.5 bg-fs-bg/60 border border-fs-border/60 rounded-md text-[11px] text-fs-text-muted">
             🛡️ <strong>安全保障</strong>：若选择“覆盖当前画布”，系统将在清空前

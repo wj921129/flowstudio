@@ -1,4 +1,4 @@
-import type { FlowNode, FlowEdge } from '@flowstudio/shared';
+import type { DiagramSpec, FlowNode, FlowEdge } from '@flowstudio/shared';
 import type { CopilotDryRunPlan } from './copilot-types';
 
 export interface PlanContext {
@@ -277,7 +277,7 @@ export function planFromNaturalLanguage(ctx: PlanContext, prompt: string): PlanR
         ]
       : undefined;
 
-    const nodes = [
+    const nodes: DiagramSpec['nodes'] = [
       { id: 'node-start', type: 'start-end', label: '发起订单', laneId: hasLanes ? 'lane-user' : undefined },
       { id: 'node-risk', type: 'decision', label: '风控反欺诈校验', laneId: hasLanes ? 'lane-risk' : undefined },
       { id: 'node-pay', type: 'process', label: '核心扣款结算', laneId: hasLanes ? 'lane-pay' : undefined },
@@ -307,12 +307,12 @@ export function planFromNaturalLanguage(ctx: PlanContext, prompt: string): PlanR
           '+ 创建节点：完成支付通知 (start-end)',
           '+ 连接连线并标注条件分支 [通过] 与 [拦截]',
         ],
-        scaffold: {
-          diagramId: ctx.diagramId,
+        spec: {
+          paradigm: hasLanes ? 'swimlane' : 'vertical-flow',
           title: '在线订单与风控结算流程',
           lanes,
-          nodes,
-          edges,
+          nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label, laneId: n.laneId })),
+          edges: edges.map((e) => ({ from: e.source, to: e.target, label: e.label })),
         },
       },
     };

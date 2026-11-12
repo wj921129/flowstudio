@@ -1,10 +1,12 @@
+import type { DiagramSpec } from '@flowstudio/shared';
+
 export interface CopilotDryRunPlan {
   id: string;
   tool: 'apply_ops' | 'scaffold_diagram' | 'auto_layout';
   summary: string;
   details: string[];
   ops?: any[];
-  scaffold?: any;
+  spec?: DiagramSpec;
   direction?: 'RIGHT' | 'DOWN';
 }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { FlowEdge, FlowNode } from '@flowstudio/shared';
+import { renderSpec } from '@flowstudio/shared';
 import {
   ChevronDown,
   ChevronRight,
@@ -87,8 +87,8 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
                   className="mb-2 h-24 w-full shrink-0 overflow-hidden rounded border border-fs-border/60 bg-fs-bg"
                   dangerouslySetInnerHTML={{
                     __html: generateMiniSvgThumbnail(
-                      tmpl.nodes as FlowNode[],
-                      tmpl.edges as FlowEdge[]
+                      renderSpec(tmpl.spec).nodes,
+                      renderSpec(tmpl.spec).edges
                     ),
                   }}
                 />
@@ -108,7 +108,7 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
                 {/* 节点数与连线数小信息 & 快速点击载入 */}
                 <div className="mt-2 pt-2 border-t border-fs-border/40 flex items-center justify-between text-[10px] text-fs-text-muted">
                   <span className="font-mono">
-                    {tmpl.nodes.length} 节点 · {tmpl.edges.length} 连线
+                    {tmpl.spec.nodes.length} 节点 · {tmpl.spec.edges.length} 连线
                   </span>
                   <button
                     type="button"

@@ -20,18 +20,15 @@ describe('Templates Library', () => {
     const theme = THEME_PRESETS[3]; // 科技炫紫
     const instance = instantiateTemplate(template, theme, { x: 100, y: 100 });
 
-    expect(instance.nodes.length).toBe(template.nodes.length);
-    expect(instance.edges.length).toBe(template.edges.length);
-    // 验证新 ID
-    expect(instance.nodes[0].id).not.toBe(template.nodes[0].id);
-    // 验证坐标偏移
-    expect(instance.nodes[0].position.x).toBe(template.nodes[0].position.x + 100);
-    // 验证主题注入
+    expect(instance.nodes.length).toBe(template.spec.nodes.length);
+    expect(instance.edges.length).toBe(template.spec.edges.length);
+    expect(instance.nodes[0].id).not.toBe(template.spec.nodes[0].id);
+    expect(instance.nodes[0].position.y).toBe(100);
     expect((instance.nodes[0].data.style as any)?.borderColor).toBe(theme.tokens.nodeBorder);
   });
 
   it('correctly maps edges source and target to the newly generated node IDs', () => {
-    const template = TEMPLATES_REGISTRY.find((t) => t.edges.length > 0)!;
+    const template = TEMPLATES_REGISTRY.find((t) => t.spec.edges.length > 0)!;
     const theme = THEME_PRESETS[0];
     const instance = instantiateTemplate(template, theme);
 
@@ -41,5 +38,13 @@ describe('Templates Library', () => {
       expect(nodeIds.has(edge.target)).toBe(true);
       expect(edge.style?.stroke).toBe(theme.tokens.edgeStroke);
     });
+  });
+
+  it('swimlane template instances parent business nodes to lanes', () => {
+    const template = TEMPLATES_REGISTRY.find((t) => t.id === 'swimlane-cross-department')!;
+    const instance = instantiateTemplate(template, THEME_PRESETS[0]);
+    const biz = instance.nodes.filter((n) => !['pool', 'lane'].includes(n.type));
+    expect(biz.every((n) => n.parentId!.includes('lane'))).toBe(true);
+    expect(biz.every((n) => n.extent === 'parent')).toBe(true);
   });
 });

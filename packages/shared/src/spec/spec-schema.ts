@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { FLOW_NODE_TYPES } from '../types.js';
+import { FLOW_NODE_TYPES, type FlowNodeType } from '../types.js';
 
 const specNodeTypeSchema = z.enum(
-  FLOW_NODE_TYPES.filter((t) => t !== 'pool' && t !== 'lane') as unknown as [string, ...string[]],
+  FLOW_NODE_TYPES.filter((t) => t !== 'pool' && t !== 'lane') as unknown as [FlowNodeType, ...FlowNodeType[]],
 );
 
 export const specNodeSchema = z.object({

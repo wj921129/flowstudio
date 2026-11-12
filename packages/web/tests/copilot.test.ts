@@ -146,10 +146,10 @@ describe('Web AI Copilot Panel & Human-AI Co-Governance Engine', () => {
 
     expect(result.plan).toBeDefined();
     expect(result.plan?.tool).toBe('scaffold_diagram');
-    expect(result.plan?.scaffold).toBeDefined();
-    expect(result.plan?.scaffold.lanes.length).toBeGreaterThanOrEqual(2);
-    expect(result.plan?.scaffold.nodes.length).toBeGreaterThan(0);
-    expect(result.plan?.scaffold.edges.length).toBeGreaterThan(0);
+    expect(result.plan?.spec).toBeDefined();
+    expect(result.plan?.spec.lanes.length).toBeGreaterThanOrEqual(2);
+    expect(result.plan?.spec.nodes.length).toBeGreaterThan(0);
+    expect(result.plan?.spec.edges.length).toBeGreaterThan(0);
   });
 
   it('matches PRD 3.1 core phrase 帮我细化选中这三个节点的异常补偿逻辑 to planBranch with compensation nodes', () => {

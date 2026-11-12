@@ -81,7 +81,7 @@ describe('Y.Doc Template & Theme Integration', () => {
     bridgeA.setDiagram(instance.nodes, instance.edges);
 
     const bState = bridgeB.getState();
-    expect(bState.nodes.length).toBe(template.nodes.length);
-    expect(bState.edges.length).toBe(template.edges.length);
+    expect(bState.nodes.length).toBe(template.spec.nodes.length);
+    expect(bState.edges.length).toBe(template.spec.edges.length);
   });
 });
