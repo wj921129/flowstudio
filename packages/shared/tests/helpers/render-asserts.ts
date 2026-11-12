@@ -27,6 +27,20 @@ export function columnsOf(r: RenderResult, hostId: string): number {
   return new Set(r.nodes.filter((n) => n.data!.attachTo === hostId).map((n) => n.position.x)).size;
 }
 
+export function laneContainsAllChildren(r: RenderResult): boolean {
+  const lanes = r.nodes.filter((n) => n.type === 'lane');
+  return lanes.every((lane) => r.nodes
+    .filter((n) => n.parentId === lane.id)
+    .every((c) => c.position.x >= 0 && c.position.y >= 0 && c.position.x + c.width! <= lane.width! && c.position.y + c.height! <= lane.height!));
+}
+
+export function annotationLaneIdInherited(r: RenderResult): boolean {
+  return r.nodes.filter((n) => n.data!.role === 'annotation').every((a) => {
+    const host = r.nodes.find((h) => h.id === a.data!.attachTo);
+    return Boolean(host) && host!.parentId === a.parentId;
+  });
+}
+
 export function buildSvnSpec(): DiagramSpec {
   const mainLabels = [
     'r473840｜2023-06-15 renzw·通道上线',
