@@ -1,0 +1,15 @@
+export const MAIN_GAP = 50;
+export const BRANCH_GAP = 85;
+export const BRANCH_VGAP = 50;
+export const ANNOT_GAP = 16;
+export const ANNOT_COL_SIZE = 4;
+export const ANNOT_COL_GAP = 40;
+export const LOOP_RISE = 40;
+export const LOOP_SIDE = 40;
+export const LANE_HEADER = 40;
+export const LANE_PAD = 40;
+export const TIER_GAP = 60;
+export const TIER_VGAP = 60;
+export const TREE_GAP = 40;
+export const TREE_VGAP = 60;
+export const ORIGIN = { x: 50, y: 50 };
