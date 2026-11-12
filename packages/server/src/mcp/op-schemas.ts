@@ -44,6 +44,8 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     label: z.string().min(1),
     id: z.string().min(1).optional(),
     laneId: z.string().min(1).optional(),
+    role: z.enum(['main', 'branch', 'annotation']).optional(),
+    attachTo: z.string().min(1).optional(),
     style: styleSchema.optional(),
   }),
   z.object({
@@ -61,6 +63,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     source: z.string().min(1),
     target: z.string().min(1),
     label: z.string().optional(),
+    kind: z.enum(['next', 'branch', 'loop', 'annotate', 'tree']).optional(),
     style: styleSchema.optional(),
   }),
   z.object({

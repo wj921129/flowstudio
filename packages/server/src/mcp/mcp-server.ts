@@ -82,7 +82,8 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     description:
       '以原子事务批量执行增量编辑操作（add_node / update_node / delete_node / connect / disconnect / ' +
       'move_node / move_to_lane / update_edge / add_lane / insert_between），自动触发前置快照、' +
-      '记录实体级 Diff 账本并遵守节点锚定锁',
+      '记录实体级 Diff 账本并遵守节点锚定锁；connect 支持 kind（next/branch/loop/annotate/tree），' +
+      'add_node 支持 role/attachTo 语义字段',
     inputSchema: {
       type: 'object',
       properties: {

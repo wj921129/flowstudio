@@ -279,6 +279,8 @@ export class AiCollaborator {
           type,
           label,
           laneId: parentId,
+          role: data.role as CompactDiagram['nodes'][number]['role'],
+          attachTo: data.attachTo as string | undefined,
           position: pos,
           lockMode: getNodeLockMode(nodeMap),
         });
@@ -291,11 +293,20 @@ export class AiCollaborator {
       const data = (edgeMap.get('data') as Record<string, unknown>) || {};
       const label = (data.label as string) || undefined;
       if (source && target) {
-        edges.push({ id, source, target, label });
+        edges.push({ id, source, target, label, kind: data.kind as CompactDiagram['edges'][number]['kind'] });
       }
     });
 
-    return { id: diagramId, title, lanes, nodes, edges };
+    const meta = doc.getMap<unknown>('meta');
+    return {
+      id: diagramId,
+      title,
+      paradigm: meta.get('paradigm') as string | undefined,
+      mainOrder: meta.get('mainOrder') as string[] | undefined,
+      lanes,
+      nodes,
+      edges,
+    };
   }
 
   /**
@@ -578,6 +589,8 @@ export class AiCollaborator {
         label: string;
         position: { x: number; y: number };
         laneId?: string;
+        role?: 'main' | 'branch' | 'annotation';
+        attachTo?: string;
         style?: Record<string, unknown>;
       }) => {
         const nodeMap = new Y.Map<unknown>();
@@ -593,6 +606,8 @@ export class AiCollaborator {
         nodeMap.set('data', {
           label: spec.label,
           type: spec.type || 'process',
+          ...(spec.role ? { role: spec.role } : {}),
+          ...(spec.attachTo ? { attachTo: spec.attachTo } : {}),
           ...(spec.style ? { style: spec.style } : {}),
         });
         nodesMap.set(spec.id, nodeMap);
@@ -605,6 +620,7 @@ export class AiCollaborator {
         target: string,
         label?: string,
         style?: Record<string, unknown>,
+        kind?: 'next' | 'branch' | 'loop' | 'annotate' | 'tree',
       ) => {
         const edgeId = this.newEntityId('edge');
         const edgeMap = new Y.Map<unknown>();
@@ -612,7 +628,7 @@ export class AiCollaborator {
         edgeMap.set('source', source);
         edgeMap.set('target', target);
         edgeMap.set('type', 'orthogonal');
-        edgeMap.set('data', { label, ...(style ? { style } : {}) });
+        edgeMap.set('data', { label, ...(kind ? { kind } : {}), ...(style ? { style } : {}) });
         edgesMap.set(edgeId, edgeMap);
         recordAdd('edge', edgeId, edgeMap);
         return edgeId;
@@ -672,6 +688,8 @@ export class AiCollaborator {
               label: op.label,
               position: findAddNodePosition(op.laneId),
               laneId: op.laneId,
+              role: op.role,
+              attachTo: op.attachTo,
               style: op.style,
             });
             appliedCount++;
@@ -738,7 +756,7 @@ export class AiCollaborator {
               warnings.push(`连线端点不存在 (${op.source} -> ${op.target})，跳过`);
               break;
             }
-            createEdgeMap(op.source, op.target, op.label, op.style);
+            createEdgeMap(op.source, op.target, op.label, op.style, op.kind);
             appliedCount++;
             break;
           }
