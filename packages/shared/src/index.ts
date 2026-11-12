@@ -13,4 +13,7 @@ export * from './interop/xml-parser.js';
 export * from './interop/drawio-bridge.js';
 export * from './interop/bpmn-bridge.js';
 export * from './snapshot-diff.js';
+export * from './spec/types.js';
+export * from './spec/spec-schema.js';
+export * from './spec/normalize.js';
 
