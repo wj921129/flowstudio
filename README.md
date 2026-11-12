@@ -47,7 +47,10 @@ flowstudio/
 │
 ├── data/                       # 运行时持久化数据目录（SQLite 数据库与 WAL，已 gitignore）
 ├── scripts/                    # 运维与接入脚本（start.bat, dev-all.bat, flowstudio-mcp.cjs）
-└── .superpowers/doc/           # 需求设计文档与实施规划归档目录
+└── docs/                       # 项目标准文档中心（文件夹英文简称，文档中文）
+    ├── prd/                    # 产品需求规格说明书与已实现功能全景清单
+    ├── tech/                   # 系统架构设计方案与技术方案
+    └── flow/                   # 一二期里程碑实施流程与研发流转验收总结
 ```
 
 ---
