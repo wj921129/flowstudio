@@ -22,6 +22,9 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
     idPrefix: opts.idPrefix ?? '',
     origin: opts.origin ?? { ...ORIGIN },
     fixed: opts.fixed ?? new Map(),
+    laneSizes: opts.laneSizes ?? new Map(),
+    poolPosition: opts.poolPosition,
+    obstacles: opts.obstacles ?? new Map(),
   };
   return RENDERERS[n.paradigm](n, ctx);
 }

@@ -43,8 +43,8 @@ export function diffRendered(
     if (protectedIds.has(rn.id)) continue;
     const patch: Partial<FlowNode> = {};
     if (same(ex.type) !== same(rn.type)) patch.type = rn.type;
-    if (lockOf(rn.id) !== 'position' && same(ex.position) !== same(rn.position)) patch.position = rn.position;
     const isContainer = rn.type === 'pool' || rn.type === 'lane';
+    if (!isContainer && lockOf(rn.id) !== 'position' && same(ex.position) !== same(rn.position)) patch.position = rn.position;
     const width = isContainer ? Math.max(ex.width ?? 0, rn.width ?? 0) : rn.width;
     const height = isContainer ? Math.max(ex.height ?? 0, rn.height ?? 0) : rn.height;
     if (same(ex.width) !== same(width)) patch.width = width;

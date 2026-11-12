@@ -399,7 +399,17 @@ export class AiCollaborator {
         .filter((n) => (existing.locks.get(n.id) ?? 'none') !== 'none' || protectedIds.has(n.id))
         .map((n) => [n.id, { position: n.position, width: n.width ?? DEFAULT_NODE_WIDTH, height: n.height ?? DEFAULT_NODE_HEIGHT }]),
     );
-    const rendered = renderSpec(input.spec, { fixed });
+    const laneSizes = new Map(
+      existing.nodes.filter((n) => n.type === 'lane').map((n) => [n.id, { width: n.width ?? 0, height: n.height ?? 0 }]),
+    );
+    const obstacles = new Map(
+      [...fixed].filter(([id]) => {
+        const t = existing.nodes.find((n) => n.id === id)?.type;
+        return t === 'pool' || t === 'lane' || t === 'group';
+      }),
+    );
+    const existingPool = existing.nodes.find((n) => n.type === 'pool' && n.id === 'pool');
+    const rendered = renderSpec(input.spec, { fixed, laneSizes, poolPosition: existingPool?.position, obstacles });
     const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none');
     const mainOrder = normalizeSpec(input.spec).mainOrder;
 

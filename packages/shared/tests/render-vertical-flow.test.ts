@@ -80,6 +80,19 @@ describe('vertical-flow 几何约定', () => {
     expect(noOverlap(r.nodes)).toBe(true);
   });
 
+  it('main→main 回环走右侧侧路不穿越主干', () => {
+    const r = renderVerticalFlow(normalizeSpec({
+      paradigm: 'vertical-flow',
+      nodes: [{ id: 'm1', label: '一' }, { id: 'm2', label: '二' }, { id: 'm3', label: '三' }],
+      edges: [{ from: 'm1', to: 'm2' }, { from: 'm2', to: 'm3' }, { from: 'm3', to: 'm1', kind: 'loop' }],
+    }), ctx);
+    const mains = r.nodes.filter((n) => ['m1', 'm2', 'm3'].includes(n.id));
+    const mainRight = Math.max(...mains.map((n) => n.position.x + n.width!));
+    const loop = r.edges.find((e) => e.data!.kind === 'loop')!;
+    expect(loop.data!.waypoints!.every((p) => p.x > mainRight)).toBe(true);
+    expect(noOverlap(r.nodes)).toBe(true);
+  });
+
   it('idPrefix 作用于实体与边端点', () => {
     const r = renderVerticalFlow(normalizeSpec(retrySpec), { ...ctx, idPrefix: 'x_' });
     expect(r.nodes.every((n) => n.id.startsWith('x_'))).toBe(true);

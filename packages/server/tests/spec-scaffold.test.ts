@@ -144,6 +144,50 @@ describe('scaffold_diagram spec 差量渲染', () => {
     expect(res.isError).toBe(true);
   });
 
+  it('人工调整过的 lane 位置与高度二渲后保留（位置仅新建时设定）', async () => {
+    const id = await newDiagram();
+    await callTool(server, 'scaffold_diagram', { diagramId: id, spec: swimSpec });
+    await server.writer.mutate(id, 'test:lane', (doc) => {
+      const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+      nodes.forEach((m) => {
+        const data = m.get('data') as any;
+        if (m.get('type') === 'lane' && data.laneTitle === '业务部门') m.set('height', 400);
+        if (m.get('type') === 'lane' && data.laneTitle === '技术团队') m.set('position', { x: 0, y: 500 });
+      });
+    });
+    await callTool(server, 'scaffold_diagram', { diagramId: id, spec: swimSpec });
+    const frames = await server.writer.readDocument(id, (doc) => {
+      const out: Array<{ title: string; y: number; h: number }> = [];
+      doc.getMap<Y.Map<unknown>>('nodes').forEach((m) => {
+        if (m.get('type') === 'lane') out.push({ title: (m.get('data') as any).laneTitle, y: (m.get('position') as any).y, h: m.get('height') as number });
+      });
+      return out;
+    });
+    const biz = frames.find((f) => f.title === '业务部门')!;
+    const tech = frames.find((f) => f.title === '技术团队')!;
+    expect(biz.h).toBeGreaterThanOrEqual(400);
+    expect(tech.y).toBe(500);
+  });
+
+  it('泳道内 position 锁节点的世界坐标二渲后零改写', async () => {
+    const id = await newDiagram();
+    await callTool(server, 'scaffold_diagram', { diagramId: id, spec: swimSpec });
+    const before = await server.writer.readDocument(id, (doc) => {
+      const m = doc.getMap<Y.Map<unknown>>('nodes').get('node-t1')!;
+      m.set('data', { ...(m.get('data') as object), lockMode: 'position' });
+      const lane = doc.getMap<Y.Map<unknown>>('nodes').get(m.get('parentId') as string)!;
+      return { local: m.get('position'), laneY: (lane.get('position') as any).y };
+    });
+    await callTool(server, 'scaffold_diagram', { diagramId: id, spec: swimSpec });
+    const after = await server.writer.readDocument(id, (doc) => {
+      const m = doc.getMap<Y.Map<unknown>>('nodes').get('node-t1')!;
+      const lane = doc.getMap<Y.Map<unknown>>('nodes').get(m.get('parentId') as string)!;
+      return { local: m.get('position'), laneY: (lane.get('position') as any).y };
+    });
+    expect(after.local).toEqual(before.local);
+    expect(after.laneY).toBe(before.laneY);
+  });
+
   it('tools/list 含 8 个工具且 list_templates 返回 8 个预设', async () => {
     const listRes = await server.app.inject({ method: 'POST', url: '/mcp', payload: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
     const tools = listRes.json().result.tools;

@@ -98,6 +98,33 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
       if (n.role === 'annotation') n.laneId = n.laneId ?? byId.get(n.attachTo!)!.laneId;
       if (!n.laneId || !laneIds.has(n.laneId)) throw new SpecError(`swimlane 节点 ${n.id} 缺少合法 laneId`);
     }
+    for (const e of edges) {
+      if (e.kind === 'branch' && byId.get(e.from)!.laneId !== byId.get(e.to)!.laneId) {
+        throw new SpecError(`swimlane 跨泳道 branch 边不被支持: ${e.from} -> ${e.to}`);
+      }
+    }
+  }
+
+  if (s.paradigm === 'tree') {
+    const parentCount = new Map<string, number>();
+    const adj = new Map<string, string[]>();
+    for (const e of edges) {
+      if (e.from === e.to) throw new SpecError(`tree 自环不被支持: ${e.from}`);
+      parentCount.set(e.to, (parentCount.get(e.to) ?? 0) + 1);
+      adj.set(e.from, [...(adj.get(e.from) ?? []), e.to]);
+    }
+    for (const [id, count] of parentCount) {
+      if (count > 1) throw new SpecError(`tree 节点 ${id} 存在多个父节点（矩阵结构请改用 tiered-dag）`);
+    }
+    const state = new Map<string, number>();
+    const dfs = (id: string) => {
+      if (state.get(id) === 1) throw new SpecError('tree 范式存在环');
+      if (state.get(id) === 2) return;
+      state.set(id, 1);
+      for (const next of adj.get(id) ?? []) dfs(next);
+      state.set(id, 2);
+    };
+    for (const n of nodes) dfs(n.id);
   }
 
   const mainOrder = nodes.filter((n) => n.role === 'main').map((n) => n.id);

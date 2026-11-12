@@ -18,7 +18,7 @@ const crossDeptSpec: DiagramSpec = {
   edges: [{ from: 'n1', to: 'n2' }, { from: 'n2', to: 'n3' }, { from: 'n3', to: 'n4' }],
 };
 
-const ctx: RenderContext = { idPrefix: '', origin: { x: 50, y: 50 }, fixed: new Map() };
+const ctx: RenderContext = { idPrefix: '', origin: { x: 50, y: 50 }, fixed: new Map(), laneSizes: new Map(), obstacles: new Map() };
 
 describe('swimlane 几何约定', () => {
   it('业务节点与附注挂 lane 而非 pool，且 extent=parent', () => {

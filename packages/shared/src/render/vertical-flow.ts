@@ -171,15 +171,26 @@ export function renderVerticalFlow(n: NormalizedSpec, ctx: RenderContext): Rende
     let targetHandle = 'top';
     let waypoints: XYPosition[] | undefined;
     if (e.kind === 'loop') {
-      sourceHandle = 'top';
-      targetHandle = 'right';
+      const fromMain = nodeOf(e.from).role === 'main';
+      const sideX = Math.max(a.x + a.width, b.x + b.width) + LOOP_SIDE;
       const riseY = Math.min(a.y, b.y) - LOOP_RISE;
-      const sideX = b.x + b.width + LOOP_SIDE;
-      waypoints = [
-        { x: a.x + a.width / 2, y: riseY },
-        { x: sideX, y: riseY },
-        { x: sideX, y: b.y + b.height / 2 },
-      ];
+      if (fromMain) {
+        sourceHandle = 'right';
+        targetHandle = 'right';
+        waypoints = [
+          { x: sideX, y: a.y + a.height / 2 },
+          { x: sideX, y: riseY },
+          { x: sideX, y: b.y + b.height / 2 },
+        ];
+      } else {
+        sourceHandle = 'top';
+        targetHandle = 'right';
+        waypoints = [
+          { x: a.x + a.width / 2, y: riseY },
+          { x: sideX, y: riseY },
+          { x: sideX, y: b.y + b.height / 2 },
+        ];
+      }
     } else if (e.kind === 'annotate') {
       sourceHandle = 'right';
       targetHandle = 'left';

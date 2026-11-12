@@ -27,12 +27,13 @@ export function renderSwimlane(n: NormalizedSpec, ctx: RenderContext): RenderRes
       warnings: [],
     };
     const fixed = new Map([...ctx.fixed].filter(([id]) => memberIds.has(id)));
-    const local = renderVerticalFlow(sub, { idPrefix: '', origin: { x: LANE_PAD, y: LANE_PAD }, fixed });
+    const local = renderVerticalFlow(sub, { idPrefix: '', origin: { x: LANE_PAD, y: LANE_PAD }, fixed, laneSizes: new Map(), obstacles: new Map() });
     warnings.push(...local.warnings);
     const right = Math.max(0, ...local.nodes.map((x) => x.position.x + x.width!));
     const bottom = Math.max(0, ...local.nodes.map((x) => x.position.y + x.height!));
-    const width = Math.max(800, right + LANE_PAD);
-    const height = Math.max(200, bottom + LANE_PAD);
+    const kept = ctx.laneSizes.get(lane.id);
+    const width = Math.max(800, right + LANE_PAD, kept?.width ?? 0);
+    const height = Math.max(200, bottom + LANE_PAD, kept?.height ?? 0);
     poolW = Math.max(poolW, width);
     nodes.push({
       id: eid(lane.id),
@@ -64,8 +65,12 @@ export function renderSwimlane(n: NormalizedSpec, ctx: RenderContext): RenderRes
   }
 
   let poolY = ctx.origin.y;
-  if (ctx.fixed.size > 0) {
-    const bottom = Math.max(...[...ctx.fixed.values()].map((f) => f.position.y + f.height));
+  let poolX = ctx.origin.x;
+  if (ctx.poolPosition) {
+    poolX = ctx.poolPosition.x;
+    poolY = ctx.poolPosition.y;
+  } else if (ctx.obstacles.size > 0) {
+    const bottom = Math.max(...[...ctx.obstacles.values()].map((f) => f.position.y + f.height));
     if (bottom + MAIN_GAP > poolY) {
       poolY = bottom + MAIN_GAP;
       warnings.push(`新骨架池下移至 y=${poolY} 避让人工保留容器`);
@@ -74,7 +79,7 @@ export function renderSwimlane(n: NormalizedSpec, ctx: RenderContext): RenderRes
   nodes.unshift({
     id: poolId,
     type: 'pool',
-    position: { x: ctx.origin.x, y: poolY },
+    position: { x: poolX, y: poolY },
     width: poolW,
     height: frameY,
     data: {

@@ -168,6 +168,26 @@ describe('DiagramSpec 语义校验与推断', () => {
     expect(n.nodes).toEqual([]);
   });
 
+  it('swimlane 跨泳道 branch 边报 SpecError（不静默丢节点）', () => {
+    expect(() => normalizeSpec({
+      paradigm: 'swimlane',
+      lanes: [{ id: 'l1', label: 'L1' }, { id: 'l2', label: 'L2' }],
+      nodes: [{ id: 'a', label: 'A', laneId: 'l1' }, { id: 'b', label: 'B', laneId: 'l2' }],
+      edges: [{ from: 'a', to: 'b', kind: 'branch' }],
+    })).toThrow(SpecError);
+  });
+
+  it('tree 范式环/自环/多父报 SpecError', () => {
+    const base = { paradigm: 'tree' as const, nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] };
+    expect(() => normalizeSpec({ ...base, edges: [{ from: 'a', to: 'b', kind: 'tree' }, { from: 'b', to: 'a', kind: 'tree' }] })).toThrow(SpecError);
+    expect(() => normalizeSpec({ ...base, edges: [{ from: 'a', to: 'a', kind: 'tree' }] })).toThrow(SpecError);
+    expect(() => normalizeSpec({
+      paradigm: 'tree',
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
+      edges: [{ from: 'a', to: 'c', kind: 'tree' }, { from: 'b', to: 'c', kind: 'tree' }],
+    })).toThrow(SpecError);
+  });
+
   it('zod schema 拒绝非法 paradigm 与空 label', () => {
     expect(diagramSpecSchema.safeParse({ paradigm: 'nope', nodes: [], edges: [] }).success).toBe(false);
     expect(diagramSpecSchema.safeParse({ paradigm: 'vertical-flow', nodes: [{ id: 'a', label: '' }], edges: [] }).success).toBe(false);
