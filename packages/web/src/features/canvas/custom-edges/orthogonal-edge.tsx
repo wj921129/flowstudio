@@ -88,6 +88,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   markerStart,
   data,
   selected,
+  interactionWidth,
 }) => {
   const { screenToFlowPosition } = useReactFlow();
   const storedWaypoints = data?.waypoints;
@@ -279,6 +280,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         style={mergedStyle}
         markerEnd={markerEnd}
         markerStart={markerStart}
+        interactionWidth={mergedStyle?.pointerEvents === 'none' ? 0 : interactionWidth}
       />
 
       <EdgeLabelRenderer>

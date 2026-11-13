@@ -101,6 +101,8 @@ interface FlowStoreInternalState extends FlowStoreState {
   aiReviewBatchId: string | null;
   /** AI 批次审阅中已被确认保留（豁免整批撤回）的实体 ID 集合 (FS-028) */
   aiAcceptedEntityIds: Set<string>;
+  /** 已被用户关闭提示的 AI 批次 ID 集合 (FS-029，防止 remount 后反复弹窗) */
+  dismissedAiBatchIds: Set<string>;
   /** Mermaid 代码抽屉是否展开 */
   mermaidDrawerOpen: boolean;
   copilotOpen: boolean;
@@ -180,6 +182,8 @@ export interface FlowStoreActions {
   acceptAiEntity: (entityId: string) => void;
   /** 清理已采纳的 AI 实体记录 (FS-028) */
   clearAiAcceptedEntities: () => void;
+  /** 关闭并忽略指定 AI 批次横幅提示 (FS-029) */
+  dismissAiBatch: (batchId: string) => void;
   /** 开关 Mermaid 代码抽屉 */
   setMermaidDrawerOpen: (open: boolean) => void;
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -285,6 +289,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   aiReviewActive: false,
   aiReviewBatchId: null,
   aiAcceptedEntityIds: new Set<string>(),
+  dismissedAiBatchIds: new Set<string>(),
   mermaidDrawerOpen: false,
   copilotOpen: false,
   toastMessage: null,
@@ -1494,6 +1499,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       aiReviewActive: false,
       aiReviewBatchId: null,
       aiAcceptedEntityIds: new Set<string>(),
+      dismissedAiBatchIds: new Set<string>(),
       mermaidDrawerOpen: false,
       copilotOpen: false,
       toastMessage: null,
@@ -1555,6 +1561,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   clearAiAcceptedEntities: () => {
     set({ aiAcceptedEntityIds: new Set<string>() });
+  },
+
+  dismissAiBatch: (batchId: string) => {
+    set((s) => {
+      const next = new Set(s.dismissedAiBatchIds);
+      next.add(batchId);
+      return { dismissedAiBatchIds: next };
+    });
   },
 
   setMermaidDrawerOpen: (open: boolean) => {

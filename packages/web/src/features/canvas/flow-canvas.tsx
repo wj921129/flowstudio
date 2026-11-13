@@ -233,9 +233,11 @@ export const FlowCanvas: React.FC = () => {
         return {
           ...edge,
           animated: isHighlighted,
+          interactionWidth: isHighlighted ? undefined : 0,
           style: {
             ...edge.style,
             opacity: isHighlighted ? 1 : 0.15,
+            pointerEvents: isHighlighted ? undefined : 'none',
             stroke: isHighlighted ? 'var(--fs-selection-ring, #2563eb)' : edge.style?.stroke,
             strokeWidth: isHighlighted ? 2.5 : edge.style?.strokeWidth ?? 1.5,
             transition: 'opacity 0.2s ease',
@@ -1103,7 +1105,7 @@ export const FlowCanvas: React.FC = () => {
           type: 'orthogonal',
           markerEnd: { type: MarkerType.ArrowClosed },
         }}
-        elevateEdgesOnSelect={true}
+        elevateEdgesOnSelect={false}
         fitView
         minZoom={0.1}
         maxZoom={2.5}

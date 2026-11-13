@@ -1251,5 +1251,62 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(bannerCode).toContain('/revert');
       expect(bannerCode).toContain('本批次所有变更均已确认保留，无需撤回');
     });
+
+    it('FS-029: Header 层叠上下文提升至 z-40 防止遮挡导出下拉，dismissedAiBatchIds 全局持久化防反复弹窗', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 1. flow-store 中 dismissedAiBatchIds 状态流转测试
+      useFlowStore.getState().resetDiagramState();
+      expect(useFlowStore.getState().dismissedAiBatchIds.size).toBe(0);
+
+      useFlowStore.getState().dismissAiBatch('batch-test-1');
+      expect(useFlowStore.getState().dismissedAiBatchIds.has('batch-test-1')).toBe(true);
+
+      // resetDiagramState 清空
+      useFlowStore.getState().resetDiagramState();
+      expect(useFlowStore.getState().dismissedAiBatchIds.size).toBe(0);
+
+      // 2. top-bar.tsx 源码静态审查：header 必须为 z-40
+      const topBarCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'),
+        'utf-8'
+      );
+      expect(topBarCode).toMatch(/<header[^>]*z-40/);
+
+      // 3. ai-batch-banner.tsx 源码静态审查：使用 dismissedAiBatchIds
+      const bannerCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/ai-batch-banner.tsx'),
+        'utf-8'
+      );
+      expect(bannerCode).toContain('dismissedAiBatchIds');
+      expect(bannerCode).toContain('dismissAiBatch');
+      expect(bannerCode).not.toContain('const [dismissedBatchId, setDismissedBatchId]');
+    });
+
+    it('FS-030: 聚光灯态禁用 elevateEdgesOnSelect 并压低降噪边 interactionWidth，防止抬升边透明命中带抢占节点点击', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 1. flow-canvas.tsx 源码审查：禁用 elevateEdgesOnSelect
+      const canvasCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+        'utf-8'
+      );
+      expect(canvasCode).toContain('elevateEdgesOnSelect={false}');
+      expect(canvasCode).not.toContain('elevateEdgesOnSelect={true}');
+
+      // 2. flow-canvas.tsx 聚光灯态降噪边 interactionWidth=0 与 pointerEvents='none'
+      expect(canvasCode).toContain("pointerEvents: isHighlighted ? undefined : 'none'");
+      expect(canvasCode).toContain('interactionWidth: isHighlighted ? undefined : 0');
+
+      // 3. orthogonal-edge.tsx 确保在 pointerEvents==none 时 interactionWidth 为 0
+      const edgeCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
+        'utf-8'
+      );
+      expect(edgeCode).toContain("interactionWidth={mergedStyle?.pointerEvents === 'none' ? 0 : interactionWidth}");
+    });
   });
 });

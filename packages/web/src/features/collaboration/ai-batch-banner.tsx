@@ -26,7 +26,6 @@ export function sanitizeDiagramId(diagramId?: string): string {
 export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast }) => {
   const [batches, setBatches] = useState<AiBatchRecord[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
-  const [dismissedBatchId, setDismissedBatchId] = useState<string | null>(null);
   const [isReverting, setIsReverting] = useState(false);
 
   const aiReviewActive = useFlowStore((s) => s.aiReviewActive);
@@ -34,6 +33,8 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   const showToast = useFlowStore((s) => s.showToast);
   const aiAcceptedEntityIds = useFlowStore((s) => s.aiAcceptedEntityIds);
   const clearAiAcceptedEntities = useFlowStore((s) => s.clearAiAcceptedEntities);
+  const dismissedAiBatchIds = useFlowStore((s) => s.dismissedAiBatchIds);
+  const dismissAiBatch = useFlowStore((s) => s.dismissAiBatch);
 
   const triggerToast = useCallback(
     (msg: string) => {
@@ -99,7 +100,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
       if (acceptedDiffs.length > 0 && unacceptedDiffs.length === 0) {
         triggerToast('本批次所有变更均已确认保留，无需撤回');
         setAiReviewMode(false, null);
-        setDismissedBatchId(activeBatch.batchId);
+        dismissAiBatch(activeBatch.batchId);
         setSelectedBatchId(null);
         clearAiAcceptedEntities();
         return;
@@ -140,7 +141,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
           triggerToast(data.message || '已成功撤回 AI 本批次修改');
         }
         setAiReviewMode(false, null);
-        setDismissedBatchId(activeBatch.batchId);
+        dismissAiBatch(activeBatch.batchId);
         setSelectedBatchId(null);
         clearAiAcceptedEntities();
         checkBatches();
@@ -168,7 +169,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
     }
   };
 
-  if (!activeBatch || activeBatch.batchId === dismissedBatchId) {
+  if (!activeBatch || dismissedAiBatchIds.has(activeBatch.batchId)) {
     return null;
   }
 
@@ -254,7 +255,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
         <button
           type="button"
           onClick={() => {
-            setDismissedBatchId(activeBatch.batchId);
+            dismissAiBatch(activeBatch.batchId);
             setAiReviewMode(false, null);
           }}
           title="关闭提示"
