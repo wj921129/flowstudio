@@ -11,6 +11,7 @@ import { Columns3, Rows3, Plus, ArrowLeftRight } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { useFlowStore } from '../../../stores/flow-store';
 import { isNodeLocked } from '../utils/node-lock-manager';
+import { reorderPoolOrientation } from '../utils/lane-nesting-manager';
 
 export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected } = props;
@@ -120,7 +121,9 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const handleToggleOrientation = (e: React.MouseEvent) => {
     e.stopPropagation();
     const nextOrientation = isHorizontal ? 'vertical' : 'horizontal';
-    useFlowStore.getState().updateNodeData(id, { orientation: nextOrientation });
+    const store = useFlowStore.getState();
+    const nextNodes = reorderPoolOrientation(id, nextOrientation, store.nodes);
+    store.setDiagram(nextNodes, store.edges);
   };
 
   return (

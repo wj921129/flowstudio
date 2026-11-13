@@ -4,10 +4,11 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { NodeProps, Node } from '@xyflow/react';
 import { NodeResizer } from '@xyflow/react';
 import type { FlowNodeData } from '@flowstudio/shared';
-import { Trash2 } from 'lucide-react';
+import { Trash2, AlertTriangle } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { useFlowStore } from '../../../stores/flow-store';
 import { isNodeLocked } from '../utils/node-lock-manager';
@@ -20,7 +21,24 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
   const [isEditing, setIsEditing] = useState(false);
   const [titleValue, setTitleValue] = useState(data.laneTitle || data.label || '泳道');
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [confirmChildCount, setConfirmChildCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isConfirmDeleteOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsConfirmDeleteOpen(false);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeDeleteLane();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isConfirmDeleteOpen]);
 
   useEffect(() => {
     if (!isEditing) {
@@ -52,6 +70,22 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
     }
   };
 
+  const executeDeleteLane = () => {
+    setIsConfirmDeleteOpen(false);
+    const st = useFlowStore.getState();
+    st.setSelectedNodes([id]);
+    st.deleteSelected();
+
+    const afterNodes = useFlowStore.getState().nodes;
+    if (!afterNodes.some((n) => n.id === id)) {
+      const pool = parentId ? afterNodes.find((n) => n.id === parentId) : null;
+      if (pool) {
+        const remainingOrder = ((pool.data?.laneOrder as string[]) || []).filter((lid) => lid !== id);
+        st.updateNodeData(pool.id, { laneOrder: remainingOrder });
+      }
+    }
+  };
+
   // 删除当前泳道
   const handleDeleteLane = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -70,27 +104,13 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       return;
     }
 
-    // 高危防误触二次确认护栏：当泳道内部包含子节点时提示确认
     if (children.length > 0) {
-      const ok = window.confirm(
-        `该泳道内包含 ${children.length} 个步骤节点，删除泳道将同时清除所有内部节点与连线，是否确定删除？`
-      );
-      if (!ok) return;
+      setConfirmChildCount(children.length);
+      setIsConfirmDeleteOpen(true);
+      return;
     }
 
-    // 选中本节点并调用 deleteSelected：自动级联删除子节点与连线，并完整保留撤销历史栈
-    st.setSelectedNodes([id]);
-    st.deleteSelected();
-
-    // 确认已删除后再更新父 Pool 的 laneOrder，避免锁跳过导致的顺序错位 (L4)
-    const afterNodes = useFlowStore.getState().nodes;
-    if (!afterNodes.some((n) => n.id === id)) {
-      const pool = parentId ? afterNodes.find((n) => n.id === parentId) : null;
-      if (pool) {
-        const remainingOrder = ((pool.data?.laneOrder as string[]) || []).filter((lid) => lid !== id);
-        st.updateNodeData(pool.id, { laneOrder: remainingOrder });
-      }
-    }
+    executeDeleteLane();
   };
 
   return (
@@ -163,6 +183,58 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
       {/* 泳道内部落子活动区 */}
       <div className="relative flex-1 w-full h-full pointer-events-none" />
+
+      {/* 品牌化危险删除确认模态 */}
+      {isConfirmDeleteOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsConfirmDeleteOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl p-6 shadow-2xl border bg-[var(--fs-surface)] border-[var(--fs-border)] text-[var(--fs-text)] animate-in zoom-in-95 duration-150 select-none"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold leading-6 mb-1.5">删除泳道</h3>
+                  <p className="text-xs leading-5 text-[var(--fs-text-muted)]">
+                    确定要删除泳道「
+                    <span className="font-semibold text-[var(--fs-text)]">{titleValue}</span>
+                    」吗？该泳道内包含{' '}
+                    <span className="font-semibold text-rose-500">{confirmChildCount}</span>{' '}
+                    个步骤节点，删除泳道将同时清除所有内部节点与连线，此操作无法撤销。
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-6">
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmDeleteOpen(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-medium border border-[var(--fs-border)] text-[var(--fs-text-muted)] hover:bg-[var(--fs-bg)] transition-colors cursor-pointer"
+                >
+                  取消 (Esc)
+                </button>
+                <button
+                  type="button"
+                  onClick={executeDeleteLane}
+                  className="px-4 py-2 rounded-lg text-xs font-medium text-white shadow-xs bg-rose-600 hover:bg-rose-700 transition-colors cursor-pointer"
+                >
+                  确认删除 (Enter)
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </BaseNodeWrapper>
   );
 };

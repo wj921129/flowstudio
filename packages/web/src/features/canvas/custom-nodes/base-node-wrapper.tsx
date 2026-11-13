@@ -157,12 +157,18 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   // 合并节点样式
   const nodeStyle = data.style || {};
   const isComment = data.type === 'comment';
-  const defaultBg = isComment ? 'var(--fs-note-bg)' : 'var(--fs-node-bg)';
-  const defaultBorder = isComment ? 'var(--fs-note-border)' : 'var(--fs-node-border)';
+  const isLane = data.type === 'lane';
+  const isPool = data.type === 'pool';
+  const isContainer = isLane || isPool;
+
+  const defaultBg = isComment ? 'var(--fs-note-bg)' : isContainer ? undefined : 'var(--fs-node-bg)';
+  const defaultBorder = isComment ? 'var(--fs-note-border)' : isContainer ? undefined : 'var(--fs-node-border)';
+  const defaultBorderWidth = isContainer ? undefined : '1.5px';
+
   const mergedStyle: React.CSSProperties = {
     backgroundColor: nodeStyle.fillColor ? String(nodeStyle.fillColor) : defaultBg,
     borderColor: nodeStyle.borderColor ? String(nodeStyle.borderColor) : defaultBorder,
-    borderWidth: typeof nodeStyle.borderWidth === 'number' ? `${nodeStyle.borderWidth}px` : '1.5px',
+    borderWidth: typeof nodeStyle.borderWidth === 'number' ? `${nodeStyle.borderWidth}px` : defaultBorderWidth,
     borderStyle: nodeStyle.borderStyle || undefined,
     color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : 'var(--fs-node-text)',
     fontSize: typeof nodeStyle.fontSize === 'number' ? `${nodeStyle.fontSize}px` : '14px',

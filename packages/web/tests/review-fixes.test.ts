@@ -879,5 +879,68 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(topBarCode).toContain('hidden lg:inline');
       expect(topBarCode).toContain('hidden md:inline');
     });
+
+    it('FS-018: reorderPoolOrientation correctly rearranges lanes horizontally and vertically', async () => {
+      const { reorderPoolOrientation } = await import('../src/features/canvas/utils/lane-nesting-manager.js');
+
+      const pool: FlowNode = {
+        id: 'pool-test',
+        type: 'pool',
+        position: { x: 0, y: 0 },
+        width: 800,
+        height: 440,
+        data: { orientation: 'horizontal', headerSize: 40, laneOrder: ['l1', 'l2'] },
+      };
+      const l1: FlowNode = { id: 'l1', type: 'lane', parentId: 'pool-test', position: { x: 0, y: 40 }, width: 800, height: 200, data: {} };
+      const l2: FlowNode = { id: 'l2', type: 'lane', parentId: 'pool-test', position: { x: 0, y: 240 }, width: 800, height: 200, data: {} };
+
+      // 横切纵
+      const verticalNodes = reorderPoolOrientation('pool-test', 'vertical', [pool, l1, l2]);
+      const vPool = verticalNodes.find((n) => n.id === 'pool-test')!;
+      const vl1 = verticalNodes.find((n) => n.id === 'l1')!;
+      const vl2 = verticalNodes.find((n) => n.id === 'l2')!;
+
+      expect(vPool.data?.orientation).toBe('vertical');
+      expect(vl1.position.x).toBe(0);
+      expect(vl1.position.y).toBe(40);
+      expect(vl2.position.x).toBe(240);
+      expect(vl2.position.y).toBe(40);
+
+      // 纵切横
+      const horizontalNodes = reorderPoolOrientation('pool-test', 'horizontal', verticalNodes);
+      const hl1 = horizontalNodes.find((n) => n.id === 'l1')!;
+      const hl2 = horizontalNodes.find((n) => n.id === 'l2')!;
+      expect(hl1.position.x).toBe(0);
+      expect(hl1.position.y).toBe(40);
+      expect(hl2.position.x).toBe(0);
+      expect(hl2.position.y).toBe(240);
+    });
+
+    it('FS-019: addNode pool & lane enforces pool->lane hierarchy and prevents orphaned lanes', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      useFlowStore.getState().setDiagram([], []);
+
+      // 1. 点击 pool 默认生成 2 条泳道
+      const pool = useFlowStore.getState().addNode('pool', { x: 100, y: 100 });
+      const currentNodes = useFlowStore.getState().nodes;
+      const childLanes = currentNodes.filter((n) => n.parentId === pool.id);
+      expect(childLanes.length).toBe(2);
+      expect(pool.data?.laneOrder?.length).toBe(2);
+
+      // 2. 点击 lane 追加进既有 pool
+      const lane3 = useFlowStore.getState().addNode('lane', { x: 200, y: 200 });
+      expect(lane3.parentId).toBe(pool.id);
+      const updatedNodes = useFlowStore.getState().nodes;
+      const updatedChildLanes = updatedNodes.filter((n) => n.parentId === pool.id);
+      expect(updatedChildLanes.length).toBe(3);
+
+      // 3. 空画布点击 lane 自动建 pool
+      useFlowStore.getState().setDiagram([], []);
+      const standaloneLane = useFlowStore.getState().addNode('lane', { x: 50, y: 50 });
+      const nodesAfter = useFlowStore.getState().nodes;
+      const createdPool = nodesAfter.find((n) => n.type === 'pool')!;
+      expect(createdPool).toBeTruthy();
+      expect(standaloneLane.parentId).toBe(createdPool.id);
+    });
   });
 });

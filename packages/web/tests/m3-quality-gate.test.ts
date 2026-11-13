@@ -66,7 +66,7 @@ describe('M3 Quality Gate: Swimlane, Auto-Layout & Collaboration Convergence', (
     expect(updated).toBe(true);
     const nestedSubmit = nextNodes.find((n) => n.id === 'step-submit')!;
     expect(nestedSubmit.parentId).toBe(laneUser);
-    expect(nestedSubmit.extent).toBe('parent');
+    expect(nestedSubmit.extent).toBeUndefined();
 
     // 3. 补充运营后台审批节点并创建跨泳道连线
     const nodeAudit: FlowNode = {

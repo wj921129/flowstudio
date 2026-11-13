@@ -515,6 +515,161 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const { nodes, edges, historyPast } = get();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
+    if (type === 'pool') {
+      const poolId = generateUniqueId('pool');
+      const lane1Id = `lane-${Date.now().toString(36)}-1`;
+      const lane2Id = `lane-${Date.now().toString(36)}-2`;
+
+      const poolNode: FlowNode = {
+        id: poolId,
+        type: 'pool',
+        position,
+        width: 800,
+        height: 440,
+        data: {
+          label: '业务泳道池',
+          type: 'pool',
+          orientation: 'horizontal',
+          laneOrder: [lane1Id, lane2Id],
+          headerSize: 40,
+        },
+      };
+
+      const lane1Node: FlowNode = {
+        id: lane1Id,
+        type: 'lane',
+        parentId: poolId,
+        extent: 'parent',
+        position: { x: 0, y: 40 },
+        width: 800,
+        height: 200,
+        data: { label: '泳道 1', type: 'lane', laneTitle: '泳道 1' },
+      };
+
+      const lane2Node: FlowNode = {
+        id: lane2Id,
+        type: 'lane',
+        parentId: poolId,
+        extent: 'parent',
+        position: { x: 0, y: 240 },
+        width: 800,
+        height: 200,
+        data: { label: '泳道 2', type: 'lane', laneTitle: '泳道 2' },
+      };
+
+      get().addNodes([poolNode, lane1Node, lane2Node]);
+      set({ selectedNodeIds: [poolId] });
+      return poolNode;
+    }
+
+    if (type === 'lane') {
+      const pool =
+        nodes.find((n) => n.type === 'pool' && (n.selected || get().selectedNodeIds.includes(n.id))) ||
+        [...nodes].reverse().find((n) => n.type === 'pool');
+
+      if (pool) {
+        const poolLanes = nodes.filter((n) => n.parentId === pool.id);
+        const laneId = `lane-${Date.now().toString(36)}-${poolLanes.length + 1}`;
+        const isHorizontal = (pool.data?.orientation ?? 'horizontal') === 'horizontal';
+        const headerSize = (pool.data?.headerSize as number) || 40;
+
+        let laneX = 0;
+        let laneY = 0;
+        let laneW = pool.width ?? 800;
+        let laneH = 200;
+
+        if (isHorizontal) {
+          laneW = pool.width ?? 800;
+          laneH = 200;
+          laneX = 0;
+          const maxBottom = poolLanes.reduce(
+            (max, l) => Math.max(max, l.position.y + (l.height ?? 200)),
+            headerSize
+          );
+          laneY = maxBottom;
+        } else {
+          laneW = 240;
+          laneH = (pool.height ?? 440) - headerSize;
+          laneY = headerSize;
+          const maxRight = poolLanes.reduce(
+            (max, l) => Math.max(max, l.position.x + (l.width ?? 240)),
+            0
+          );
+          laneX = maxRight;
+        }
+
+        const newLane: FlowNode = {
+          id: laneId,
+          type: 'lane',
+          parentId: pool.id,
+          extent: 'parent',
+          position: { x: laneX, y: laneY },
+          width: laneW,
+          height: laneH,
+          data: {
+            label: `泳道 ${poolLanes.length + 1}`,
+            type: 'lane',
+            laneTitle: `泳道 ${poolLanes.length + 1}`,
+          },
+        };
+
+        const currentOrder = (pool.data?.laneOrder as string[]) || poolLanes.map((l) => l.id);
+        const nextOrder = [...currentOrder, laneId];
+        const nextPoolW = isHorizontal ? pool.width : Math.max(pool.width ?? 600, laneX + laneW);
+        const nextPoolH = isHorizontal ? Math.max(pool.height ?? 400, laneY + laneH) : pool.height;
+
+        const nextNodes = nodes.map((n) =>
+          n.id === pool.id
+            ? {
+                ...n,
+                width: nextPoolW,
+                height: nextPoolH,
+                style: { ...(n.style || {}), width: nextPoolW, height: nextPoolH },
+                data: { ...n.data, laneOrder: nextOrder },
+              }
+            : n
+        );
+
+        set({
+          nodes: [...nextNodes, newLane],
+          selectedNodeIds: [laneId],
+          ...historyUpdate,
+        });
+        commitGraph([...nextNodes, newLane], edges);
+        return newLane;
+      } else {
+        const poolId = generateUniqueId('pool');
+        const laneId = `lane-${Date.now().toString(36)}-1`;
+        const poolNode: FlowNode = {
+          id: poolId,
+          type: 'pool',
+          position,
+          width: 800,
+          height: 240,
+          data: {
+            label: '业务泳道池',
+            type: 'pool',
+            orientation: 'horizontal',
+            laneOrder: [laneId],
+            headerSize: 40,
+          },
+        };
+        const laneNode: FlowNode = {
+          id: laneId,
+          type: 'lane',
+          parentId: poolId,
+          extent: 'parent',
+          position: { x: 0, y: 40 },
+          width: 800,
+          height: 200,
+          data: { label: '泳道 1', type: 'lane', laneTitle: '泳道 1' },
+        };
+        get().addNodes([poolNode, laneNode]);
+        set({ selectedNodeIds: [laneId] });
+        return laneNode;
+      }
+    }
+
     const newNode = createNodeFromType(type, position);
     const nextNodes = [...nodes, newNode];
 

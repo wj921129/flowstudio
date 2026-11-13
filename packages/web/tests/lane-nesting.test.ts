@@ -52,7 +52,7 @@ describe('lane-nesting-manager: Swimlane Drag-in / Drag-out & Auto-expand', () =
 
     const dragged = nextNodes.find((n) => n.id === 'node-outside')!;
     expect(dragged.parentId).toBe('lane-1');
-    expect(dragged.extent).toBe('parent');
+    expect(dragged.extent).toBeUndefined();
 
     // 相对坐标：绝对坐标 (250, 180) - Lane绝对坐标 (100, 140) = (150, 40)
     expect(dragged.position).toEqual({ x: 150, y: 40 });

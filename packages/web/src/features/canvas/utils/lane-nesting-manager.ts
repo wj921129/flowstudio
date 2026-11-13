@@ -142,7 +142,7 @@ export function handleNodeDragNesting(
           return {
             ...n,
             parentId: targetLane!.id,
-            extent: 'parent',
+            extent: undefined,
             position: { x: Math.max(10, localX), y: Math.max(10, localY) },
           };
         }
@@ -238,4 +238,92 @@ export function handleNodeDragNesting(
   }
 
   return { updated: didChange, nextNodes };
+}
+
+export function reorderPoolOrientation(
+  poolId: string,
+  targetOrientation: 'horizontal' | 'vertical',
+  currentNodes: FlowNode[]
+): FlowNode[] {
+  const pool = currentNodes.find((n) => n.id === poolId);
+  if (!pool) return currentNodes;
+
+  const headerSize = (pool.data?.headerSize as number) || 40;
+  const poolLanes = currentNodes.filter((n) => n.parentId === poolId);
+  if (poolLanes.length === 0) {
+    return currentNodes.map((n) =>
+      n.id === poolId ? { ...n, data: { ...n.data, orientation: targetOrientation } } : n
+    );
+  }
+
+  const orderArray = (pool.data?.laneOrder as string[]) || [];
+  const sortedLanes = [...poolLanes].sort((a, b) => {
+    const idxA = orderArray.indexOf(a.id);
+    const idxB = orderArray.indexOf(b.id);
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    return a.position.y - b.position.y || a.position.x - b.position.x;
+  });
+
+  const isVertical = targetOrientation === 'vertical';
+  let nextNodes = [...currentNodes];
+
+  if (isVertical) {
+    const laneW = 240;
+    const laneH = Math.max(450, (pool.height ?? 450) - headerSize);
+    const newPoolW = Math.max(pool.width ?? 600, sortedLanes.length * laneW);
+    const newPoolH = laneH + headerSize;
+
+    nextNodes = nextNodes.map((n) => {
+      if (n.id === poolId) {
+        return {
+          ...n,
+          width: newPoolW,
+          height: newPoolH,
+          style: { ...(n.style || {}), width: newPoolW, height: newPoolH },
+          data: { ...n.data, orientation: 'vertical', laneOrder: sortedLanes.map((l) => l.id) },
+        };
+      }
+      const laneIdx = sortedLanes.findIndex((l) => l.id === n.id);
+      if (laneIdx !== -1) {
+        return {
+          ...n,
+          position: { x: laneIdx * laneW, y: headerSize },
+          width: laneW,
+          height: laneH,
+          style: { ...(n.style || {}), width: laneW, height: laneH },
+        };
+      }
+      return n;
+    });
+  } else {
+    const laneH = 200;
+    const laneW = Math.max(700, pool.width ?? 800);
+    const newPoolW = laneW;
+    const newPoolH = headerSize + sortedLanes.length * laneH;
+
+    nextNodes = nextNodes.map((n) => {
+      if (n.id === poolId) {
+        return {
+          ...n,
+          width: newPoolW,
+          height: newPoolH,
+          style: { ...(n.style || {}), width: newPoolW, height: newPoolH },
+          data: { ...n.data, orientation: 'horizontal', laneOrder: sortedLanes.map((l) => l.id) },
+        };
+      }
+      const laneIdx = sortedLanes.findIndex((l) => l.id === n.id);
+      if (laneIdx !== -1) {
+        return {
+          ...n,
+          position: { x: 0, y: headerSize + laneIdx * laneH },
+          width: laneW,
+          height: laneH,
+          style: { ...(n.style || {}), width: laneW, height: laneH },
+        };
+      }
+      return n;
+    });
+  }
+
+  return nextNodes;
 }
