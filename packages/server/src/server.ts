@@ -7,6 +7,7 @@ import { initDatabase } from './db/database.js';
 import { DiagramRepository } from './db/diagram-repository.js';
 import { createCollaborationServer } from './collaboration/hocuspocus.js';
 import { DocumentWriter } from './collaboration/document-writer.js';
+import { AutoSnapshotScheduler } from './collaboration/auto-snapshot.js';
 import { diagramRoutes } from './routes/diagrams.js';
 import { mcpPlugin } from './mcp/mcp-server.js';
 import { AiBatchManager } from './collaboration/ai-batch-manager.js';
@@ -16,6 +17,7 @@ import type * as WebSocket from 'ws';
 export interface BuildServerOptions {
   dbPath?: string;
   webDistPath?: string;
+  autoSnapshotIntervalMs?: number;
 }
 
 export interface ServerContext {
@@ -24,6 +26,7 @@ export interface ServerContext {
   hocuspocus: Hocuspocus;
   writer: DocumentWriter;
   aiBatchManager: AiBatchManager;
+  autoSnapshot: AutoSnapshotScheduler;
 }
 
 
@@ -36,6 +39,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   const hocuspocus = createCollaborationServer(repo);
   const writer = new DocumentWriter(repo, hocuspocus);
   const aiBatchManager = new AiBatchManager(repo, writer);
+  const autoSnapshot = new AutoSnapshotScheduler(repo, writer, {
+    intervalMs: options.autoSnapshotIntervalMs,
+  });
+  autoSnapshot.start();
 
   // 跨域支持
   await app.register(cors, {
@@ -130,11 +137,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
 
   // 关闭钩子
   app.addHook('onClose', async () => {
+    autoSnapshot.stop();
     if (typeof (hocuspocus as any).destroy === 'function') {
       await (hocuspocus as any).destroy();
     }
     db.close();
   });
 
-  return { app, repo, hocuspocus, writer, aiBatchManager };
+  return { app, repo, hocuspocus, writer, aiBatchManager, autoSnapshot };
 }

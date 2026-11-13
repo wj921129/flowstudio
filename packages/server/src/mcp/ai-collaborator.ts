@@ -1263,7 +1263,7 @@ export class AiCollaborator {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    this.writer.createSnapshot(input.diagramId, '服务端自动排版前快照', 'manual');
+    this.writer.createSnapshot(input.diagramId, '服务端自动排版前快照', 'auto');
 
     const graph = await this.writer.readDocument(input.diagramId, (doc) => {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');

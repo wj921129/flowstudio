@@ -40,8 +40,9 @@ async function main() {
   const host = process.env.HOST || '0.0.0.0';
   const dbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'data', 'flowstudio.sqlite');
   const webDistPath = process.env.WEB_DIST || path.resolve(__dirname, '../../web/dist');
+  const autoSnapshotIntervalMs = Number(process.env.AUTO_SNAPSHOT_INTERVAL_MS) || undefined;
 
-  const { app } = await buildServer({ dbPath, webDistPath });
+  const { app } = await buildServer({ dbPath, webDistPath, autoSnapshotIntervalMs });
 
   try {
     await app.listen({ port, host });
