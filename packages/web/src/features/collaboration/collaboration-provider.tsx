@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import * as Y from 'yjs';
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
 import type { UserIdentity } from '@flowstudio/shared';
 import type { CollaborationConnectionStatus } from './types.js';
 import { YjsDiagramBridge } from './yjs-doc-bridge.js';
@@ -73,11 +73,20 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       wsUrl ||
       `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/collaboration`;
 
-    const p = new HocuspocusProvider({
+    const ws = new HocuspocusProviderWebsocket({
       url,
+      autoConnect: false,
+    });
+
+    const p = new HocuspocusProvider({
+      websocketProvider: ws,
       name: diagramId,
       document: d,
     });
+
+    let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      ws.connect();
+    }, 0);
 
     const handleStatus = ({ status }: { status: string }) => {
       if (status === 'connected') setConnectionStatus('connected');
@@ -122,12 +131,17 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
 
     return () => {
       isCancelled = true;
+      if (connectTimer) {
+        clearTimeout(connectTimer);
+        connectTimer = null;
+      }
       p.off('status', handleStatus);
       p.off('synced', handleSynced);
       unbindStore();
       unbindComments();
       unbindTheme();
       p.destroy();
+      ws.destroy();
       b.destroy();
       d.destroy();
       u.destroy();

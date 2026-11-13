@@ -942,5 +942,49 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(createdPool).toBeTruthy();
       expect(standaloneLane.parentId).toBe(createdPool.id);
     });
+
+    it('FS-017: StrictMode double-mount simulation does not initiate aborted WebSocket handshake on first mount', async () => {
+      const { HocuspocusProvider, HocuspocusProviderWebsocket } = await import('@hocuspocus/provider');
+      const Y = await import('yjs');
+      const doc = new Y.Doc();
+
+      let connectCalls = 0;
+      // 模拟第 1 次挂载
+      const ws1 = new HocuspocusProviderWebsocket({ url: 'ws://localhost:9999', autoConnect: false });
+      const origConnect = ws1.connect.bind(ws1);
+      ws1.connect = () => {
+        connectCalls++;
+        return origConnect();
+      };
+      const p1 = new HocuspocusProvider({ websocketProvider: ws1, name: 'strict-mode-test', document: doc });
+
+      let timer1: any = setTimeout(() => {
+        ws1.connect();
+      }, 0);
+
+      // StrictMode 立即触发第 1 次卸载
+      clearTimeout(timer1);
+      p1.destroy();
+      ws1.destroy();
+
+      // 等待 10ms，验证第 1 次挂载被销毁且零连接调用
+      await new Promise((r) => setTimeout(r, 10));
+      expect(connectCalls).toBe(0);
+      expect(ws1.shouldConnect).toBe(false);
+
+      // 模拟第 2 次挂载
+      const ws2 = new HocuspocusProviderWebsocket({ url: 'ws://localhost:9999', autoConnect: false });
+      const p2 = new HocuspocusProvider({ websocketProvider: ws2, name: 'strict-mode-test', document: doc });
+      let timer2: any = setTimeout(() => {
+        ws2.connect();
+      }, 0);
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(ws2.shouldConnect).toBe(true);
+
+      clearTimeout(timer2);
+      p2.destroy();
+      ws2.destroy();
+    });
   });
 });
