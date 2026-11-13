@@ -39,7 +39,7 @@ import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
-import { computePathSpotlight, getDecisionBranches } from './utils/path-spotlight';
+import { computePathSpotlight, computeGlobalPathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { isNodeLocked } from './utils/node-lock-manager';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
@@ -63,6 +63,8 @@ export const FlowCanvas: React.FC = () => {
   const appendSubgraph = useFlowStore((s) => s.appendSubgraph);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
   const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
+  const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
+  const selectedEdgeId = useFlowStore((s) => s.selectedEdgeId);
   const groupSelectedNodes = useFlowStore((s) => s.groupSelectedNodes);
   const ungroupNodes = useFlowStore((s) => s.ungroupNodes);
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
@@ -85,6 +87,8 @@ export const FlowCanvas: React.FC = () => {
   const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
   const setAlignmentSnapEnabled = useFlowStore((s) => s.setAlignmentSnapEnabled);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const [isSpacePanning, setIsSpacePanning] = useState(false);
 
   useEffect(() => {
     EdgeRoutingManager.getInstance().updateNodes(nodes);
@@ -129,23 +133,37 @@ export const FlowCanvas: React.FC = () => {
     setSpotlightTarget,
   ]);
 
-  // 计算因果链路聚光灯走查范围
+  // 单选元素自动触发链路走查；若存在外部指定目标（如演讲/主讲人跟随）则优先使用
+  const autoSpotlightTargetId = useMemo(() => {
+    if (selectedNodeIds.length === 1 && !selectedEdgeId) return selectedNodeIds[0];
+    if (selectedEdgeId && selectedNodeIds.length === 0) return selectedEdgeId;
+    return null;
+  }, [selectedNodeIds, selectedEdgeId]);
+
+  const effectiveSpotlightTargetId = spotlightTargetId || autoSpotlightTargetId;
+
+  // 计算因果链路聚光灯走查范围（单选元素局部走查 或 全局链路走查）
   const spotlightResult = useMemo(() => {
-    if (!spotlightActive || !spotlightTargetId) return null;
-    return computePathSpotlight(nodes, edges, spotlightTargetId, {
-      decisionBranchFilter: spotlightBranchFilter,
-    });
-  }, [spotlightActive, spotlightTargetId, spotlightBranchFilter, nodes, edges]);
+    if (effectiveSpotlightTargetId) {
+      return computePathSpotlight(nodes, edges, effectiveSpotlightTargetId, {
+        decisionBranchFilter: spotlightBranchFilter,
+      });
+    }
+    if (spotlightActive) {
+      return computeGlobalPathSpotlight(nodes, edges);
+    }
+    return null;
+  }, [spotlightActive, effectiveSpotlightTargetId, spotlightBranchFilter, nodes, edges]);
 
   // 计算当前聚焦链路中的决策分支列表供浮动单选胶囊切换
   const decisionBranches = useMemo(() => {
-    if (!spotlightActive || !spotlightTargetId) return [];
-    return getDecisionBranches(spotlightTargetId, edges);
-  }, [spotlightActive, spotlightTargetId, edges]);
+    if (!effectiveSpotlightTargetId) return [];
+    return getDecisionBranches(effectiveSpotlightTargetId, edges);
+  }, [effectiveSpotlightTargetId, edges]);
 
   // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定及包含锁定子节点的容器禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
-    const hasSpotlight = Boolean(spotlightActive && spotlightTargetId && spotlightResult);
+    const hasSpotlight = Boolean(spotlightResult);
     // 检查是否有 position/full 锁定的节点 (B8 性能优化)
     const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
     // 检查是否有包含锁定子节点的祖先容器（lane / pool / group）(B3 容器拖拽穿透防护)
@@ -473,7 +491,7 @@ export const FlowCanvas: React.FC = () => {
 
   /**
    * 连线点击事件处理器：激活连线属性模式，并清空所有节点选中状态；
-   * 支持 Alt + Click 快速开启链路聚光灯走查
+   * 选中后自动触发链路走查
    */
   const handleEdgeClick = useCallback(
     (event: React.MouseEvent, edge: { id: string }) => {
@@ -484,11 +502,9 @@ export const FlowCanvas: React.FC = () => {
       if (event.altKey) {
         toggleSpotlightMode(true);
         setSpotlightTarget(edge.id, 'all');
-      } else if (spotlightActive) {
-        setSpotlightTarget(edge.id, 'all');
       }
     },
-    [setSelectedNodes, setSelectedEdge, spotlightActive, toggleSpotlightMode, setSpotlightTarget]
+    [setSelectedNodes, setSelectedEdge, toggleSpotlightMode, setSpotlightTarget]
   );
 
   const handleConnect = useCallback(
@@ -516,12 +532,6 @@ export const FlowCanvas: React.FC = () => {
 
       if (event.altKey) {
         toggleSpotlightMode(true);
-        setSpotlightTarget(node.id, 'all');
-        setSelectedNodes([node.id]);
-        return;
-      }
-
-      if (spotlightActive) {
         setSpotlightTarget(node.id, 'all');
         setSelectedNodes([node.id]);
         return;
@@ -555,7 +565,6 @@ export const FlowCanvas: React.FC = () => {
       onConnect,
       setSelectedNodes,
       setSelectedEdge,
-      spotlightActive,
       toggleSpotlightMode,
       setSpotlightTarget,
     ]
@@ -605,18 +614,74 @@ export const FlowCanvas: React.FC = () => {
   );
 
   /**
-   * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态；退出聚光灯走查
+   * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态
    */
   const handlePaneClick = useCallback(() => {
     setSelectedNodes([]);
     setSelectedEdge(null);
     setConnectSourceNodeId(null);
     setHoveredEdgeForInsert(null);
-    if (spotlightActive) {
+    if (spotlightTargetId) {
       toggleSpotlightMode(false);
       setSpotlightTarget(null);
     }
-  }, [setSelectedNodes, setSelectedEdge, spotlightActive, toggleSpotlightMode, setSpotlightTarget]);
+  }, [setSelectedNodes, setSelectedEdge, spotlightTargetId, toggleSpotlightMode, setSpotlightTarget]);
+
+  const handleCanvasPointerDownCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    canvasContainerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // 画布聚焦中按住空格临时切换为平移交互，松开恢复原交互模式
+  useEffect(() => {
+    const handleSpaceKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isPresenting) return;
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isInput) return;
+
+      const isCanvasFocused = canvasContainerRef.current?.contains(document.activeElement);
+      if (!isCanvasFocused) return;
+
+      e.preventDefault();
+      if (!e.repeat) {
+        setIsSpacePanning(true);
+      }
+    };
+
+    const handleSpaceKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePanning(false);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setIsSpacePanning(false);
+    };
+
+    window.addEventListener('keydown', handleSpaceKeyDown);
+    window.addEventListener('keyup', handleSpaceKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', handleSpaceKeyDown);
+      window.removeEventListener('keyup', handleSpaceKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [isPresenting]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -877,9 +942,11 @@ export const FlowCanvas: React.FC = () => {
     return collab.remoteUsers.find((u) => u.clientId === followingUserId) ?? null;
   }, [followingUserId, collab?.remoteUsers]);
 
+  const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
+
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =
-    activeTool === 'pan'
+    isSpacePanning || activeTool === 'pan'
       ? 'cursor-grab active:cursor-grabbing [&_.react-flow__pane]:cursor-grab [&_.react-flow__pane:active]:cursor-grabbing'
       : activeTool === 'connect'
       ? 'cursor-crosshair [&_.react-flow__pane]:cursor-crosshair [&_.react-flow__node]:cursor-crosshair'
@@ -887,7 +954,10 @@ export const FlowCanvas: React.FC = () => {
 
   return (
     <div
-      className={`w-full h-full relative overflow-hidden bg-[var(--fs-canvas-bg)] ${cursorClass}`}
+      ref={canvasContainerRef}
+      tabIndex={-1}
+      onPointerDownCapture={handleCanvasPointerDownCapture}
+      className={`w-full h-full relative overflow-hidden outline-none bg-[var(--fs-canvas-bg)] ${cursorClass}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onMouseMove={handleMouseMove}
@@ -923,12 +993,12 @@ export const FlowCanvas: React.FC = () => {
       )}
 
       {/* 聚光灯决策节点分支单选筛选胶囊 */}
-      {spotlightActive && decisionBranches.length > 0 && (
+      {effectiveSpotlightTargetId && decisionBranches.length > 0 && (
         <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1 bg-slate-900/85 text-white rounded-full shadow-xl border border-slate-700/60 backdrop-blur-md">
           <span className="text-[11px] font-medium text-slate-300 pl-2.5 pr-1">因果分支:</span>
           <button
             key="all"
-            onClick={() => setSpotlightTarget(spotlightTargetId, 'all')}
+            onClick={() => setSpotlightTarget(effectiveSpotlightTargetId, 'all')}
             className={`px-2.5 py-1 text-xs rounded-full transition-all cursor-pointer ${
               spotlightBranchFilter === 'all' || !spotlightBranchFilter
                 ? 'bg-blue-600 text-white font-semibold shadow-sm'
@@ -942,7 +1012,7 @@ export const FlowCanvas: React.FC = () => {
             return (
               <button
                 key={label}
-                onClick={() => setSpotlightTarget(spotlightTargetId, label)}
+                onClick={() => setSpotlightTarget(effectiveSpotlightTargetId, label)}
                 className={`px-2.5 py-1 text-xs rounded-full transition-all cursor-pointer ${
                   isSelected
                     ? 'bg-blue-600 text-white font-semibold shadow-sm'
@@ -955,6 +1025,8 @@ export const FlowCanvas: React.FC = () => {
           })}
           <button
             onClick={() => {
+              setSelectedNodes([]);
+              setSelectedEdge(null);
               toggleSpotlightMode(false);
               setSpotlightTarget(null);
             }}
@@ -984,14 +1056,14 @@ export const FlowCanvas: React.FC = () => {
         onPaneClick={handlePaneClick}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        panOnDrag={isReadOnly ? [0, 1, 2] : activeTool === 'pan' ? [0, 1, 2] : [1, 2]}
-        panOnScroll={isReadOnly || activeTool === 'pan'}
-        nodesDraggable={!isReadOnly && activeTool === 'select'}
-        elementsSelectable={activeTool === 'select'}
-        nodesConnectable={!isReadOnly && activeTool !== 'pan'}
+        panOnDrag={effectivePanMode ? [0, 1, 2] : [1, 2]}
+        panOnScroll={effectivePanMode}
+        nodesDraggable={!isSpacePanning && !isReadOnly && activeTool === 'select'}
+        elementsSelectable={!isSpacePanning && activeTool === 'select'}
+        nodesConnectable={!isSpacePanning && !isReadOnly && activeTool !== 'pan'}
         connectionRadius={35}
         selectionMode={SelectionMode.Partial}
-        selectionOnDrag={!isReadOnly && activeTool === 'select'}
+        selectionOnDrag={!isSpacePanning && !isReadOnly && activeTool === 'select'}
         connectionMode={ConnectionMode.Loose}
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{

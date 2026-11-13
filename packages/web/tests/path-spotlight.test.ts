@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { FlowNode, FlowEdge } from '@flowstudio/shared';
 import {
   computePathSpotlight,
+  computeGlobalPathSpotlight,
   getDecisionBranches,
 } from '../src/features/canvas/utils/path-spotlight.js';
 
@@ -66,5 +67,20 @@ describe('path-spotlight: 因果链路双向 BFS 与分支过滤', () => {
     // "否" 分支被过滤
     expect(res.nodeIds.has('reject')).toBe(false);
     expect(res.edgeIds.has('e3')).toBe(false);
+  });
+
+  it('全局链路走查高亮所有参与连线的节点、边及途经泳道，过滤孤立节点', () => {
+    const res = computeGlobalPathSpotlight(nodes, edges);
+
+    expect(res.nodeIds.has('start')).toBe(true);
+    expect(res.nodeIds.has('dec')).toBe(true);
+    expect(res.nodeIds.has('pass')).toBe(true);
+    expect(res.nodeIds.has('reject')).toBe(true);
+    expect(res.nodeIds.has('endPass')).toBe(true);
+    expect(res.nodeIds.has('unrelated')).toBe(false);
+
+    expect(res.edgeIds.size).toBe(4);
+    expect(res.laneIds.has('lane-1')).toBe(true);
+    expect(res.laneIds.has('lane-2')).toBe(true);
   });
 });

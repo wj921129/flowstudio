@@ -101,9 +101,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
         </button>
       </div>
 
-      {/* 展开的二级功能面板容器 (宽度 250px) */}
+      {/* 展开的二级功能面板容器 */}
       {!isCollapsed && (
-        <div className="w-64 h-full flex flex-col overflow-hidden bg-fs-surface transition-opacity duration-150">
+        <div
+          className={`${
+            activeTab === 'elements' ? 'w-52' : 'w-64'
+          } h-full flex flex-col overflow-hidden bg-fs-surface transition-all duration-150`}
+        >
           {activeTab === 'templates' && (
             <TemplatesPanel onApplyTemplate={onApplyTemplate} />
           )}

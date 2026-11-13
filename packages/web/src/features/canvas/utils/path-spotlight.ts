@@ -125,3 +125,38 @@ export function computePathSpotlight(
     laneIds: highlightedLaneIds,
   };
 }
+
+/**
+ * 计算全图全局链路走查高亮集合（所有参与连线的节点、连线及途经泳道）
+ */
+export function computeGlobalPathSpotlight(
+  nodes: FlowNode[],
+  edges: FlowEdge[]
+): PathSpotlightResult {
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const highlightedNodeIds = new Set<string>();
+  const highlightedEdgeIds = new Set<string>();
+
+  for (const e of edges) {
+    highlightedEdgeIds.add(e.id);
+    if (nodeMap.has(e.source)) highlightedNodeIds.add(e.source);
+    if (nodeMap.has(e.target)) highlightedNodeIds.add(e.target);
+  }
+
+  const highlightedLaneIds = new Set<string>();
+  for (const nodeId of highlightedNodeIds) {
+    const node = nodeMap.get(nodeId);
+    if (node?.parentId) {
+      const parent = nodeMap.get(node.parentId);
+      if (parent?.type === 'lane') {
+        highlightedLaneIds.add(parent.id);
+      }
+    }
+  }
+
+  return {
+    nodeIds: highlightedNodeIds,
+    edgeIds: highlightedEdgeIds,
+    laneIds: highlightedLaneIds,
+  };
+}

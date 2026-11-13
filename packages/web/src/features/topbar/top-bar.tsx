@@ -443,11 +443,11 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           </span>
         </div>
 
-        {/* 链路走查聚光灯开关 */}
+        {/* 全局链路走查聚光灯开关 */}
         <button
           type="button"
           onClick={() => toggleSpotlightMode()}
-          title="开启因果链路聚光灯走查（支持 Alt+点击 节点/连线 快捷高亮完整上下游）"
+          title="全局链路走查（高亮全图连通链路；选中单个元素自动走查其上下游）"
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
             spotlightActive
               ? 'bg-blue-600 text-white border-blue-600 shadow-blue-500/20'
@@ -455,7 +455,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           }`}
         >
           <Compass className={`w-3.5 h-3.5 ${spotlightActive ? 'text-white' : 'text-blue-500'}`} />
-          <span>{spotlightActive ? '走查中' : '链路走查'}</span>
+          <span>{spotlightActive ? '全局走查中' : '链路走查'}</span>
         </button>
 
         {/* 一键自动排版 */}

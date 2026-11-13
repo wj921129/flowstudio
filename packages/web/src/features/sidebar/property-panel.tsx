@@ -279,6 +279,10 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
     setSelectedEdge(null);
   }, [setSelectedNodes, setSelectedEdge]);
 
+  if (!selectedNode && !selectedEdge && !isMultiNodesSelected) {
+    return null;
+  }
+
   return (
     <aside
       aria-label="图元属性面板"

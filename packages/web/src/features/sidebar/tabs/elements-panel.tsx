@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Search, X, GripVertical } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Search, X } from 'lucide-react';
 import {
   getAllNodeRegistryEntries,
   NODE_CATEGORIES,
@@ -173,7 +173,6 @@ export const ElementsPanel: React.FC = () => {
   const activeThemeId = useSidebarStore((s) => s.activeThemeId);
   const currentTheme = useMemo(() => getThemePreset(activeThemeId), [activeThemeId]);
   const addNode = useFlowStore((s) => s.addNode);
-  const [activeCategory, setActiveCategory] = useState<NodeCategory>('流程');
 
   const handleItemClick = (type: FlowNodeType) => {
     const existingCount = useFlowStore.getState().nodes.length;
@@ -195,23 +194,21 @@ export const ElementsPanel: React.FC = () => {
     [allEntries, searchKeyword]
   );
   const categorized = useMemo(() => categorizeElements(filtered), [filtered]);
-  const isSearching = searchKeyword.trim().length > 0;
-  const visibleCategories = isSearching
-    ? NODE_CATEGORIES.filter((c) => categorized[c].length > 0)
-    : [activeCategory];
+  const visibleCategories = NODE_CATEGORIES.filter((c) => categorized[c].length > 0);
 
   const renderGrid = (cat: NodeCategory) => (
-    <div className="px-2 py-1.5 grid grid-cols-2 gap-1.5">
+    <div className="px-2 pb-1.5 grid grid-cols-4 gap-1">
       {categorized[cat].map((entry) => (
         <div
           key={entry.type}
           draggable
           onDragStart={(e) => handleDragStart(e, entry.type)}
           onClick={() => handleItemClick(entry.type)}
-          className="group relative flex flex-col items-center justify-center p-2 rounded-md border border-fs-border/80 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer select-none"
-          title={`点击直接添加或拖拽至画布：${entry.label} (${entry.mcpDescription || ''})`}
+          className="group relative flex items-center justify-center h-10 rounded-md border border-fs-border/70 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer select-none"
+          title={`${entry.label}${entry.mcpDescription ? `：${entry.mcpDescription}` : ''}`}
+          aria-label={entry.label}
         >
-          <div className="flex items-center justify-center py-1 group-hover:scale-105 transition-transform">
+          <div className="flex items-center justify-center scale-90 group-hover:scale-100 transition-transform">
             {renderShapeThumbnail(
               entry.type,
               resolveNodeStyle(entry.type, currentTheme).fillColor,
@@ -219,10 +216,6 @@ export const ElementsPanel: React.FC = () => {
               currentTheme.tokens.poolHeaderBg
             )}
           </div>
-          <span className="mt-1 text-[11px] font-medium text-fs-text text-center truncate max-w-full">
-            {entry.label}
-          </span>
-          <GripVertical className="w-2.5 h-2.5 text-fs-text-muted/40 absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
       ))}
     </div>
@@ -230,59 +223,25 @@ export const ElementsPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-fs-surface overflow-hidden">
-      <div className="p-2.5 border-b border-fs-border flex flex-col gap-2 shrink-0">
+      <div className="p-2 border-b border-fs-border shrink-0">
         <div className="relative">
-          <Search className="w-3.5 h-3.5 text-fs-text-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Search className="w-3.5 h-3.5 text-fs-text-muted absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder="搜索图形元素..."
-            className="w-full pl-8 pr-7 py-1.5 text-xs bg-fs-bg border border-fs-border rounded-md text-fs-text placeholder:text-fs-text-muted focus:outline-none focus:border-fs-primary transition-colors"
+            placeholder="搜索图元..."
+            className="w-full pl-7 pr-6 py-1 text-xs bg-fs-bg border border-fs-border rounded-md text-fs-text placeholder:text-fs-text-muted focus:outline-none focus:border-fs-primary transition-colors"
           />
           {searchKeyword && (
             <button
               type="button"
               onClick={() => setSearchKeyword('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-fs-text-muted hover:text-fs-text"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fs-text-muted hover:text-fs-text"
             >
               <X className="w-3 h-3" />
             </button>
           )}
-        </div>
-
-        <div className="flex items-center justify-between px-1 text-[11px] text-fs-text-muted">
-          <span>当前色彩风格:</span>
-          <span className="flex items-center gap-1 font-medium text-fs-text">
-            <span
-              className="w-2.5 h-2.5 rounded-full border border-black/10 inline-block"
-              style={{ backgroundColor: currentTheme.tokens.nodeBorder }}
-            />
-            {currentTheme.title}
-          </span>
-        </div>
-
-        <div className="flex gap-1 flex-wrap">
-          {NODE_CATEGORIES.map((cat) => {
-            const active = !isSearching && activeCategory === cat;
-            const count = categorized[cat].length;
-            return (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setActiveCategory(cat)}
-                className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors select-none ${
-                  active
-                    ? 'bg-fs-primary text-white border-fs-primary'
-                    : 'bg-fs-bg text-fs-text border-fs-border hover:border-fs-primary/60'
-                }`}
-                title={`${cat}类图元 (${count})`}
-              >
-                {cat}
-                <span className={`ml-1 text-[9px] ${active ? 'text-white/80' : 'text-fs-text-muted'}`}>{count}</span>
-              </button>
-            );
-          })}
         </div>
       </div>
 
@@ -291,13 +250,11 @@ export const ElementsPanel: React.FC = () => {
           <div className="py-8 text-center text-xs text-fs-text-muted">无匹配图元</div>
         ) : (
           visibleCategories.map((cat) => (
-            <div key={cat} className="border-b border-fs-border/60 last:border-b-0 pb-1">
-              {isSearching ? (
-                <div className="px-3 pt-2 pb-0.5 text-xs font-semibold text-fs-text flex items-center justify-between">
-                  <span>{cat}</span>
-                  <span className="text-[10px] text-fs-text-muted font-mono">{categorized[cat].length}</span>
-                </div>
-              ) : null}
+            <div key={cat} className="border-b border-fs-border/50 last:border-b-0 py-1">
+              <div className="px-2.5 py-1 text-[11px] font-medium text-fs-text-muted flex items-center justify-between">
+                <span>{cat}</span>
+                <span className="text-[10px] font-mono opacity-75">{categorized[cat].length}</span>
+              </div>
               {renderGrid(cat)}
             </div>
           ))
