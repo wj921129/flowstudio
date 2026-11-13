@@ -50,8 +50,7 @@ flowstudio/
 ├── mcp/                        # MCP stdio 桥接脚本（flowstudio-mcp.cjs，对接 Cursor / Claude Desktop）
 └── .work/                      # 项目标准文档中心（文件夹英文简称，文档中文）
     ├── prd/                    # 产品需求规格说明书与已实现功能全景清单
-    ├── tech/                   # 系统架构设计方案与技术方案
-    └── flow/                   # 一二期里程碑实施流程与研发流转验收总结
+    └── dev/                    # 开发与测试文档（含强制维护的功能更新/修复Bug时间轴及 YYYY-MM-DD- 专题文档）
 ```
 
 ---
