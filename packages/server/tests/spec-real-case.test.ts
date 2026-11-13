@@ -72,12 +72,12 @@ describe('真实案例闭环：SVN 时间线 15 步 + 25 附注', () => {
     const res = await callTool(server, 'scaffold_diagram', { diagramId: id, spec: buildYeepaySpec() });
     expect(res.isError, res.text).toBe(false);
     expect(res.data.message).toContain('48 个节点');
-    expect(res.data.message).toContain('56 条连线');
+    expect(res.data.message).toContain('60 条连线');
 
     const nodes = await fullNodes(id);
     const edges = await fullEdges(id);
     expect(nodes.length).toBe(48);
-    expect(edges.length).toBe(56);
+    expect(edges.length).toBe(60);
 
     const trunk = ['d4', 'd8', 'd9', 'd11', 'd12', 'd13', 'e1'];
     const trunkCenters = new Set(trunk.map((k) => {

@@ -23,6 +23,7 @@ export const DIAGRAM_PRESETS: DiagramPreset[] = [
         { id: 'proc-2', label: '人事复核与考勤登记' },
         { id: 'proc-reject', label: '退回修改并通知' },
         { id: 'end-1', label: '流程归档结束', type: 'start-end' },
+        { id: 'note-1', label: '主管审批通过后进入人事复核与考勤登记', type: 'comment', attachTo: 'dec-1' },
       ],
       edges: [
         { from: 'start-1', to: 'proc-1' },
@@ -31,6 +32,7 @@ export const DIAGRAM_PRESETS: DiagramPreset[] = [
         { from: 'dec-1', to: 'proc-reject', kind: 'branch', label: '驳回' },
         { from: 'proc-reject', to: 'proc-1', kind: 'loop' },
         { from: 'proc-2', to: 'end-1' },
+        { from: 'dec-1', to: 'note-1', kind: 'annotate' },
       ],
     },
   },

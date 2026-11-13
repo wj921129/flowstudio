@@ -138,11 +138,31 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
     return from.role === 'branch' ? anchor(from.id, visited) : order.get(from.id) ?? -1;
   };
   for (const n of nodes) if (n.role === 'branch') order.set(n.id, anchor(n.id, new Set()));
+  const regAnchor = (id: string): string => {
+    let cur = id;
+    const seen = new Set<string>();
+    while (!seen.has(cur)) {
+      seen.add(cur);
+      if (byId.get(cur)!.role === 'main') return cur;
+      const inc = edges.find((e) => (e.kind === 'branch' || e.kind === 'next') && e.to === cur);
+      if (!inc) return cur;
+      cur = inc.from;
+    }
+    return cur;
+  };
   for (const e of edges.filter((x) => x.kind === 'loop')) {
     const a = order.get(e.from);
     const b = order.get(e.to);
     if (a === undefined || b === undefined) throw new SpecError(`loop 边端点必须是主干或分支: ${e.from} -> ${e.to}`);
+    if (s.paradigm === 'vertical-flow' && byId.get(e.from)!.role === 'branch' && byId.get(e.to)!.role === 'main' && regAnchor(e.from) === e.to) continue;
     if (b >= a) throw new SpecError(`loop 边必须指向拓扑序更早的节点: ${e.from} -> ${e.to}`);
+  }
+  if (s.paradigm === 'vertical-flow') {
+    for (const e of edges) {
+      if ((e.kind === 'next' || e.kind === 'branch') && byId.get(e.from)!.role === 'branch' && byId.get(e.to)!.role === 'main') {
+        warnings.push(`分支 ${e.from} 以 ${e.kind} 连回主干 ${e.to}，建议改用 loop 回归边`);
+      }
+    }
   }
   for (const e of edges.filter((x) => x.kind === 'jump')) {
     const from = byId.get(e.from)!;

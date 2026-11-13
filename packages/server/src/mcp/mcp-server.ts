@@ -65,7 +65,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     name: 'scaffold_diagram',
     description:
       '以 DiagramSpec 语义规范生成或重渲染图表（vertical-flow / timeline-annotated / swimlane / tiered-dag / tree 五范式确定性排版：' +
-      '主干恒距、分支同行右置、回环上方侧路、附注连续右列、pool→lane→节点层级），与现状差量写入并生成前置备份快照',
+      'vertical-flow 无分支主干恒距、有分支按块留白、分支网格同行右置、回环上方侧路、分支通过结果 loop 回归源主干（横向侧路）、附注连续左列；其余范式保持主干恒距、附注右列；pool→lane→节点层级），与现状差量写入并生成前置备份快照',
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,6 +84,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       'move_node / move_to_lane / update_edge / add_lane / insert_between），自动触发前置快照、' +
       '记录实体级 Diff 账本并遵守节点锚定锁；connect 支持 kind（next/branch/loop/jump/annotate/tree），' +
       'jump 表示主干跨段旁路（跳过中段直达下游主干，不改变节点角色），' +
+      'loop 支持分支通过结果回归源主干节点（双重判断回归，横向侧路），' +
       'add_node 支持 role/attachTo 语义字段',
     inputSchema: {
       type: 'object',

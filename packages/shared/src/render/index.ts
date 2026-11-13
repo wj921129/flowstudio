@@ -7,9 +7,10 @@ import { renderTimeline } from './timeline.js';
 import { renderTree } from './tree.js';
 import type { RenderContext, RenderOptions, RenderResult } from './types.js';
 import { renderVerticalFlow } from './vertical-flow.js';
+import { renderVerticalFlowGrid } from './vertical-flow-grid.js';
 
 const RENDERERS: Record<Paradigm, (n: ReturnType<typeof normalizeSpec>, ctx: RenderContext) => RenderResult> = {
-  'vertical-flow': renderVerticalFlow,
+  'vertical-flow': renderVerticalFlowGrid,
   'timeline-annotated': renderTimeline,
   swimlane: renderSwimlane,
   'tiered-dag': renderTiered,
