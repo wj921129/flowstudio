@@ -48,7 +48,7 @@ html.dark {
 
   /* 画布专用令牌 (深色模式) */
   --fs-canvas-bg: #0b0f19;
-  --fs-canvas-dot: #334155;
+  --fs-canvas-dot: #475569;
   --fs-node-bg: #131b2e;
   --fs-node-border: #1e293b;
   --fs-node-text: #f8fafc;

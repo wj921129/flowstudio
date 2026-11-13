@@ -16,6 +16,7 @@ export interface SidebarState {
   setActiveThemeId: (themeId: string) => void;
   setPreserveManualStyles: (preserve: boolean) => void;
   setSearchKeyword: (keyword: string) => void;
+  reset: () => void;
 }
 
 export const useSidebarStore = create<SidebarState>((set) => ({
@@ -35,4 +36,5 @@ export const useSidebarStore = create<SidebarState>((set) => ({
   setActiveThemeId: (themeId) => set({ activeThemeId: themeId }),
   setPreserveManualStyles: (preserve) => set({ preserveManualStyles: preserve }),
   setSearchKeyword: (keyword) => set({ searchKeyword: keyword }),
+  reset: () => set({ activeTab: 'elements', isCollapsed: false, searchKeyword: '' }),
 }));

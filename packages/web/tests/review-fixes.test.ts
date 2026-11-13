@@ -802,5 +802,36 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(useFlowStore.getState().diagramTitle).toBe('电商订单履约');
       useFlowStore.getState().unbindCollaboration();
     });
+
+    it('FS-009: sidebarStore reset restores elements tab and uncollapsed state', async () => {
+      const { useSidebarStore } = await import('../src/features/sidebar/sidebar-store.js');
+      useSidebarStore.getState().setActiveTab('templates');
+      useSidebarStore.getState().setIsCollapsed(true);
+      expect(useSidebarStore.getState().isCollapsed).toBe(true);
+      expect(useSidebarStore.getState().activeTab).toBe('templates');
+
+      useSidebarStore.getState().reset();
+      expect(useSidebarStore.getState().isCollapsed).toBe(false);
+      expect(useSidebarStore.getState().activeTab).toBe('elements');
+    });
+
+    it('FS-011: groupSelectedNodes requires at least 2 nodes and shows toast when insufficient', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const nodeA: FlowNode = { id: 'single-node-1', type: 'process', position: { x: 10, y: 10 }, data: { label: 'A' } };
+      useFlowStore.getState().setDiagram([nodeA], []);
+      useFlowStore.getState().setSelectedNodes(['single-node-1']);
+
+      const groupRes = useFlowStore.getState().groupSelectedNodes({ asFrame: false });
+      expect(groupRes).toBeNull();
+      expect(useFlowStore.getState().toastMessage).toBe('成组至少需选择 2 个图元');
+      expect(useFlowStore.getState().nodes.length).toBe(1);
+    });
+
+    it('FS-013: tokens.css specifies dark canvas dot color as #475569', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const cssContent = fs.readFileSync(path.resolve(__dirname, '../src/features/theme/tokens.css'), 'utf-8');
+      expect(cssContent).toContain('--fs-canvas-dot: #475569;');
+    });
   });
 });

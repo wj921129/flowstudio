@@ -61,6 +61,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
 
   // 初始化协同会话：在统一的 useEffect 中创建与销毁，彻底杜绝 React 19 StrictMode 下 useMemo 持有已销毁 dead 实例的回归问题
   useEffect(() => {
+    useSidebarStore.getState().reset();
     setIsSynced(false);
     setConnectionStatus('connecting');
 
@@ -132,6 +133,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       u.destroy();
       useFlowStore.getState().resetDiagramState();
       useCommentsStore.getState().reset();
+      useSidebarStore.getState().reset();
       setSession(null);
     };
   }, [diagramId, wsUrl, currentUser.clientId]);

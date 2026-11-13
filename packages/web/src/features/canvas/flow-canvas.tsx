@@ -507,6 +507,19 @@ export const FlowCanvas: React.FC = () => {
     [setSelectedNodes, setSelectedEdge, toggleSpotlightMode, setSpotlightTarget]
   );
 
+  const handleSelectionChange = useCallback(
+    ({ nodes: selectedNodes, edges: selectedEdges }: { nodes: FlowNode[]; edges: FlowEdge[] }) => {
+      const nodeIds = selectedNodes.map((n) => n.id);
+      setSelectedNodes(nodeIds);
+      if (selectedEdges.length > 0) {
+        setSelectedEdge(selectedEdges[0].id);
+      } else if (nodeIds.length > 0) {
+        setSelectedEdge(null);
+      }
+    },
+    [setSelectedNodes, setSelectedEdge]
+  );
+
   const handleConnect = useCallback(
     (connection: any) => {
       setConnectSourceNodeId(null);
@@ -719,6 +732,12 @@ export const FlowCanvas: React.FC = () => {
         if (e.shiftKey) {
           ungroupNodes();
         } else {
+          const { nodes: currentNodes, selectedNodeIds: currentSelectedIds } = useFlowStore.getState();
+          const selected = currentNodes.filter((n) => currentSelectedIds.includes(n.id) || n.selected);
+          if (selected.length < 2) {
+            useFlowStore.getState().showToast('成组至少需选择 2 个图元');
+            return;
+          }
           groupSelectedNodes({ asFrame: false });
         }
         return;
@@ -1046,6 +1065,7 @@ export const FlowCanvas: React.FC = () => {
         deleteKeyCode={null}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onSelectionChange={handleSelectionChange}
         onConnect={handleConnect}
         onConnectStart={handleConnectStart}
         onEdgeClick={handleEdgeClick}

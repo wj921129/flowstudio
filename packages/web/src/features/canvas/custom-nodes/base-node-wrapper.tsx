@@ -67,12 +67,28 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const showHandles = isConnecting || activeTool === 'connect' || selected;
   const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
 
-  // 提取接入当前节点的连线目标 Handle 集合（避免无关连线更新触发本组件多余重渲）
   const incomingHandleKeys = useFlowStore((s) => {
     const set = new Set<string>();
+    const thisNode = s.nodes.find((n) => n.id === id);
     for (const edge of s.edges) {
-      if (edge.target === id && edge.targetHandle) {
-        set.add(edge.targetHandle);
+      if (edge.target === id) {
+        if (edge.targetHandle) {
+          set.add(edge.targetHandle);
+        } else {
+          const srcNode = s.nodes.find((n) => n.id === edge.source);
+          if (thisNode && srcNode) {
+            const dx = thisNode.position.x - srcNode.position.x;
+            const dy = thisNode.position.y - srcNode.position.y;
+            if (Math.abs(dx) >= Math.abs(dy)) {
+              set.add(dx >= 0 ? 'left' : 'right');
+            } else {
+              set.add(dy >= 0 ? 'top' : 'bottom');
+            }
+          } else {
+            set.add('left');
+            set.add('top');
+          }
+        }
       }
     }
     return Array.from(set).sort().join(',');
@@ -210,28 +226,27 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       ).map((handle) => {
         const pos = POSITION_MAP[handle.position];
         const hasIncomingEdge = incomingHandles.has(handle.id);
-        // 若该连接桩已有连线接入，且当前未处于拉线状态，则不渲染实心指示圆点，避免遮盖箭头
-        const showVisualIndicator = !hasIncomingEdge || isConnecting;
+        const showVisualIndicator = !hasIncomingEdge && (showHandles || isConnecting);
 
         return (
           <React.Fragment key={handle.id}>
-            {/* Target 终点连接桩 */}
             <Handle
               type="target"
               position={pos}
               id={handle.id}
               isConnectable={true}
-              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-10 ${
+              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-0 ${
                 showHandles ? '!opacity-100' : 'opacity-0'
               }`}
             />
-            {/* Source 起点连接桩 (带视觉指示小圆点) */}
             <Handle
               type="source"
               position={pos}
               id={handle.id}
               isConnectable={true}
-              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] flex items-center justify-center cursor-crosshair group/handle !pointer-events-auto z-20 transition-all duration-150 ${
+              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] flex items-center justify-center cursor-crosshair group/handle !pointer-events-auto ${
+                hasIncomingEdge ? 'z-0' : 'z-10'
+              } transition-all duration-150 ${
                 showHandles ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >

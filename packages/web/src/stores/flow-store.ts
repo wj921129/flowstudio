@@ -966,6 +966,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     if (targetNodes.length < 2) {
       if (nodes.some((n) => (selectedSet.has(n.id) || n.selected) && isNodeLocked(n, 'hierarchy'))) {
         get().showToast('包含完全锁定节点，禁止重新分组');
+      } else {
+        get().showToast('成组至少需选择 2 个图元');
       }
       return null;
     }

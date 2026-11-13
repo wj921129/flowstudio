@@ -73,8 +73,12 @@ export const ContextualActionBar: React.FC = () => {
   }));
 
   const bbox = computeBoundingBox(worldNodes, 0);
+  const rawTop = bbox.y * zoom + vpY - 12;
+  const rawBottom = (bbox.y + bbox.height) * zoom + vpY + 12;
+  const isAbove = rawTop >= 48;
   const screenX = (bbox.x + bbox.width / 2) * zoom + vpX;
-  const screenY = bbox.y * zoom + vpY - 12;
+  const screenY = isAbove ? rawTop : rawBottom;
+  const transform = isAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)';
 
   const handleApplyColor = (colorVar: string) => {
     const unlockedTargets = targetNodes.filter((n) => !isNodeLocked(n, 'content'));
@@ -96,11 +100,12 @@ export const ContextualActionBar: React.FC = () => {
 
   return (
     <div
+      data-testid="contextual-action-bar"
       style={{
         position: 'absolute',
         left: `${Math.round(screenX)}px`,
         top: `${Math.round(screenY)}px`,
-        transform: 'translate(-50%, -100%)',
+        transform,
         zIndex: 40,
       }}
       className="nodrag nopan flex items-center gap-1 p-1 rounded-lg bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-md select-none text-[var(--fs-text)]"

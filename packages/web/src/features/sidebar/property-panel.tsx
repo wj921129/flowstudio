@@ -21,6 +21,7 @@ import {
   Database,
   StickyNote,
   Spline,
+  Check,
 } from 'lucide-react';
 import {
   getNodeRegistryEntry,
@@ -147,27 +148,45 @@ const PaletteColorPicker: React.FC<PaletteColorPickerProps> = ({
       <div className="flex flex-wrap items-center gap-1.5">
         {presets.map((preset) => {
           const isSelected = activeValue === preset.value;
+          const isTransparent = preset.value === 'transparent';
+          const isWhiteLike =
+            preset.value === 'var(--fs-node-bg)' ||
+            preset.value === '#ffffff' ||
+            preset.value === '#fff' ||
+            preset.value === 'white';
           return (
             <button
               key={preset.value}
               type="button"
               title={preset.label}
               onClick={() => onChange(preset.value)}
-              className={`w-5 h-5 rounded-md border transition-all cursor-pointer shrink-0 ${
+              className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer shrink-0 relative ${
                 isSelected
-                  ? 'border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)]/40 scale-105 shadow-xs'
+                  ? 'border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)] ring-offset-1 ring-offset-[var(--fs-surface)] scale-110 shadow-sm z-10'
+                  : isWhiteLike
+                  ? 'border-slate-300 dark:border-slate-600 hover:scale-105'
                   : 'border-[var(--fs-border)] hover:scale-105 hover:border-[var(--fs-text-muted)]'
               }`}
               style={{
-                backgroundColor: preset.value === 'transparent' ? 'transparent' : preset.value,
-                backgroundImage:
-                  preset.value === 'transparent'
-                    ? 'linear-gradient(45deg, var(--fs-border) 25%, transparent 25%, transparent 75%, var(--fs-border) 75%), linear-gradient(45deg, var(--fs-border) 25%, transparent 25%, transparent 75%, var(--fs-border) 75%)'
-                    : undefined,
-                backgroundSize: preset.value === 'transparent' ? '6px 6px' : undefined,
-                backgroundPosition: preset.value === 'transparent' ? '0 0, 3px 3px' : undefined,
+                backgroundColor: isTransparent ? 'transparent' : preset.value,
+                backgroundImage: isTransparent
+                  ? 'linear-gradient(45deg, #cbd5e1 25%, transparent 25%, transparent 75%, #cbd5e1 75%), linear-gradient(45deg, #cbd5e1 25%, transparent 25%, transparent 75%, #cbd5e1 75%)'
+                  : undefined,
+                backgroundSize: isTransparent ? '6px 6px' : undefined,
+                backgroundPosition: isTransparent ? '0 0, 3px 3px' : undefined,
               }}
-            />
+            >
+              {isSelected && (
+                <Check
+                  className={`w-3 h-3 ${
+                    isWhiteLike || isTransparent
+                      ? 'text-slate-900'
+                      : 'text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]'
+                  }`}
+                  strokeWidth={3}
+                />
+              )}
+            </button>
           );
         })}
       </div>
