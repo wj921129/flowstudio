@@ -328,7 +328,12 @@ export const FlowCanvas: React.FC = () => {
     (e: React.DragEvent) => {
       if (isReadOnly) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      const types = Array.from(e.dataTransfer.types);
+      if (types.includes('application/flowstudio-template-id')) {
+        e.dataTransfer.dropEffect = 'copy';
+      } else {
+        e.dataTransfer.dropEffect = 'move';
+      }
 
       const flowPosition = screenToFlowPosition({
         x: e.clientX,

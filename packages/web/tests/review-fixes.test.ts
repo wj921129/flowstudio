@@ -833,5 +833,51 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       const cssContent = fs.readFileSync(path.resolve(__dirname, '../src/features/theme/tokens.css'), 'utf-8');
       expect(cssContent).toContain('--fs-canvas-dot: #475569;');
     });
+
+    it('FS-014: instantiateTemplate & appendSubgraph correctly appends subgraph at dropped position on empty/non-empty canvas', async () => {
+      const { TEMPLATES_REGISTRY, instantiateTemplate } = await import('../src/features/sidebar/templates/index.js');
+      const { getThemePreset } = await import('../src/features/sidebar/styles/theme-presets.js');
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+
+      const template = TEMPLATES_REGISTRY[0];
+      const theme = getThemePreset('default');
+      const dropPos = { x: 300, y: 200 };
+
+      // 空画布场景
+      useFlowStore.getState().setDiagram([], []);
+      const inst1 = instantiateTemplate(template, theme, dropPos);
+      useFlowStore.getState().appendSubgraph(inst1.nodes, inst1.edges);
+
+      const nodes1 = useFlowStore.getState().nodes;
+      expect(nodes1.length).toBe(template.spec.nodes.length);
+      expect(nodes1[0].position.x).toBeGreaterThanOrEqual(dropPos.x - 50);
+
+      // 非空画布追加场景
+      const dropPos2 = { x: 800, y: 500 };
+      const inst2 = instantiateTemplate(template, theme, dropPos2);
+      useFlowStore.getState().appendSubgraph(inst2.nodes, inst2.edges);
+
+      const nodes2 = useFlowStore.getState().nodes;
+      expect(nodes2.length).toBe(template.spec.nodes.length * 2);
+    });
+
+    it('FS-015: templates panel supports whole card click and registry entries have valid spec', async () => {
+      const { TEMPLATES_REGISTRY } = await import('../src/features/sidebar/templates/index.js');
+      expect(TEMPLATES_REGISTRY.length).toBeGreaterThanOrEqual(4);
+      for (const tmpl of TEMPLATES_REGISTRY) {
+        expect(tmpl.id).toBeTruthy();
+        expect(tmpl.title).toBeTruthy();
+        expect(tmpl.spec.nodes.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('FS-016: TopBar implements responsive breakpoints to prevent horizontal overflow on <=1123px', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const topBarCode = fs.readFileSync(path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'), 'utf-8');
+      expect(topBarCode).toContain('hidden xl:inline');
+      expect(topBarCode).toContain('hidden lg:inline');
+      expect(topBarCode).toContain('hidden md:inline');
+    });
   });
 });

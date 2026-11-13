@@ -45,7 +45,7 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, template: DiagramTemplate) => {
     e.dataTransfer.setData('application/flowstudio-template-id', template.id);
-    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.effectAllowed = 'copyMove';
   };
 
   const renderCategory = (categoryKey: TemplateCategory) => {
@@ -80,7 +80,8 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
                 key={tmpl.id}
                 draggable
                 onDragStart={(e) => handleDragStart(e, tmpl)}
-                className="group relative flex flex-col p-2.5 rounded-lg border border-fs-border/80 bg-fs-surface hover:bg-fs-bg/80 hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-grab active:cursor-grabbing"
+                onClick={() => onApplyTemplate?.(tmpl)}
+                className="group relative flex flex-col p-2.5 rounded-lg border border-fs-border/80 bg-fs-surface hover:bg-fs-bg/80 hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer active:cursor-grabbing"
               >
                 {/* 模板结构缩略图 */}
                 <div
@@ -112,7 +113,10 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
                   </span>
                   <button
                     type="button"
-                    onClick={() => onApplyTemplate?.(tmpl)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onApplyTemplate?.(tmpl);
+                    }}
                     className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded bg-fs-primary/10 hover:bg-fs-primary text-fs-primary hover:text-white font-medium transition-colors"
                   >
                     <Plus className="w-2.5 h-2.5" />
