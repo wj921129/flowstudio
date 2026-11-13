@@ -32,6 +32,8 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   const aiReviewActive = useFlowStore((s) => s.aiReviewActive);
   const setAiReviewMode = useFlowStore((s) => s.setAiReviewMode);
   const showToast = useFlowStore((s) => s.showToast);
+  const aiAcceptedEntityIds = useFlowStore((s) => s.aiAcceptedEntityIds);
+  const clearAiAcceptedEntities = useFlowStore((s) => s.clearAiAcceptedEntities);
 
   const triggerToast = useCallback(
     (msg: string) => {
@@ -90,13 +92,47 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
     if (!cleanDiagramId || !activeBatch || isReverting) return;
     try {
       setIsReverting(true);
-      const res = await fetch(
-        `/api/diagrams/${cleanDiagramId}/ai-batches/${activeBatch.batchId}/revert`,
-        { method: 'POST' }
-      );
+      const activeDiffs = (activeBatch.diffs || []).filter((d) => !d.reverted);
+      const acceptedDiffs = activeDiffs.filter((d) => aiAcceptedEntityIds.has(d.entityId));
+      const unacceptedDiffs = activeDiffs.filter((d) => !aiAcceptedEntityIds.has(d.entityId));
+
+      if (acceptedDiffs.length > 0 && unacceptedDiffs.length === 0) {
+        triggerToast('本批次所有变更均已确认保留，无需撤回');
+        setAiReviewMode(false, null);
+        setDismissedBatchId(activeBatch.batchId);
+        setSelectedBatchId(null);
+        clearAiAcceptedEntities();
+        return;
+      }
+
+      let res: Response;
+      let isSelective = false;
+
+      if (acceptedDiffs.length > 0 && unacceptedDiffs.length > 0) {
+        isSelective = true;
+        const toRevertIds = Array.from(new Set(unacceptedDiffs.map((d) => d.entityId)));
+        res = await fetch(
+          `/api/diagrams/${cleanDiagramId}/ai-batches/${activeBatch.batchId}/revert-items`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entityIds: toRevertIds }),
+          }
+        );
+      } else {
+        res = await fetch(
+          `/api/diagrams/${cleanDiagramId}/ai-batches/${activeBatch.batchId}/revert`,
+          { method: 'POST' }
+        );
+      }
+
       const data = (await res.json()) as AiBatchRevertResult & { error?: string };
       if (res.ok && data.success) {
-        if (data.skipped && data.skipped.length > 0) {
+        if (isSelective) {
+          triggerToast(
+            `已成功撤回其余 ${unacceptedDiffs.length} 项修改，保留了 ${acceptedDiffs.length} 项已确认成果`
+          );
+        } else if (data.skipped && data.skipped.length > 0) {
           triggerToast(
             `已成功撤回部分修改；有 ${data.skipped.length} 项已被人工二次修改或锁定，已安全保留`
           );
@@ -106,6 +142,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
         setAiReviewMode(false, null);
         setDismissedBatchId(activeBatch.batchId);
         setSelectedBatchId(null);
+        clearAiAcceptedEntities();
         checkBatches();
       } else {
         // 后端若触发补偿回滚或瞬时重试，避免误报「撤回失败」造成用户惊慌，以最终收敛态为准

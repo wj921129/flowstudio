@@ -15,6 +15,10 @@ import { toWorldPosition } from '../canvas/utils/group-calculator';
 export const AiBatchDiffOverlay: React.FC = () => {
   const aiReviewActive = useFlowStore((s) => s.aiReviewActive);
   const aiReviewBatchId = useFlowStore((s) => s.aiReviewBatchId);
+  const aiAcceptedEntityIds = useFlowStore((s) => s.aiAcceptedEntityIds);
+  const acceptAiEntity = useFlowStore((s) => s.acceptAiEntity);
+  const updateNodeData = useFlowStore((s) => s.updateNodeData);
+  const updateEdgeData = useFlowStore((s) => s.updateEdgeData);
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
   const showToast = useFlowStore((s) => s.showToast);
@@ -97,9 +101,16 @@ export const AiBatchDiffOverlay: React.FC = () => {
     }
   };
 
-  // 保留单项（从本次 Visual Diff 预览中隐藏）
-  const handleAcceptSingleItem = (entityId: string) => {
+  // 保留单项（标记采纳保护免受整批撤回，并从本次 Visual Diff 预览中隐藏，FS-028）
+  const handleAcceptSingleItem = (entityId: string, entityType: 'node' | 'edge' = 'node') => {
+    acceptAiEntity(entityId);
     setDismissedEntityIds((prev) => new Set(prev).add(entityId));
+    if (entityType === 'node') {
+      updateNodeData(entityId, { aiAccepted: true });
+    } else if (entityType === 'edge') {
+      updateEdgeData(entityId, { aiAccepted: true });
+    }
+    showToast('✓ 已确认保留该项（免受整批撤回影响）');
   };
 
   if (!aiReviewActive || !batchRecord || !batchRecord.diffs) {
@@ -127,9 +138,9 @@ export const AiBatchDiffOverlay: React.FC = () => {
     return { ...pos };
   };
 
-  // 过滤未撤回、未被手动隐藏的 diff 实体
+  // 过滤未撤回、未被手动隐藏或确认保留的 diff 实体
   const activeDiffs = batchRecord.diffs.filter(
-    (d) => !d.reverted && !dismissedEntityIds.has(d.entityId)
+    (d) => !d.reverted && !dismissedEntityIds.has(d.entityId) && !aiAcceptedEntityIds.has(d.entityId)
   );
 
   return (
@@ -166,7 +177,7 @@ export const AiBatchDiffOverlay: React.FC = () => {
                 <div className="flex items-center gap-1 bg-slate-900/85 backdrop-blur px-1 py-0.5 rounded-md shadow-md text-white border border-slate-700/60">
                   <button
                     type="button"
-                    onClick={() => handleAcceptSingleItem(diff.entityId)}
+                    onClick={() => handleAcceptSingleItem(diff.entityId, 'node')}
                     title="保留此项"
                     className="p-1 hover:bg-emerald-600 rounded transition-colors text-emerald-400 hover:text-white cursor-pointer"
                   >
@@ -222,7 +233,7 @@ export const AiBatchDiffOverlay: React.FC = () => {
                 <div className="flex items-center gap-1 bg-slate-900/85 backdrop-blur px-1 py-0.5 rounded-md shadow-md text-white border border-slate-700/60">
                   <button
                     type="button"
-                    onClick={() => handleAcceptSingleItem(diff.entityId)}
+                    onClick={() => handleAcceptSingleItem(diff.entityId, 'node')}
                     title="保留此项"
                     className="p-1 hover:bg-emerald-600 rounded transition-colors text-emerald-400 hover:text-white cursor-pointer"
                   >
@@ -337,7 +348,7 @@ export const AiBatchDiffOverlay: React.FC = () => {
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleAcceptSingleItem(diff.entityId)}
+                  onClick={() => handleAcceptSingleItem(diff.entityId, 'edge')}
                   title="保留此连线"
                   className="p-1 hover:bg-emerald-600 rounded text-emerald-400 hover:text-white transition-colors cursor-pointer"
                 >

@@ -1206,5 +1206,50 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       );
       expect(providerSource).toContain('p.attach();');
     });
+
+    it('FS-028: AI 审阅台「保留此项」记录采纳保护，全部撤回分流排除已保留实体', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 1. 测试 flow-store 状态管理
+      useFlowStore.getState().resetDiagramState();
+      expect(useFlowStore.getState().aiAcceptedEntityIds.size).toBe(0);
+
+      useFlowStore.getState().acceptAiEntity('node-ai-1');
+      useFlowStore.getState().acceptAiEntity('edge-ai-2');
+      expect(useFlowStore.getState().aiAcceptedEntityIds.has('node-ai-1')).toBe(true);
+      expect(useFlowStore.getState().aiAcceptedEntityIds.has('edge-ai-2')).toBe(true);
+      expect(useFlowStore.getState().aiAcceptedEntityIds.size).toBe(2);
+
+      useFlowStore.getState().clearAiAcceptedEntities();
+      expect(useFlowStore.getState().aiAcceptedEntityIds.size).toBe(0);
+
+      // 测试 resetDiagramState 重置
+      useFlowStore.getState().acceptAiEntity('node-ai-3');
+      expect(useFlowStore.getState().aiAcceptedEntityIds.size).toBe(1);
+      useFlowStore.getState().resetDiagramState();
+      expect(useFlowStore.getState().aiAcceptedEntityIds.size).toBe(0);
+
+      // 2. 源码静态防护审查：ai-batch-diff-overlay.tsx
+      const overlayCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/ai-batch-diff-overlay.tsx'),
+        'utf-8'
+      );
+      expect(overlayCode).toContain('acceptAiEntity');
+      expect(overlayCode).toContain('aiAcceptedEntityIds');
+      expect(overlayCode).toContain('updateNodeData(entityId, { aiAccepted: true })');
+      expect(overlayCode).toContain('!aiAcceptedEntityIds.has(d.entityId)');
+
+      // 3. 源码静态防护审查：ai-batch-banner.tsx
+      const bannerCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/ai-batch-banner.tsx'),
+        'utf-8'
+      );
+      expect(bannerCode).toContain('aiAcceptedEntityIds.has(d.entityId)');
+      expect(bannerCode).toContain('/revert-items');
+      expect(bannerCode).toContain('/revert');
+      expect(bannerCode).toContain('本批次所有变更均已确认保留，无需撤回');
+    });
   });
 });
