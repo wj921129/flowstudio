@@ -50,6 +50,7 @@ export const DIAGRAM_PRESETS: DiagramPreset[] = [
         { id: 'dec-retry', label: '重试 < 3次？', type: 'decision' },
         { id: 'proc-alarm', label: '熔断降级与报警通知' },
         { id: 'end-success', label: '任务成功提交', type: 'start-end' },
+        { id: 'note-2', label: '调用失败按指数退避重试至多3次，超限即熔断降级并报警补偿', type: 'comment', attachTo: 'dec-status' },
       ],
       edges: [
         { from: 'start-2', to: 'proc-task' },
@@ -58,6 +59,7 @@ export const DIAGRAM_PRESETS: DiagramPreset[] = [
         { from: 'dec-status', to: 'dec-retry', kind: 'branch', label: '否' },
         { from: 'dec-retry', to: 'proc-task', kind: 'loop', label: '指数退避' },
         { from: 'dec-retry', to: 'proc-alarm', label: '超限' },
+        { from: 'dec-status', to: 'note-2', kind: 'annotate' },
       ],
     },
   },

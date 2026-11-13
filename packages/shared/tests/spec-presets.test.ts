@@ -42,6 +42,19 @@ describe('renderSpec 入口与范式预设', () => {
     expect(loop.data!.waypoints!.every((p) => p.x > mainRight)).toBe(true);
   });
 
+  it('重试补偿预设附注左置且 annotate 边显式连接桩', () => {
+    const r = renderSpec(preset('flowchart-retry-compensation'));
+    const note = byId(r, 'note-2');
+    const host = byId(r, 'dec-status');
+    expect(note.position.x + note.width!).toBeLessThan(host.position.x);
+    const annot = r.edges.find((e) => e.data!.kind === 'annotate')!;
+    expect(annot.source).toBe('dec-status');
+    expect(annot.target).toBe('note-2');
+    expect(annot.sourceHandle).toBe('left');
+    expect(annot.targetHandle).toBe('right');
+    expect(noOverlap(r.nodes)).toBe(true);
+  });
+
   it('泳道预设业务节点挂 lane（修复旧模板挂 pool 缺陷）', () => {
     const r = renderSpec(preset('swimlane-cross-department'));
     expect(r.nodes.filter((n) => !['pool', 'lane'].includes(n.type)).every((n) => n.parentId!.startsWith('lane'))).toBe(true);
