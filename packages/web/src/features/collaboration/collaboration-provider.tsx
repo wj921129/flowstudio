@@ -11,6 +11,7 @@ import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
 import { bindCommentsYjs, useCommentsStore } from '../comments/index.js';
+import { apiClient } from '../../lib/api-client.js';
 
 export interface CollaborationContextValue {
   diagramId: string;
@@ -83,8 +84,26 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       else setConnectionStatus('disconnected');
     };
 
+    let isCancelled = false;
+    apiClient.getDiagram(diagramId).then((meta) => {
+      if (isCancelled || !meta?.title) return;
+      useFlowStore.setState({ diagramTitle: meta.title });
+    }).catch(() => {});
+
     const handleSynced = ({ state }: { state: boolean }) => {
       setIsSynced(state);
+      if (state) {
+        const raw = b.getRawTitle();
+        if (raw) {
+          useFlowStore.setState({ diagramTitle: raw });
+        } else {
+          apiClient.getDiagram(diagramId).then((meta) => {
+            if (isCancelled || !meta?.title) return;
+            b.setTitle(meta.title);
+            useFlowStore.setState({ diagramTitle: meta.title });
+          }).catch(() => {});
+        }
+      }
     };
 
     p.on('status', handleStatus);
@@ -101,6 +120,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     setSession({ doc: d, bridge: b, undoManager: u, provider: p });
 
     return () => {
+      isCancelled = true;
       p.off('status', handleStatus);
       p.off('synced', handleSynced);
       unbindStore();

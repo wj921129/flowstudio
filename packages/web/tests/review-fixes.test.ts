@@ -778,5 +778,29 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(latestEdges[0].source).toBe('n1');
       expect(latestEdges[0].target).toBe('n2');
     });
+
+    it('FS-001: bindCollaboration does not overwrite custom title with default title before hydration', async () => {
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+      const { YjsDiagramBridge } = await import('../src/features/collaboration/yjs-doc-bridge.js');
+      const { CollaborativeUndoManager } = await import('../src/features/collaboration/undo-manager.js');
+
+      useFlowStore.getState().unbindCollaboration();
+      useFlowStore.getState().resetDiagramState();
+
+      const doc = new Y.Doc();
+      const bridge = new YjsDiagramBridge(doc, { localClientId: 'client-test' });
+      const undo = new CollaborativeUndoManager(doc, 'client-test', 0);
+
+      useFlowStore.getState().bindCollaboration(bridge, undo);
+      expect(bridge.getRawTitle()).toBeUndefined();
+
+      const serverDoc = new Y.Doc();
+      serverDoc.getMap('meta').set('title', '电商订单履约');
+      const serverUpdate = Y.encodeStateAsUpdate(serverDoc);
+      Y.applyUpdate(doc, serverUpdate);
+
+      expect(useFlowStore.getState().diagramTitle).toBe('电商订单履约');
+      useFlowStore.getState().unbindCollaboration();
+    });
   });
 });

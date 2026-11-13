@@ -51,18 +51,18 @@ export const CreateDiagramModal: React.FC<CreateDiagramModalProps> = ({
       <div
         className="w-full max-w-md rounded-xl p-6 shadow-2xl border transition-all animate-in fade-in zoom-in-95 duration-150"
         style={{
-          backgroundColor: 'var(--fs-bg-surface, #ffffff)',
-          borderColor: 'var(--fs-border-primary, #e5e7eb)',
-          color: 'var(--fs-text-primary, #111827)',
+          backgroundColor: 'var(--fs-surface)',
+          borderColor: 'var(--fs-border)',
+          color: 'var(--fs-text)',
         }}
       >
         <h3 className="text-lg font-semibold mb-4">
-          {isEditing ? '重命名图表' : '新建流程图'}
+          {isEditing ? '修改图表' : '新建流程图'}
         </h3>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium mb-1 text-[var(--fs-text-secondary,#4b5563)]">
+            <label className="block text-xs font-medium mb-1 text-[var(--fs-text-muted)]">
               图表标题 *
             </label>
             <input
@@ -73,17 +73,17 @@ export const CreateDiagramModal: React.FC<CreateDiagramModalProps> = ({
               placeholder="例如：电商订单支付履约流程"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm outline-none transition-all focus:ring-2"
+              className="w-full px-3 py-2 rounded-lg border text-sm outline-none transition-all focus:ring-2 focus:ring-blue-500/20"
               style={{
-                backgroundColor: 'var(--fs-bg-canvas, #f9fafb)',
-                borderColor: 'var(--fs-border-primary, #d1d5db)',
-                color: 'var(--fs-text-primary, #111827)',
+                backgroundColor: 'var(--fs-bg)',
+                borderColor: 'var(--fs-border)',
+                color: 'var(--fs-text)',
               }}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium mb-1 text-[var(--fs-text-secondary,#4b5563)]">
+            <label className="block text-xs font-medium mb-1 text-[var(--fs-text-muted)]">
               补充描述 (可选)
             </label>
             <textarea
@@ -92,11 +92,11 @@ export const CreateDiagramModal: React.FC<CreateDiagramModalProps> = ({
               placeholder="简要记录该流程图的业务背景与设计说明"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm outline-none transition-all resize-none focus:ring-2"
+              className="w-full px-3 py-2 rounded-lg border text-sm outline-none transition-all resize-none focus:ring-2 focus:ring-blue-500/20"
               style={{
-                backgroundColor: 'var(--fs-bg-canvas, #f9fafb)',
-                borderColor: 'var(--fs-border-primary, #d1d5db)',
-                color: 'var(--fs-text-primary, #111827)',
+                backgroundColor: 'var(--fs-bg)',
+                borderColor: 'var(--fs-border)',
+                color: 'var(--fs-text)',
               }}
             />
           </div>
@@ -106,10 +106,10 @@ export const CreateDiagramModal: React.FC<CreateDiagramModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:bg-black/5"
+              className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
               style={{
-                borderColor: 'var(--fs-border-primary, #e5e7eb)',
-                color: 'var(--fs-text-secondary, #4b5563)',
+                borderColor: 'var(--fs-border)',
+                color: 'var(--fs-text-muted)',
               }}
             >
               取消
@@ -117,8 +117,8 @@ export const CreateDiagramModal: React.FC<CreateDiagramModalProps> = ({
             <button
               type="submit"
               disabled={!title.trim() || loading}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-white shadow-xs transition-opacity disabled:opacity-50"
-              style={{ backgroundColor: 'var(--fs-primary, #4f46e5)' }}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white shadow-xs transition-opacity disabled:opacity-50 cursor-pointer"
+              style={{ backgroundColor: 'var(--fs-primary)' }}
             >
               {loading ? '正在保存...' : isEditing ? '确定' : '立即创建'}
             </button>

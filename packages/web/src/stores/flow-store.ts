@@ -1609,19 +1609,17 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     activeUndoManager = undoManager;
 
     const bridgeState = bridge.toReactFlowState();
-    if (bridgeState.nodes.length > 0 || bridgeState.edges.length > 0) {
+    const rawTitle = bridge.getRawTitle();
+    if (bridgeState.nodes.length > 0 || bridgeState.edges.length > 0 || rawTitle) {
       set({
         nodes: bridgeState.nodes,
         edges: bridgeState.edges,
-        diagramTitle: bridgeState.title,
+        ...(rawTitle ? { diagramTitle: rawTitle } : {}),
       });
     } else {
-      const { nodes, edges, diagramTitle } = get();
+      const { nodes, edges } = get();
       if (nodes.length > 0 || edges.length > 0) {
         bridge.setDiagram(nodes, edges);
-      }
-      if (diagramTitle) {
-        bridge.setTitle(diagramTitle);
       }
     }
 

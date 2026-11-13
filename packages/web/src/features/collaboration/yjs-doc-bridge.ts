@@ -69,6 +69,11 @@ export class YjsDiagramBridge {
     return typeof title === 'string' ? title : '未命名流程图';
   }
 
+  getRawTitle(): string | undefined {
+    const title = this.metaMap.get('title');
+    return typeof title === 'string' && title.trim() ? title.trim() : undefined;
+  }
+
   setTitle(title: string): void {
     this.transact(() => {
       this.metaMap.set('title', title.trim());
