@@ -1308,5 +1308,55 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       );
       expect(edgeCode).toContain("interactionWidth={mergedStyle?.pointerEvents === 'none' ? 0 : interactionWidth}");
     });
+
+    it('FS-031: Avatar/Cursor 循环渲染按 clientId 去重，消除同用户双开标签页 duplicate key warning', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 1. 模拟多标签页重复 clientId 集合去重算法
+      const duplicatedRemotes = [
+        { clientId: 'user-common-1', nickname: '协作者A', color: '#ff0000', cursor: null },
+        { clientId: 'user-common-1', nickname: '协作者A', color: '#ff0000', cursor: { x: 100, y: 150 } },
+        { clientId: 'user-unique-2', nickname: '协作者B', color: '#00ff00', cursor: { x: 200, y: 250 } },
+      ];
+
+      const deduplicatedMap = new Map<string, typeof duplicatedRemotes[0]>();
+      for (const u of duplicatedRemotes) {
+        const existing = deduplicatedMap.get(u.clientId);
+        if (!existing || (!existing.cursor && u.cursor)) {
+          deduplicatedMap.set(u.clientId, u);
+        }
+      }
+      const uniqueList = Array.from(deduplicatedMap.values());
+
+      expect(uniqueList.length).toBe(2);
+      expect(uniqueList.find((u) => u.clientId === 'user-common-1')?.cursor).toEqual({ x: 100, y: 150 });
+
+      // 2. collaborator-avatars.tsx 源码审查：必须使用 uniqueRemoteUsers
+      const avatarCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/collaborator-avatars.tsx'),
+        'utf-8'
+      );
+      expect(avatarCode).toContain('uniqueRemoteUsers');
+      expect(avatarCode).toContain('uniqueRemoteUsers.slice(0, 4).map');
+      expect(avatarCode).toContain('uniqueRemoteUsers.length > 4');
+      expect(avatarCode).not.toContain('remoteUsers.slice(0, 4).map');
+
+      // 3. collaborative-cursors.tsx 源码审查：必须使用 uniqueRemoteUsers
+      const cursorCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/collaborative-cursors.tsx'),
+        'utf-8'
+      );
+      expect(cursorCode).toContain('uniqueRemoteUsers');
+      expect(cursorCode).toContain('uniqueRemoteUsers.map');
+      expect(cursorCode).not.toContain('collab.remoteUsers.map');
+
+      // 4. use-awareness.ts 源码审查：Awareness 状态收集源头去重
+      const awarenessCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/use-awareness.ts'),
+        'utf-8'
+      );
+      expect(awarenessCode).toContain('const userMap = new Map<string, AwarenessUserState>()');
+    });
   });
 });

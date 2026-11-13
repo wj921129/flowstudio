@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useViewport } from '@xyflow/react';
 import { useCollaboration } from './collaboration-provider.js';
 import { worldToViewportPixel } from './user-identity.js';
@@ -7,11 +7,24 @@ export const CollaborativeCursors: React.FC = () => {
   const collab = useCollaboration();
   const viewport = useViewport();
 
-  if (!collab || collab.remoteUsers.length === 0) return null;
+  const uniqueRemoteUsers = useMemo(() => {
+    if (!collab?.remoteUsers) return [];
+    const map = new Map<string, typeof collab.remoteUsers[0]>();
+    for (const user of collab.remoteUsers) {
+      if (!user?.clientId) continue;
+      const existing = map.get(user.clientId);
+      if (!existing || (!existing.cursor && user.cursor)) {
+        map.set(user.clientId, user);
+      }
+    }
+    return Array.from(map.values());
+  }, [collab?.remoteUsers]);
+
+  if (!collab || uniqueRemoteUsers.length === 0) return null;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
-      {collab.remoteUsers.map((user) => {
+      {uniqueRemoteUsers.map((user) => {
         if (!user.cursor) return null;
 
         const pixelPos = worldToViewportPixel(user.cursor, viewport);
@@ -53,7 +66,7 @@ export const CollaborativeCursors: React.FC = () => {
       })}
       {/* 远端用户在侧边栏触发 AI 规划时（光标不在画布内）的悬浮提示 */}
       <div className="absolute top-4 right-4 flex flex-col gap-2 pointer-events-none z-30">
-        {collab.remoteUsers
+        {uniqueRemoteUsers
           .filter((u) => u.aiPlanning?.isPlanning && !u.cursor)
           .map((u) => (
             <div

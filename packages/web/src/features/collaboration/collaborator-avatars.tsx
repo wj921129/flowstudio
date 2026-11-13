@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useCollaboration } from './collaboration-provider.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
@@ -9,9 +9,20 @@ export const CollaboratorAvatars: React.FC = () => {
   const followingUserId = useFlowStore((s) => s.followingUserId);
   const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
 
+  const uniqueRemoteUsers = useMemo(() => {
+    if (!collab?.remoteUsers) return [];
+    const map = new Map<string, typeof collab.remoteUsers[0]>();
+    for (const user of collab.remoteUsers) {
+      if (user?.clientId && !map.has(user.clientId)) {
+        map.set(user.clientId, user);
+      }
+    }
+    return Array.from(map.values());
+  }, [collab?.remoteUsers]);
+
   if (!collab) return null;
 
-  const { currentUser, remoteUsers, updateNickname, connectionStatus } = collab;
+  const { currentUser, updateNickname, connectionStatus } = collab;
 
   return (
     <div className="flex items-center gap-2">
@@ -55,7 +66,7 @@ export const CollaboratorAvatars: React.FC = () => {
         </button>
 
         {/* 远端用户头像（点击可开启/退出局域网带看跟随模式） */}
-        {remoteUsers.slice(0, 4).map((user) => {
+        {uniqueRemoteUsers.slice(0, 4).map((user) => {
           const isFollowing = followingUserId === user.clientId;
           const isPlanning = Boolean(user.aiPlanning?.isPlanning);
           return (
@@ -96,7 +107,7 @@ export const CollaboratorAvatars: React.FC = () => {
           );
         })}
 
-        {remoteUsers.length > 4 && (
+        {uniqueRemoteUsers.length > 4 && (
           <div
             className="relative inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-medium border-2 border-white ring-1 ring-black/10 shadow-xs"
             style={{
@@ -104,7 +115,7 @@ export const CollaboratorAvatars: React.FC = () => {
               color: 'var(--fs-text-secondary, #4b5563)',
             }}
           >
-            +{remoteUsers.length - 4}
+            +{uniqueRemoteUsers.length - 4}
           </div>
         )}
       </div>

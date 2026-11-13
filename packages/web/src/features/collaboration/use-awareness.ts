@@ -144,17 +144,21 @@ export function useAwareness({
       const states = provider.awareness?.getStates();
       if (!states) return;
 
-      const remotes: AwarenessUserState[] = [];
+      const userMap = new Map<string, AwarenessUserState>();
       states.forEach((state, clientID) => {
         // 排除自己
         if (clientID === provider.awareness?.clientID) return;
 
         const userState = state.user as AwarenessUserState | undefined;
         if (userState && userState.clientId && userState.nickname) {
-          remotes.push(userState);
+          const existing = userMap.get(userState.clientId);
+          if (!existing || (!existing.cursor && userState.cursor)) {
+            userMap.set(userState.clientId, userState);
+          }
         }
       });
 
+      const remotes = Array.from(userMap.values());
       setRemoteUsers((prev) => (isSameRemoteUsers(prev, remotes) ? prev : remotes));
     };
 
