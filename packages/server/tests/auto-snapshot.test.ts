@@ -52,7 +52,7 @@ describe('定时自动快照与自动排版前置备份', () => {
 
     const created = scheduler.runOnce();
     expect(created).toHaveLength(1);
-    expect(created[0].triggerType).toBe('auto');
+    expect(created[0].triggerType).toBe('timer');
     expect(created[0].label).toBe('定时自动快照');
 
     expect(scheduler.runOnce()).toHaveLength(0);

@@ -281,7 +281,7 @@ export class DiagramRepository {
   createSnapshot(
     diagramId: string,
     label: string,
-    triggerType: 'manual' | 'ai_batch' | 'auto' = 'manual'
+    triggerType: 'manual' | 'ai_batch' | 'auto' | 'timer' = 'manual'
   ): SnapshotSummary | null {
     const currentState = this.getYDocState(diagramId);
     if (!currentState) return null;
@@ -295,7 +295,7 @@ export class DiagramRepository {
     diagramId: string,
     state: Uint8Array,
     label: string,
-    triggerType: 'manual' | 'ai_batch' | 'auto' = 'manual'
+    triggerType: 'manual' | 'ai_batch' | 'auto' | 'timer' = 'manual'
   ): SnapshotSummary {
     const snapshotId = `snap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
@@ -331,7 +331,7 @@ export class DiagramRepository {
       id: r.id,
       diagramId: r.diagram_id,
       label: r.label,
-      triggerType: r.trigger_type as 'manual' | 'ai_batch' | 'auto',
+      triggerType: r.trigger_type as 'manual' | 'ai_batch' | 'auto' | 'timer',
       createdAt: r.created_at,
     }));
   }

@@ -145,7 +145,10 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
   // 创建新快照
   fastify.post('/:id/snapshots', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = (request.body || {}) as { label?: string; triggerType?: 'manual' | 'ai_batch' | 'auto' };
+    const body = (request.body || {}) as {
+      label?: string;
+      triggerType?: 'manual' | 'ai_batch' | 'auto' | 'timer';
+    };
     const label = body.label || '手动快照';
     const triggerType = body.triggerType || 'manual';
     // 在线优先：优先截取 Live Doc，避免漏掉落库防抖窗口内的最新协作编辑

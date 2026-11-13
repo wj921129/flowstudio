@@ -50,7 +50,7 @@ export class AutoSnapshotScheduler {
       if (!previous || previous === fingerprint) continue;
 
       created.push(
-        this.repo.createSnapshotFromState(id, state, this.options.label ?? DEFAULT_LABEL, 'auto'),
+        this.repo.createSnapshotFromState(id, state, this.options.label ?? DEFAULT_LABEL, 'timer'),
       );
     }
 

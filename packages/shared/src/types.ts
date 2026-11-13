@@ -554,8 +554,8 @@ export interface SnapshotSummary {
   diagramId: string;
   /** 快照备注标题 */
   label: string;
-  /** 触发类型：手动触发 | AI批次前自动快照 | 定时轮巡快照 */
-  triggerType: 'manual' | 'ai_batch' | 'auto';
+  /** 触发类型：手动触发 | AI批次前自动快照 | 自动安全备份 | 定时轮巡快照 */
+  triggerType: 'manual' | 'ai_batch' | 'auto' | 'timer';
   /** 创建时间 ISO 字符串 */
   createdAt: string;
 }

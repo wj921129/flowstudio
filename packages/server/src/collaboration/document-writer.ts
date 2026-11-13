@@ -74,7 +74,7 @@ export class DocumentWriter {
   createSnapshot(
     diagramId: string,
     label: string,
-    triggerType: 'manual' | 'ai_batch' | 'auto' = 'manual',
+    triggerType: 'manual' | 'ai_batch' | 'auto' | 'timer' = 'manual',
   ): SnapshotSummary | null {
     if (!this.repo.getDiagramById(diagramId)) return null;
 
