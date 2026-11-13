@@ -83,6 +83,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       name: diagramId,
       document: d,
     });
+    p.attach();
 
     let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       ws.connect();

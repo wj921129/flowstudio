@@ -957,6 +957,7 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
         return origConnect();
       };
       const p1 = new HocuspocusProvider({ websocketProvider: ws1, name: 'strict-mode-test', document: doc });
+      p1.attach();
 
       let timer1: any = setTimeout(() => {
         ws1.connect();
@@ -975,6 +976,8 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       // 模拟第 2 次挂载
       const ws2 = new HocuspocusProviderWebsocket({ url: 'ws://localhost:9999', autoConnect: false });
       const p2 = new HocuspocusProvider({ websocketProvider: ws2, name: 'strict-mode-test', document: doc });
+      p2.attach();
+      expect(p2.isAttached).toBe(true);
       let timer2: any = setTimeout(() => {
         ws2.connect();
       }, 0);
@@ -1162,6 +1165,46 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(drawerCode).toContain("snap.triggerType === 'ai_batch'");
       expect(drawerCode).toContain("snap.triggerType === 'manual'");
       expect(drawerCode).toContain("isAi ? 'AI 批次' : isManual ? '手动' : isTimer ? '定时' : '自动'");
+    });
+
+    it('FS-027: collaboration-provider 调用 p.attach() 建立 Provider 与 WebsocketProvider 的双向挂载以触发 Yjs 同步', async () => {
+      const { HocuspocusProvider, HocuspocusProviderWebsocket } = await import('@hocuspocus/provider');
+      const Y = await import('yjs');
+      const fs = await import('fs');
+      const path = await import('path');
+
+      const doc = new Y.Doc();
+      const ws = new HocuspocusProviderWebsocket({
+        url: 'ws://localhost:9999',
+        autoConnect: false,
+      });
+
+      // 验证未经 attach() 时，isAttached 恒为 false（FS-027 根因）
+      const unattachedProvider = new HocuspocusProvider({
+        websocketProvider: ws,
+        name: 'test-unattached',
+        document: doc,
+      });
+      expect(unattachedProvider.isAttached).toBe(false);
+      unattachedProvider.destroy();
+
+      // 验证经 attach() 后，isAttached 正确置为 true
+      const attachedProvider = new HocuspocusProvider({
+        websocketProvider: ws,
+        name: 'test-attached',
+        document: doc,
+      });
+      attachedProvider.attach();
+      expect(attachedProvider.isAttached).toBe(true);
+      attachedProvider.destroy();
+      ws.destroy();
+
+      // 源码审查：collaboration-provider.tsx 中必须显式调用 p.attach()
+      const providerSource = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/collaboration/collaboration-provider.tsx'),
+        'utf-8'
+      );
+      expect(providerSource).toContain('p.attach();');
     });
   });
 });
