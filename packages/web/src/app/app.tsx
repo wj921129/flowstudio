@@ -75,7 +75,7 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
     if (!pendingTemplate) return;
     try {
       // 自动创建安全备份快照
-      await apiClient.createSnapshot(diagramId, `[系统安全备份] 应用模板「${pendingTemplate.title}」前`);
+      await apiClient.createSnapshot(diagramId, `[系统安全备份] 应用模板「${pendingTemplate.title}」前`, 'auto');
     } catch (err) {
       console.warn('[EditorWorkspace] 创建自动安全快照失败:', err);
     }

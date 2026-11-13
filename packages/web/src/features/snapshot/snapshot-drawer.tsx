@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { History, X, Plus, RotateCcw, Sparkles, User, Clock, ShieldCheck, Layers, GitCompare, ArrowRight } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { History, X, Plus, RotateCcw, Sparkles, User, Clock, ShieldCheck, Layers, GitCompare, ArrowRight, AlertTriangle } from 'lucide-react';
 import type { SnapshotSummary, FlowNode, FlowEdge } from '@flowstudio/shared';
 import { compareSnapshots } from '@flowstudio/shared';
 import * as Y from 'yjs';
@@ -35,6 +36,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
   const [activeTab, setActiveTab] = useState<'timeline' | 'diff'>('timeline');
   const [diffBaseId, setDiffBaseId] = useState<string>('');
   const [diffTargetId, setDiffTargetId] = useState<string>('live');
+  const [confirmRestoreSnap, setConfirmRestoreSnap] = useState<{ id: string; label: string } | null>(null);
   const collab = useCollaboration();
 
   const loadSnapshots = useCallback(async () => {
@@ -65,7 +67,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
     const label = newLabel.trim() || '手动快照';
     try {
       setIsCreating(true);
-      await apiClient.createSnapshot(diagramId, label);
+      await apiClient.createSnapshot(diagramId, label, 'manual');
       setNewLabel('');
       onToast?.('快照创建成功');
       await loadSnapshots();
@@ -139,15 +141,35 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
     }
   };
 
-  const handleRestore = async (snapshotId: string, label: string) => {
+  useEffect(() => {
+    if (!confirmRestoreSnap) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setConfirmRestoreSnap(null);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const target = confirmRestoreSnap;
+        setConfirmRestoreSnap(null);
+        executeRestore(target.id, target.label);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [confirmRestoreSnap, diagramId, revertingId, collab]);
+
+  const handleRestore = (snapshotId: string, label: string) => {
     if (!diagramId || revertingId) return;
-    const confirmed = window.confirm(`确定要恢复至历史快照「${label}」吗？\n恢复前系统将自动为当前画布创建一份安全备份快照。`);
-    if (!confirmed) return;
+    setConfirmRestoreSnap({ id: snapshotId, label });
+  };
+
+  const executeRestore = async (snapshotId: string, label: string) => {
+    if (!diagramId || revertingId) return;
 
     try {
       setRevertingId(snapshotId);
       try {
-        await apiClient.createSnapshot(diagramId, `[系统安全备份] 恢复「${label}」前`);
+        await apiClient.createSnapshot(diagramId, `[系统安全备份] 恢复「${label}」前`, 'auto');
       } catch (err) {
         console.warn('[SnapshotDrawer] 自动备份快照失败:', err);
       }
@@ -265,6 +287,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 snapshots.map((snap) => {
                   const isAi = snap.triggerType === 'ai_batch';
                   const isManual = snap.triggerType === 'manual';
+                  const isTimer = snap.triggerType === 'timer';
 
                   return (
                     <div
@@ -282,11 +305,21 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                               ? 'bg-purple-500/15 text-purple-700 dark:text-purple-300'
                               : isManual
                               ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+                              : isTimer
+                              ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
                               : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                           }`}
                         >
-                          {isAi ? <Sparkles className="w-2.5 h-2.5" /> : isManual ? <User className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
-                          <span>{isAi ? 'AI 批次' : isManual ? '手动' : '自动'}</span>
+                          {isAi ? (
+                            <Sparkles className="w-2.5 h-2.5" />
+                          ) : isManual ? (
+                            <User className="w-2.5 h-2.5" />
+                          ) : isTimer ? (
+                            <Clock className="w-2.5 h-2.5" />
+                          ) : (
+                            <ShieldCheck className="w-2.5 h-2.5" />
+                          )}
+                          <span>{isAi ? 'AI 批次' : isManual ? '手动' : isTimer ? '定时' : '自动'}</span>
                         </span>
                       </div>
 
@@ -401,6 +434,64 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
           <span>支持任意快照与实时画布无损比对</span>
         </div>
       </div>
+
+      {confirmRestoreSnap &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmRestoreSnap(null);
+            }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl p-6 shadow-2xl border bg-[var(--fs-surface)] border-[var(--fs-border)] text-[var(--fs-text)] animate-in zoom-in-95 duration-150 select-none"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold leading-6 mb-1.5">恢复历史快照</h3>
+                  <p className="text-xs leading-5 text-[var(--fs-text-muted)]">
+                    确定要恢复至历史快照「
+                    <span className="font-semibold text-[var(--fs-text)]">{confirmRestoreSnap.label}</span>
+                    」吗？
+                  </p>
+                  <div className="mt-2.5 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span>恢复前系统将自动为当前画布创建一份安全备份快照，确保数据安全可溯。</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-6">
+                <button
+                  type="button"
+                  onClick={() => setConfirmRestoreSnap(null)}
+                  className="px-4 py-2 rounded-lg text-xs font-medium border border-[var(--fs-border)] text-[var(--fs-text-muted)] hover:bg-[var(--fs-bg)] transition-colors cursor-pointer"
+                >
+                  取消 (Esc)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = confirmRestoreSnap;
+                    setConfirmRestoreSnap(null);
+                    executeRestore(target.id, target.label);
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-medium text-white shadow-xs bg-purple-600 hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>确认恢复 (Enter)</span>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

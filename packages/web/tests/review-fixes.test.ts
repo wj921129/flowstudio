@@ -986,5 +986,182 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       p2.destroy();
       ws2.destroy();
     });
+
+    it('FS-023: Mermaid 导出泳道池/泳道双层 subgraph 导入空白画布无损往返且零幻影泳道', async () => {
+      const { diagramToMermaid, parseMermaid, diffMermaidToOps } = await import('@flowstudio/shared');
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+
+      const pool: FlowNode = {
+        id: 'pool-main',
+        type: 'pool',
+        position: { x: 50, y: 50 },
+        width: 800,
+        height: 440,
+        data: {
+          label: '核心业务池',
+          type: 'pool',
+          orientation: 'horizontal',
+          laneOrder: ['lane-frontend', 'lane-backend'],
+          headerSize: 40,
+        },
+      };
+      const lane1: FlowNode = {
+        id: 'lane-frontend',
+        type: 'lane',
+        parentId: 'pool-main',
+        position: { x: 0, y: 40 },
+        width: 800,
+        height: 200,
+        data: { label: '前端研发', type: 'lane', laneTitle: '前端研发' },
+      };
+      const lane2: FlowNode = {
+        id: 'lane-backend',
+        type: 'lane',
+        parentId: 'pool-main',
+        position: { x: 0, y: 240 },
+        width: 800,
+        height: 200,
+        data: { label: '后端研发', type: 'lane', laneTitle: '后端研发' },
+      };
+      const n1: FlowNode = {
+        id: 'node-ui',
+        type: 'process',
+        parentId: 'lane-frontend',
+        position: { x: 40, y: 40 },
+        data: { label: 'UI开发', type: 'process' },
+      };
+      const n2: FlowNode = {
+        id: 'node-api',
+        type: 'process',
+        parentId: 'lane-backend',
+        position: { x: 40, y: 40 },
+        data: { label: 'API接口', type: 'process' },
+      };
+      const edge: FlowEdge = {
+        id: 'e1',
+        source: 'node-ui',
+        target: 'node-api',
+        data: { label: '联调' },
+      };
+
+      const nodes = [pool, lane1, lane2, n1, n2];
+      const edges = [edge];
+
+      // 1. 导出 Mermaid 代码
+      const exportedDsl = diagramToMermaid(nodes, edges);
+      expect(exportedDsl).toContain('subgraph pool-main["核心业务池"]');
+      expect(exportedDsl).toContain('subgraph lane-frontend["前端研发"]');
+      expect(exportedDsl).toContain('subgraph lane-backend["后端研发"]');
+
+      // 2. 解析 Mermaid 代码，验证识别出 1 个 pool 与 2 个 lane，且 pool 绝不误入 lanes
+      const parsed = parseMermaid(exportedDsl);
+      expect(parsed.pools?.length).toBe(1);
+      expect(parsed.pools?.[0].id).toBe('pool-main');
+      expect(parsed.pools?.[0].label).toBe('核心业务池');
+      expect(parsed.lanes.length).toBe(2);
+      expect(parsed.lanes.map((l) => l.id)).toEqual(['lane-frontend', 'lane-backend']);
+      expect(parsed.lanes.every((l) => l.poolId === 'pool-main')).toBe(true);
+
+      // 3. 模拟导入空白画布计算差异
+      const diff = diffMermaidToOps(exportedDsl, [], []);
+      expect(diff.ops.some((op) => op.op === 'add_pool' && op.id === 'pool-main')).toBe(true);
+      expect(diff.ops.filter((op) => op.op === 'add_lane').length).toBe(2);
+      expect(diff.addedLaneIds).toEqual(['lane-frontend', 'lane-backend']);
+
+      // 4. 应用差异至 flowStore
+      useFlowStore.getState().setDiagram([], []);
+      useFlowStore.getState().applyMermaidOps(diff.ops);
+
+      const restoredNodes = useFlowStore.getState().nodes;
+      const poolsInCanvas = restoredNodes.filter((n) => n.type === 'pool');
+      const lanesInCanvas = restoredNodes.filter((n) => n.type === 'lane');
+
+      // 验证无任何多余幻影空泳道，pool 与 lane 数量完全守恒
+      expect(poolsInCanvas.length).toBe(1);
+      expect(lanesInCanvas.length).toBe(2);
+      expect(lanesInCanvas.every((l) => l.parentId === 'pool-main')).toBe(true);
+
+      // 5. 重新导出，验证无损往返 (roundtrip lossless)
+      const roundtripDsl = diagramToMermaid(restoredNodes, useFlowStore.getState().edges);
+      expect(roundtripDsl).toBe(exportedDsl);
+    });
+
+    it('FS-023: Mermaid 单层 subgraph 导入依然保持自动建池既有兼容性', async () => {
+      const { parseMermaid, diffMermaidToOps } = await import('@flowstudio/shared');
+      const { useFlowStore } = await import('../src/stores/flow-store.js');
+
+      const singleLayerDsl = [
+        'flowchart LR',
+        'subgraph single-lane["快速分栏"]',
+        '  x1["任务节点"]',
+        'end',
+      ].join('\n');
+
+      const parsed = parseMermaid(singleLayerDsl);
+      expect(parsed.pools?.length).toBe(0);
+      expect(parsed.lanes.length).toBe(1);
+      expect(parsed.lanes[0].id).toBe('single-lane');
+
+      const diff = diffMermaidToOps(singleLayerDsl, [], []);
+      useFlowStore.getState().setDiagram([], []);
+      useFlowStore.getState().applyMermaidOps(diff.ops);
+
+      const currentNodes = useFlowStore.getState().nodes;
+      const autoPool = currentNodes.find((n) => n.type === 'pool');
+      const lane = currentNodes.find((n) => n.type === 'lane');
+      expect(autoPool).toBeTruthy();
+      expect(lane?.parentId).toBe(autoPool?.id);
+    });
+
+    it('FS-024: 快照恢复已彻底移除原生 window.confirm 并由危险模态守卫', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const drawerCode = fs.readFileSync(path.resolve(__dirname, '../src/features/snapshot/snapshot-drawer.tsx'), 'utf-8');
+
+      // 严格断言：源码中彻底杜绝 window.confirm
+      expect(drawerCode.includes('window.confirm')).toBe(false);
+      // 包含品牌化恢复确认模态、快捷键说明及安全备份文案
+      expect(drawerCode).toContain('恢复历史快照');
+      expect(drawerCode).toContain('恢复前系统将自动为当前画布创建一份安全备份快照');
+      expect(drawerCode).toContain('取消 (Esc)');
+      expect(drawerCode).toContain('确认恢复 (Enter)');
+    });
+
+    it('FS-025: apiClient.createSnapshot 传递真实 triggerType 并与时间线四维徽标映射对齐', async () => {
+      const { apiClient } = await import('../src/lib/api-client.js');
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 验证 fetch 请求体包含 triggerType 参数
+      let sentBody: any = null;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (_url: any, options: any) => {
+        sentBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({ id: 'snap-mock', diagramId: 'd1', label: sentBody.label, triggerType: sentBody.triggerType, createdAt: new Date().toISOString() }),
+        } as any;
+      }) as any;
+
+      try {
+        await apiClient.createSnapshot('d1', '自动安全备份', 'auto');
+        expect(sentBody.triggerType).toBe('auto');
+
+        await apiClient.createSnapshot('d1', '定时快照', 'timer');
+        expect(sentBody.triggerType).toBe('timer');
+
+        await apiClient.createSnapshot('d1', '手动快照', 'manual');
+        expect(sentBody.triggerType).toBe('manual');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      // 验证 snapshot-drawer 时间线徽标对齐「自动/手动/AI 批次/定时」四维枚举
+      const drawerCode = fs.readFileSync(path.resolve(__dirname, '../src/features/snapshot/snapshot-drawer.tsx'), 'utf-8');
+      expect(drawerCode).toContain("snap.triggerType === 'timer'");
+      expect(drawerCode).toContain("snap.triggerType === 'ai_batch'");
+      expect(drawerCode).toContain("snap.triggerType === 'manual'");
+      expect(drawerCode).toContain("isAi ? 'AI 批次' : isManual ? '手动' : isTimer ? '定时' : '自动'");
+    });
   });
 });

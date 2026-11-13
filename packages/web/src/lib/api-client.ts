@@ -67,11 +67,15 @@ export const apiClient = {
     return res.json();
   },
 
-  async createSnapshot(diagramId: string, label: string): Promise<SnapshotSummary> {
+  async createSnapshot(
+    diagramId: string,
+    label: string,
+    triggerType: 'manual' | 'ai_batch' | 'auto' | 'timer' = 'manual'
+  ): Promise<SnapshotSummary> {
     const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/snapshots`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, triggerType: 'manual' }),
+      body: JSON.stringify({ label, triggerType }),
     });
     if (!res.ok) throw new Error(`创建快照失败: ${res.statusText}`);
     return res.json();

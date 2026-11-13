@@ -176,7 +176,8 @@ export function diagramToMermaid(
 
 /** 增量融合产出的操作（与 MCP apply_ops 操作语义一致） */
 export type MermaidBridgeOp =
-  | { op: 'add_lane'; id: string; label: string }
+  | { op: 'add_pool'; id: string; label: string; orientation?: 'horizontal' | 'vertical' }
+  | { op: 'add_lane'; id: string; label: string; poolId?: string }
   | { op: 'add_node'; id: string; type: FlowNodeType; label: string; laneId?: string }
   | { op: 'update_node'; id: string; label: string }
   | { op: 'move_to_lane'; nodeId: string; laneId: string }
@@ -200,6 +201,8 @@ export interface MermaidDiffResult {
   removedEdgeIds: string[];
   /** 新增泳道 ID */
   addedLaneIds: string[];
+  /** 新增泳道池 ID */
+  addedPoolIds?: string[];
   /** Mermaid 中缺失但画布仍安全保留的节点 ID（非破坏性） */
   missingNodeIds: string[];
 }
@@ -217,10 +220,23 @@ interface ParsedEdge {
   label?: string;
 }
 
-interface ParsedMermaid {
+export interface ParsedPool {
+  id: string;
+  label: string;
+  orientation?: 'horizontal' | 'vertical';
+}
+
+export interface ParsedLane {
+  id: string;
+  label: string;
+  poolId?: string;
+}
+
+export interface ParsedMermaid {
   nodes: ParsedNode[];
   edges: ParsedEdge[];
-  lanes: Array<{ id: string; label: string }>;
+  lanes: ParsedLane[];
+  pools?: ParsedPool[];
 }
 
 const EDGE_ARROW_RE = /(-\.->|==>|-->|---)/;
@@ -275,23 +291,37 @@ function parseNodeToken(token: string): ParsedNode | null {
 export function parseMermaid(mermaidText: string): ParsedMermaid {
   const nodes = new Map<string, ParsedNode>();
   const edges: ParsedEdge[] = [];
-  const lanes: Array<{ id: string; label: string }> = [];
-  const laneStack: string[] = [];
+  const rawSubgraphs: Array<{
+    id: string;
+    label: string;
+    parentId?: string;
+    children: string[];
+    direction?: 'TB' | 'LR' | 'RL' | 'BT';
+  }> = [];
+  const subgraphMap = new Map<string, {
+    id: string;
+    label: string;
+    parentId?: string;
+    children: string[];
+    direction?: 'TB' | 'LR' | 'RL' | 'BT';
+  }>();
+  const subgraphStack: string[] = [];
 
   const registerNode = (parsed: ParsedNode | null): ParsedNode | null => {
     if (!parsed) return null;
     const existing = nodes.get(parsed.id);
+    const activeSubId = subgraphStack.length > 0 ? subgraphStack[subgraphStack.length - 1] : undefined;
     if (existing) {
       if (parsed.label !== undefined) existing.label = parsed.label;
       if (parsed.type !== 'process') existing.type = parsed.type;
-      if (laneStack.length > 0 && existing.laneId === undefined) {
-        existing.laneId = laneStack[laneStack.length - 1];
+      if (activeSubId && existing.laneId === undefined) {
+        existing.laneId = activeSubId;
       }
       return existing;
     }
     const next: ParsedNode = {
       ...parsed,
-      laneId: parsed.laneId ?? (laneStack.length > 0 ? laneStack[laneStack.length - 1] : undefined),
+      laneId: parsed.laneId ?? activeSubId,
     };
     nodes.set(next.id, next);
     return next;
@@ -308,24 +338,39 @@ export function parseMermaid(mermaidText: string): ParsedMermaid {
     if (/^subgraph\b/i.test(line)) {
       const rest = line.replace(/^subgraph\b/i, '').trim();
       const laneMatch = /^([A-Za-z0-9_\-.]+)\s*(.*)$/.exec(rest);
-      let laneId: string;
-      let laneLabel: string;
+      let subId: string;
+      let subLabel: string;
       if (laneMatch) {
-        laneId = laneMatch[1];
+        subId = laneMatch[1];
         const shapePart = laneMatch[2].trim();
         const shapeMatch = /^[\[({]+([\s\S]*?)[\])}]+$/.exec(shapePart);
-        laneLabel = unwrapLabel(shapeMatch ? shapeMatch[1] : shapePart) || laneId;
+        subLabel = unwrapLabel(shapeMatch ? shapeMatch[1] : shapePart) || subId;
       } else {
-        laneId = `lane-auto-${lanes.length + 1}`;
-        laneLabel = unwrapLabel(rest) || laneId;
+        subId = `subgraph-auto-${rawSubgraphs.length + 1}`;
+        subLabel = unwrapLabel(rest) || subId;
       }
-      lanes.push({ id: laneId, label: laneLabel });
-      laneStack.push(laneId);
+      const parentId = subgraphStack.length > 0 ? subgraphStack[subgraphStack.length - 1] : undefined;
+      const entry = { id: subId, label: subLabel, parentId, children: [] };
+      if (parentId) {
+        subgraphMap.get(parentId)?.children.push(subId);
+      }
+      subgraphMap.set(subId, entry);
+      rawSubgraphs.push(entry);
+      subgraphStack.push(subId);
       continue;
     }
 
     if (/^end\b/i.test(line)) {
-      laneStack.pop();
+      subgraphStack.pop();
+      continue;
+    }
+
+    const dirMatch = /^direction\s+(TB|TD|LR|RL|BT)\b/i.exec(line);
+    if (dirMatch && subgraphStack.length > 0) {
+      const currentSubId = subgraphStack[subgraphStack.length - 1];
+      const d = dirMatch[1].toUpperCase();
+      const entry = subgraphMap.get(currentSubId);
+      if (entry) entry.direction = (d === 'TD' ? 'TB' : d) as any;
       continue;
     }
 
@@ -370,10 +415,51 @@ export function parseMermaid(mermaidText: string): ParsedMermaid {
     }
   }
 
+  const pools: ParsedPool[] = [];
+  const lanes: ParsedLane[] = [];
+  const rootSubgraphs = rawSubgraphs.filter((s) => !s.parentId);
+
+  for (const root of rootSubgraphs) {
+    if (root.children.length > 0) {
+      pools.push({
+        id: root.id,
+        label: root.label,
+        ...(root.direction === 'TB' ? { orientation: 'vertical' } : {}),
+      });
+      for (const childId of root.children) {
+        const child = subgraphMap.get(childId);
+        if (child) {
+          lanes.push({
+            id: child.id,
+            label: child.label,
+            poolId: root.id,
+          });
+        }
+      }
+    } else {
+      lanes.push({
+        id: root.id,
+        label: root.label,
+      });
+    }
+  }
+
+  if (pools.length > 0) {
+    for (const node of nodes.values()) {
+      if (node.laneId) {
+        const matchedPool = rootSubgraphs.find((r) => r.id === node.laneId && r.children.length > 0);
+        if (matchedPool && matchedPool.children.length > 0) {
+          node.laneId = matchedPool.children[0];
+        }
+      }
+    }
+  }
+
   return {
     nodes: Array.from(nodes.values()),
     edges,
     lanes,
+    pools,
   };
 }
 
@@ -419,19 +505,45 @@ export function diffMermaidToOps(
     missingNodeIds: [],
   };
 
+  const poolResolve = new Map<string, string>();
+  for (const pool of parsed.pools ?? []) {
+    const matched = existingPools.find(
+      (candidate) => candidate.id === pool.id || normalizeLabelKey(candidate.data?.label) === normalizeLabelKey(pool.label),
+    );
+    if (matched) {
+      poolResolve.set(pool.id, matched.id);
+    } else {
+      poolResolve.set(pool.id, pool.id);
+      result.ops.push({
+        op: 'add_pool',
+        id: pool.id,
+        label: pool.label,
+        orientation: pool.orientation ?? 'horizontal',
+      });
+      result.addedPoolIds = result.addedPoolIds ?? [];
+      result.addedPoolIds.push(pool.id);
+    }
+  }
+
   const laneResolve = new Map<string, string>();
   for (const lane of parsed.lanes) {
     const matchedLane = existingLanes.find(
-      (candidate) => candidate.id === lane.id || candidate.data?.label === lane.label,
+      (candidate) => candidate.id === lane.id || normalizeLabelKey(candidate.data?.label) === normalizeLabelKey(lane.label),
     );
     const matched = matchedLane ?? existingPools.find(
-      (candidate) => candidate.id === lane.id || candidate.data?.label === lane.label,
+      (candidate) => candidate.id === lane.id || normalizeLabelKey(candidate.data?.label) === normalizeLabelKey(lane.label),
     );
     if (matched) {
       laneResolve.set(lane.id, matched.id);
     } else {
       laneResolve.set(lane.id, lane.id);
-      result.ops.push({ op: 'add_lane', id: lane.id, label: lane.label });
+      const targetPoolId = lane.poolId ? (poolResolve.get(lane.poolId) ?? lane.poolId) : undefined;
+      result.ops.push({
+        op: 'add_lane',
+        id: lane.id,
+        label: lane.label,
+        ...(targetPoolId ? { poolId: targetPoolId } : {}),
+      });
       result.addedLaneIds.push(lane.id);
     }
   }

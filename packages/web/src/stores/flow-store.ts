@@ -1574,10 +1574,35 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     for (const op of ops) {
       switch (op.op) {
+        case 'add_pool': {
+          if (!nextNodes.some((n) => n.id === op.id)) {
+            const isVertical = op.orientation === 'vertical';
+            const pool: FlowNode = {
+              id: op.id,
+              type: 'pool',
+              position: { x: 50, y: 50 },
+              width: isVertical ? 520 : 800,
+              height: isVertical ? 640 : 240,
+              data: {
+                label: op.label,
+                type: 'pool',
+                orientation: op.orientation ?? 'horizontal',
+                laneOrder: [],
+                headerSize: 40,
+              },
+            };
+            nextNodes.push(pool);
+            addedNodesCount++;
+          }
+          break;
+        }
+
         case 'add_lane': {
-          let pool = nextNodes.find((n) => n.type === 'pool');
+          let pool = op.poolId
+            ? nextNodes.find((n) => n.id === op.poolId && n.type === 'pool')
+            : nextNodes.find((n) => n.type === 'pool');
           if (!pool) {
-            const poolId = generateUniqueId('pool');
+            const poolId = op.poolId || generateUniqueId('pool');
             pool = {
               id: poolId,
               type: 'pool',
@@ -1593,6 +1618,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
               },
             };
             nextNodes.push(pool);
+            addedNodesCount++;
           } else {
             const currentOrder = pool.data?.laneOrder ?? [];
             if (!currentOrder.includes(op.id)) {
@@ -1612,28 +1638,42 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             // 按所属池内的泳道计数 (B11)
             const poolLanes = nextNodes.filter((n) => n.parentId === currentPool.id && n.type === 'lane');
             const laneIndex = poolLanes.length;
-            const newLaneY = 40 + laneIndex * 200;
+            const isVertical = currentPool.data?.orientation === 'vertical';
+            const newLanePos = isVertical
+              ? { x: laneIndex * 240, y: 40 }
+              : { x: 0, y: 40 + laneIndex * 200 };
 
             nextNodes.push({
               id: op.id,
               type: 'lane',
               parentId: currentPool.id,
-              extent: 'parent',
-              position: { x: 0, y: newLaneY },
-              width: currentPool.width ?? 800,
-              height: 200,
+              position: newLanePos,
+              width: isVertical ? 240 : (currentPool.width ?? 800),
+              height: isVertical ? ((currentPool.height ?? 640) - 40) : 200,
               data: { label: op.label, type: 'lane', laneTitle: op.label },
             });
 
-            // 撑开池高度
-            const requiredPoolH = newLaneY + 200;
-            if ((currentPool.height ?? 0) < requiredPoolH && !isNodeLocked(currentPool, 'position')) {
-              const updatedPool: FlowNode = {
-                ...currentPool,
-                height: requiredPoolH,
-                style: { ...currentPool.style, height: requiredPoolH },
-              };
-              nextNodes = nextNodes.map((n) => (n.id === updatedPool.id ? updatedPool : n));
+            // 撑开池高度/宽度
+            if (isVertical) {
+              const requiredPoolW = (laneIndex + 1) * 240;
+              if ((currentPool.width ?? 0) < requiredPoolW && !isNodeLocked(currentPool, 'position')) {
+                const updatedPool: FlowNode = {
+                  ...currentPool,
+                  width: requiredPoolW,
+                  style: { ...currentPool.style, width: requiredPoolW },
+                };
+                nextNodes = nextNodes.map((n) => (n.id === updatedPool.id ? updatedPool : n));
+              }
+            } else {
+              const requiredPoolH = 40 + (laneIndex + 1) * 200;
+              if ((currentPool.height ?? 0) < requiredPoolH && !isNodeLocked(currentPool, 'position')) {
+                const updatedPool: FlowNode = {
+                  ...currentPool,
+                  height: requiredPoolH,
+                  style: { ...currentPool.style, height: requiredPoolH },
+                };
+                nextNodes = nextNodes.map((n) => (n.id === updatedPool.id ? updatedPool : n));
+              }
             }
 
             addedNodesCount++;
@@ -1648,7 +1688,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             newNode.data.label = op.label;
             if (op.laneId) {
               newNode.parentId = op.laneId;
-              newNode.extent = 'parent';
+              newNode.extent = undefined;
               // 同泳道内增量布局横向偏移 (B11)
               const existingChildren = nextNodes.filter((n) => n.parentId === op.laneId);
               newNode.position = { x: 40 + existingChildren.length * 160, y: 40 };
