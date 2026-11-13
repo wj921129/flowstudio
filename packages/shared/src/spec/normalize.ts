@@ -64,7 +64,7 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
       if (e.from !== id || (e.kind !== 'next' && e.kind !== 'branch')) continue;
       const target = byId.get(e.to)!;
       if (target.role !== 'main') continue;
-      if (explicit.get(target.id) === 'main') throw new SpecError(`节点 ${target.id} 显式 role 与分支闭包推断冲突`);
+      if (explicit.get(target.id) === 'main') continue;
       target.role = 'branch';
       queue.push(target.id);
     }
@@ -160,7 +160,9 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
   if (s.paradigm === 'vertical-flow') {
     for (const e of edges) {
       if ((e.kind === 'next' || e.kind === 'branch') && byId.get(e.from)!.role === 'branch' && byId.get(e.to)!.role === 'main') {
-        warnings.push(`分支 ${e.from} 以 ${e.kind} 连回主干 ${e.to}，建议改用 loop 回归边`);
+        const anchorOrd = order.get(regAnchor(e.from)) ?? -1;
+        const toOrd = order.get(e.to) ?? -1;
+        if (toOrd <= anchorOrd) warnings.push(`分支 ${e.from} 以 ${e.kind} 连回主干 ${e.to}，建议改用 loop 回归边`);
       }
     }
   }

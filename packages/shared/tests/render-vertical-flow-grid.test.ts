@@ -73,4 +73,49 @@ describe('vertical-flow 网格几何约定', () => {
   it('双重判断回归通过 normalize 锚点例外', () => {
     expect(() => normalizeSpec(spec)).not.toThrow();
   });
+
+  it('同源多分支纵向堆叠且带分流折点，支持分支 next 汇合下游主干', () => {
+    const multiSpec: DiagramSpec = {
+      paradigm: 'vertical-flow',
+      nodes: [
+        { id: 'start', label: '入口', type: 'start-end', role: 'main' },
+        { id: 'route', label: '业务分支路由', type: 'decision', role: 'main' },
+        { id: 'b1', label: '分支1', type: 'database' },
+        { id: 'b2', label: '分支2', type: 'database' },
+        { id: 'b3', label: '分支3', type: 'database' },
+        { id: 'merge', label: '汇总组装', type: 'process', role: 'main' },
+      ],
+      edges: [
+        { from: 'start', to: 'route' },
+        { from: 'route', to: 'b1', kind: 'branch', label: '条件一' },
+        { from: 'route', to: 'b2', kind: 'branch', label: '条件二比较长' },
+        { from: 'route', to: 'b3', kind: 'branch', label: '条件三' },
+        { from: 'b1', to: 'merge', kind: 'next', label: '结果' },
+        { from: 'b2', to: 'merge', kind: 'next', label: '结果' },
+        { from: 'b3', to: 'merge', kind: 'next', label: '结果' },
+        { from: 'route', to: 'merge', kind: 'next' },
+      ],
+    };
+    const n = normalizeSpec(multiSpec);
+    expect(n.warnings).toEqual([]);
+    const r = renderVerticalFlowGrid(n, ctx);
+    expect(noOverlap(r.nodes)).toBe(true);
+    const b1 = byId(r, 'b1');
+    const b2 = byId(r, 'b2');
+    const b3 = byId(r, 'b3');
+    const merge = byId(r, 'merge');
+    expect(b1.position.x).toBe(b2.position.x);
+    expect(b2.position.x).toBe(b3.position.x);
+    expect(b2.position.y).toBeGreaterThanOrEqual(b1.position.y + b1.height!);
+    expect(b3.position.y).toBeGreaterThanOrEqual(b2.position.y + b2.height!);
+    expect(merge.position.y).toBeGreaterThanOrEqual(b3.position.y + b3.height! + MAIN_GAP);
+    const e2 = r.edges.find((e) => e.source === 'route' && e.target === 'b2')!;
+    expect(e2.sourceHandle).toBe('right');
+    expect(e2.targetHandle).toBe('left');
+    expect(e2.data!.waypoints!.length).toBe(2);
+    const m1 = r.edges.find((e) => e.source === 'b1' && e.target === 'merge')!;
+    expect(m1.sourceHandle).toBe('right');
+    expect(m1.targetHandle).toBe('right');
+    expect(m1.data!.waypoints!.length).toBe(2);
+  });
 });

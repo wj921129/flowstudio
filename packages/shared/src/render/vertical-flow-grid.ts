@@ -71,7 +71,7 @@ export function renderVerticalFlowGrid(n: NormalizedSpec, ctx: RenderContext): R
     const occ = new Set<string>();
     const members: string[] = [];
     const place = (id: string, r: number, c: number) => {
-      if (cell.has(id) || placed.has(id)) return;
+      if (cell.has(id) || placed.has(id) || nodeOf(id).role === 'main') return;
       while (occ.has(`${r},${c}`)) c++;
       occ.add(`${r},${c}`);
       cell.set(id, { r, c });
@@ -86,7 +86,17 @@ export function renderVerticalFlowGrid(n: NormalizedSpec, ctx: RenderContext): R
         }
       }
     };
-    roots.forEach((rt, i) => place(rt, 0, i));
+    if (roots.length <= 1) {
+      roots.forEach((rt, i) => place(rt, 0, i));
+    } else {
+      let nextRow = 0;
+      for (const rt of roots) {
+        place(rt, nextRow, 0);
+        let maxR = nextRow;
+        for (const v of cell.values()) if (v.r > maxR) maxR = v.r;
+        nextRow = maxR + 1;
+      }
+    }
     if (members.length === 0) return;
     const colW = new Map<number, number>();
     const rowH = new Map<number, number>();
@@ -98,7 +108,11 @@ export function renderVerticalFlowGrid(n: NormalizedSpec, ctx: RenderContext): R
     }
     const from = pos.get(fromId)!;
     const colX = new Map<number, number>();
-    let x = from.x + from.width + BRANCH_GAP;
+    const maxLabelLen = roots.length > 1
+      ? Math.max(0, ...roots.map((rt) => (n.edges.find((e) => e.from === fromId && e.to === rt && e.kind === 'branch')?.label ?? '').length))
+      : 0;
+    const firstGap = roots.length > 1 ? Math.max(BRANCH_GAP, Math.min(220, maxLabelLen * 11 + 56)) : BRANCH_GAP;
+    let x = from.x + from.width + firstGap;
     for (const c of [...colW.keys()].sort((a, b) => a - b)) {
       colX.set(c, x);
       x += colW.get(c)! + GRID_COL_GAP;
@@ -257,9 +271,24 @@ export function renderVerticalFlowGrid(n: NormalizedSpec, ctx: RenderContext): R
         { x: midX, y: a.y + a.height / 2 },
         { x: midX, y: b.y + b.height / 2 },
       ];
+    } else if (e.kind === 'next' && nodeOf(e.from).role === 'branch' && nodeOf(e.to).role === 'main' && b.y >= a.y + a.height) {
+      const mergeX = maxRight + REG_LANE;
+      sourceHandle = 'right';
+      targetHandle = 'right';
+      waypoints = [
+        { x: mergeX, y: a.y + a.height / 2 },
+        { x: mergeX, y: b.y + b.height / 2 },
+      ];
     } else if (b.x >= a.x + a.width) {
       sourceHandle = 'right';
       targetHandle = 'left';
+      if (Math.abs(b.y + b.height / 2 - (a.y + a.height / 2)) > 1) {
+        const busX = a.x + a.width + REG_STUB * 2;
+        waypoints = [
+          { x: busX, y: a.y + a.height / 2 },
+          { x: busX, y: b.y + b.height / 2 },
+        ];
+      }
     }
     edges.push({
       id: `${ctx.idPrefix}e-${e.from}-${e.to}-${e.kind}`,
