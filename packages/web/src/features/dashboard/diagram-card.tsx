@@ -29,7 +29,9 @@ export const DiagramCard: React.FC<DiagramCardProps> = ({
   return (
     <div
       onClick={() => onOpen(diagram.id)}
-      className="group relative flex flex-col rounded-xl border overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5"
+      className={`group relative flex flex-col rounded-xl border cursor-pointer transition-all duration-200 hover:shadow-lg ${
+        menuOpen ? 'z-30' : 'hover:-translate-y-0.5'
+      }`}
       style={{
         backgroundColor: 'var(--fs-bg-surface, #ffffff)',
         borderColor: 'var(--fs-border-primary, #e5e7eb)',
@@ -37,7 +39,7 @@ export const DiagramCard: React.FC<DiagramCardProps> = ({
     >
       {/* 缩略图预览区 */}
       <div
-        className="w-full h-36 flex items-center justify-center p-3 relative overflow-hidden border-b transition-colors"
+        className="w-full h-36 rounded-t-xl flex items-center justify-center p-3 relative overflow-hidden border-b transition-colors"
         style={{
           backgroundColor: 'var(--fs-bg-canvas, #f9fafb)',
           borderColor: 'var(--fs-border-primary, #e5e7eb)',
