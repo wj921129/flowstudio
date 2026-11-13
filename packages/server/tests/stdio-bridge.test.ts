@@ -33,7 +33,7 @@ describe('MCP stdio Bridge Script (flowstudio-mcp.cjs)', () => {
 
     const scriptPath = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      '../../../scripts/flowstudio-mcp.cjs',
+      '../../../mcp/flowstudio-mcp.cjs',
     );
 
     // 拉起 stdio 桥接进程

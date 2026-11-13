@@ -3,7 +3,7 @@
  * @fileoverview FlowStudio MCP stdio 桥接器
  * @description 允许仅支持 stdio 传输协议的 Agent 客户端（如 Claude Desktop、Cursor）无缝连接到 FlowStudio 局域网服务
  * @example
- * node scripts/flowstudio-mcp.cjs --url http://192.168.1.100:3000/mcp
+ * node mcp/flowstudio-mcp.cjs --url http://192.168.1.100:3000/mcp
  */
 
 const readline = require('node:readline');

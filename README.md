@@ -46,8 +46,9 @@ flowstudio/
 │       └── tests/              # 前端组件与算法测试套件
 │
 ├── data/                       # 运行时持久化数据目录（SQLite 数据库与 WAL，已 gitignore）
-├── scripts/                    # 运维与接入脚本（start.bat, dev-all.bat, flowstudio-mcp.cjs）
-└── docs/                       # 项目标准文档中心（文件夹英文简称，文档中文）
+├── scripts/                    # 运维与验收脚本（start.bat, dev-all.bat, stop.bat, render-acceptance-svg.mjs）
+├── mcp/                        # MCP stdio 桥接脚本（flowstudio-mcp.cjs，对接 Cursor / Claude Desktop）
+└── .work/                      # 项目标准文档中心（文件夹英文简称，文档中文）
     ├── prd/                    # 产品需求规格说明书与已实现功能全景清单
     ├── tech/                   # 系统架构设计方案与技术方案
     └── flow/                   # 一二期里程碑实施流程与研发流转验收总结
@@ -105,7 +106,7 @@ pnpm test
 
 ## 🤖 外部 AI 工具接入（MCP Server）
 
-FlowStudio 内置 Fastify 原生 MCP 服务（端点 `/mcp`，遵循 Model Context Protocol 标准），并提供了轻量级的跨平台 stdio 转发桥接脚本 [`scripts/flowstudio-mcp.cjs`](file:///e:/workspace/my-workspace/flowstudio/scripts/flowstudio-mcp.cjs)。
+FlowStudio 内置 Fastify 原生 MCP 服务（端点 `/mcp`，遵循 Model Context Protocol 标准），并提供了轻量级的跨平台 stdio 转发桥接脚本 [`mcp/flowstudio-mcp.cjs`](file:///C:/workspace/my-workspace/flowstudio/mcp/flowstudio-mcp.cjs)。
 
 ### 在 Cursor / Claude Desktop 中配置
 
@@ -117,7 +118,7 @@ FlowStudio 内置 Fastify 原生 MCP 服务（端点 `/mcp`，遵循 Model Conte
     "flowstudio": {
       "command": "node",
       "args": [
-        "E:/workspace/my-workspace/flowstudio/scripts/flowstudio-mcp.cjs",
+        "C:/workspace/my-workspace/flowstudio/mcp/flowstudio-mcp.cjs",
         "--url",
         "http://127.0.0.1:3000/mcp"
       ]

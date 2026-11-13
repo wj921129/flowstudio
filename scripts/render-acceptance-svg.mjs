@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { BRANCH_GAP, DIAGRAM_PRESETS, MAIN_GAP, REG_LANE, REG_LANE_STEP, REG_STUB, normalizeSpec, renderSpec } from '../packages/shared/dist/index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const outDir = join(root, 'docs', 'flow', 'assets');
+const outDir = join(root, '.work', 'flow', 'assets');
 mkdirSync(outDir, { recursive: true });
 const EPS = 1e-6;
 const preset = (id) => { const p = DIAGRAM_PRESETS.find((x) => x.id === id); if (!p) throw new Error(`缺少预设 ${id}`); return p; };
@@ -189,7 +189,7 @@ for (const c of cases) {
   console.log(`[${c.name}] 节点=${res.r.nodes.length} 边=${res.r.edges.length} warnings=${res.warnings.length}`);
   for (const k of res.checks) { console.log(`  ${k.g} ${k.ok ? 'PASS' : 'FAIL'} ${k.detail}`); if (!k.ok) failed++; }
   for (const w of res.warnings) console.log(`  warning: ${w}`);
-  console.log(`  SVG -> docs/flow/assets/${file}`);
+  console.log(`  SVG -> .work/flow/assets/${file}`);
 }
 console.log(failed === 0 ? '验收结论：G1/G2/G3/G4/G6 全部 PASS' : `验收结论：${failed} 项断言 FAIL`);
 process.exitCode = failed === 0 ? 0 : 1;
