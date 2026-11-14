@@ -64,31 +64,57 @@ describe('FS-033: 保存状态指示器、手动保存按钮与定时快照可�
     }
   });
 
-  it('源码审查：SaveStatusIndicator 具备三态切换、定时可见性与 Ctrl+S 键盘拦截', () => {
+  it('computeCanvasSignature 仅响应元素数据与位移变更，忽略选中态与瞬态属性', async () => {
+    const { computeCanvasSignature } = await import('../src/features/topbar/save-status-indicator.js');
+    const baseNodes: any[] = [
+      { id: 'n1', type: 'process', position: { x: 100, y: 200 }, data: { label: 'A' }, selected: false },
+    ];
+    const baseEdges: any[] = [
+      { id: 'e1', source: 'n1', target: 'n2', selected: false },
+    ];
+
+    const sigBase = computeCanvasSignature(baseNodes, baseEdges);
+    const sigSelected = computeCanvasSignature(
+      [{ ...baseNodes[0], selected: true, dragging: true }],
+      [{ ...baseEdges[0], selected: true }]
+    );
+    expect(sigSelected).toBe(sigBase);
+
+    const sigMoved = computeCanvasSignature(
+      [{ ...baseNodes[0], position: { x: 120, y: 200 } }],
+      baseEdges
+    );
+    expect(sigMoved).not.toBe(sigBase);
+
+    const sigEdgeChanged = computeCanvasSignature(baseNodes, [{ ...baseEdges[0], label: '通过' }]);
+    expect(sigEdgeChanged).not.toBe(sigBase);
+  });
+
+  it('canTriggerSave 强制同一协作者两次保存间隔不低于 5 秒', async () => {
+    const { canTriggerSave, MIN_SAVE_INTERVAL_MS } = await import(
+      '../src/features/topbar/save-status-indicator.js'
+    );
+    expect(MIN_SAVE_INTERVAL_MS).toBe(5_000);
+    expect(canTriggerSave(0, 1000)).toBe(true);
+    expect(canTriggerSave(10_000, 14_999)).toBe(false);
+    expect(canTriggerSave(10_000, 15_000)).toBe(true);
+  });
+
+  it('源码审查：SaveStatusIndicator 采用圆形外边框 3 分钟顺时针进度条与 5 秒冷却', () => {
     const code = fs.readFileSync(
       path.resolve(__dirname, '../src/features/topbar/save-status-indicator.tsx'),
       'utf-8'
     );
 
-    // 1. 指示器三态与 testid
+    expect(code).toContain('data-testid="snapshot-progress-ring"');
     expect(code).toContain('data-testid="save-status-indicator"');
-    expect(code).toContain('data-status={statusState}');
-    expect(code).toContain('编辑中');
-    expect(code).toContain('保存中...');
-    expect(code).toContain('已自动保存');
-    expect(code).toContain('上次保存于');
-
-    // 2. 定时快照可见性（nextSnapshotAt 为空时隐蔽）
-    expect(code).toContain('data-testid="snapshot-timer-indicator"');
-    expect(code).toContain('saveStatus?.nextSnapshotAt && countdownStr');
-    expect(code).toContain('下次快照:');
-
-    // 3. 手动保存按钮与 testid
-    expect(code).toContain('data-testid="manual-save-button"');
-    expect(code).toContain('title="立即保存到数据库 (Ctrl+S / Cmd+S)"');
-    expect(code).toContain('aria-label="手动保存"');
-
-    // 4. Ctrl+S 拦截与 preventDefault
+    expect(code).toContain('SNAPSHOT_COUNTDOWN_MS = 3 * 60_000');
+    expect(code).toContain('MIN_SAVE_INTERVAL_MS = 5_000');
+    expect(code).toContain('transform="rotate(-90 18 18)"');
+    expect(code).toContain("saveAndCreateSnapshot('编辑前自动快照', 'auto')");
+    expect(code).toContain("saveAndCreateSnapshot('定时自动快照', 'timer')");
+    expect(code).not.toContain('保存中...');
+    expect(code).not.toContain('下次快照:');
     expect(code).toContain("(e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')");
     expect(code).toContain('e.preventDefault()');
     expect(code).toContain('handleManualSave()');

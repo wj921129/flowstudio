@@ -44,7 +44,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   const autoSnapshot = new AutoSnapshotScheduler(repo, writer, {
     intervalMs: options.autoSnapshotIntervalMs,
   });
-  autoSnapshot.start();
+  if (options.autoSnapshotIntervalMs) {
+    autoSnapshot.start();
+  }
 
   // 跨域支持
   await app.register(cors, {

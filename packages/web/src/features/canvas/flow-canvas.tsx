@@ -137,10 +137,9 @@ export const FlowCanvas: React.FC = () => {
     setSpotlightTarget,
   ]);
 
-  // 单选元素自动触发链路走查；若存在外部指定目标（如演讲/主讲人跟随）则优先使用
+  // 单选节点自动触发链路走查（选中连线不展示链路）；若存在外部指定目标（如演讲/主讲人跟随）则优先使用
   const autoSpotlightTargetId = useMemo(() => {
     if (selectedNodeIds.length === 1 && !selectedEdgeId) return selectedNodeIds[0];
-    if (selectedEdgeId && selectedNodeIds.length === 0) return selectedEdgeId;
     return null;
   }, [selectedNodeIds, selectedEdgeId]);
 

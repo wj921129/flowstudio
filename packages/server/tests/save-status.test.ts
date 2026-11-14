@@ -85,8 +85,18 @@ describe('保存状态信号与手动保存', () => {
     await server.app.close();
   });
 
-  it('GET /save-status 暴露 lastSavedAt / lastSnapshotAt / nextSnapshotAt 契约', async () => {
-    const server = await buildServer({ dbPath: tmpDbPath });
+  it('GET /save-status 默认停用服务端巡检（nextSnapshotAt=null），显式配置间隔时暴露完整契约', async () => {
+    const defaultServer = await buildServer({ dbPath: tmpDbPath });
+    const defaultDiag = defaultServer.repo.createDiagram({ title: '默认巡检关闭图' });
+    const defaultRes = await defaultServer.app.inject({
+      method: 'GET',
+      url: `/api/diagrams/${defaultDiag.id}/save-status`,
+    });
+    expect(defaultRes.statusCode).toBe(200);
+    expect(defaultRes.json().nextSnapshotAt).toBeNull();
+    await defaultServer.app.close();
+
+    const server = await buildServer({ dbPath: tmpDbPath, autoSnapshotIntervalMs: 300_000 });
     const diagram = server.repo.createDiagram({ title: '状态契约图' });
 
     const snapshot = server.writer.createSnapshot(diagram.id, '契约快照', 'manual');

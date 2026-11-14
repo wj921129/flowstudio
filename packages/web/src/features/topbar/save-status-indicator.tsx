@@ -1,8 +1,44 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Check, Save, Clock, RotateCcw } from 'lucide-react';
-import type { SaveStatusSummary } from '@flowstudio/shared';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Check, Save, RotateCcw } from 'lucide-react';
+import type { FlowEdge, FlowNode, SaveStatusSummary } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { apiClient } from '../../lib/api-client';
+
+export const SNAPSHOT_COUNTDOWN_MS = 3 * 60_000;
+export const MIN_SAVE_INTERVAL_MS = 5_000;
+const CHANGE_DEBOUNCE_MS = 800;
+const RING_RADIUS = 16;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+export function computeCanvasSignature(nodes: FlowNode[], edges: FlowEdge[]): string {
+  const normalizedNodes = nodes.map((n) => ({
+    id: n.id,
+    type: n.type,
+    x: Math.round((n.position?.x ?? 0) * 100) / 100,
+    y: Math.round((n.position?.y ?? 0) * 100) / 100,
+    w: n.width ?? null,
+    h: n.height ?? null,
+    parentId: n.parentId ?? null,
+    data: n.data ?? null,
+    style: n.style ?? null,
+  }));
+  const normalizedEdges = edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? null,
+    targetHandle: e.targetHandle ?? null,
+    type: e.type ?? null,
+    label: e.label ?? null,
+    data: e.data ?? null,
+    style: e.style ?? null,
+  }));
+  return JSON.stringify({ n: normalizedNodes, e: normalizedEdges });
+}
+
+export function canTriggerSave(lastSaveAt: number, now: number, minIntervalMs = MIN_SAVE_INTERVAL_MS): boolean {
+  return lastSaveAt === 0 || now - lastSaveAt >= minIntervalMs;
+}
 
 export interface SaveStatusIndicatorProps {
   diagramId?: string;
@@ -17,14 +53,79 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
 }) => {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
-  const diagramTitle = useFlowStore((s) => s.diagramTitle);
 
   const userInteractedRef = useRef(false);
-  const lastEditTimeRef = useRef(0);
+  const baselineSignatureRef = useRef<string | null>(null);
+  const lastSaveAtRef = useRef(0);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownEndAtRef = useRef<number | null>(null);
+  const isSavingRef = useRef(false);
+
   const [saveStatus, setSaveStatus] = useState<SaveStatusSummary | null>(null);
-  const [statusState, setStatusState] = useState<'editing' | 'saving' | 'saved'>('saved');
-  const [isManualSaving, setIsManualSaving] = useState(false);
-  const [countdownStr, setCountdownStr] = useState('');
+  const [statusState, setStatusState] = useState<'idle' | 'saving' | 'counting' | 'saved'>('saved');
+  const [isSaving, setIsSaving] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [remainingSecs, setRemainingSecs] = useState(0);
+
+  const canvasSignature = useMemo(() => computeCanvasSignature(nodes, edges), [nodes, edges]);
+
+  const clearPendingDebounce = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+  }, []);
+
+  const stopCountdown = useCallback(() => {
+    countdownEndAtRef.current = null;
+    setProgress(0);
+    setRemainingSecs(0);
+  }, []);
+
+  const saveAndCreateSnapshot = useCallback(
+    async (label: string, triggerType: 'manual' | 'auto' | 'timer'): Promise<boolean> => {
+      if (!diagramId || isReadOnly || isSavingRef.current) return false;
+      const now = Date.now();
+      if (!canTriggerSave(lastSaveAtRef.current, now)) {
+        if (triggerType === 'manual') {
+          const waitSecs = Math.ceil((MIN_SAVE_INTERVAL_MS - (now - lastSaveAtRef.current)) / 1000);
+          onToast?.(`操作过于频繁，请 ${waitSecs} 秒后再试`);
+        }
+        return false;
+      }
+
+      try {
+        isSavingRef.current = true;
+        setIsSaving(true);
+        setStatusState('saving');
+        lastSaveAtRef.current = now;
+
+        const saveRes = await apiClient.forceSave(diagramId);
+        await apiClient.createSnapshot(diagramId, label, triggerType);
+        if (saveRes.success) {
+          setSaveStatus(saveRes.status);
+        }
+        return true;
+      } catch (err: any) {
+        if (triggerType === 'manual') {
+          onToast?.(`保存失败: ${err?.message || String(err)}`);
+        }
+        return false;
+      } finally {
+        isSavingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [diagramId, isReadOnly, onToast]
+  );
+
+  const startCountdown = useCallback(() => {
+    const endAt = Date.now() + SNAPSHOT_COUNTDOWN_MS;
+    countdownEndAtRef.current = endAt;
+    setProgress(0.001);
+    setRemainingSecs(Math.ceil(SNAPSHOT_COUNTDOWN_MS / 1000));
+    setStatusState('counting');
+  }, []);
 
   useEffect(() => {
     const markInteracted = () => {
@@ -39,96 +140,106 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!userInteractedRef.current) return;
-    lastEditTimeRef.current = Date.now();
-    setStatusState('editing');
-    const timer = setTimeout(() => {
-      setStatusState((prev) => (prev === 'editing' ? 'saving' : prev));
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [nodes, edges, diagramTitle]);
+    baselineSignatureRef.current = null;
+    clearPendingDebounce();
+    stopCountdown();
+    setStatusState('saved');
+  }, [diagramId, clearPendingDebounce, stopCountdown]);
 
-  const fetchStatus = useCallback(async () => {
+  useEffect(() => {
     if (!diagramId) return;
-    try {
-      const data = await apiClient.getSaveStatus(diagramId);
-      setSaveStatus(data);
-      if (!userInteractedRef.current || lastEditTimeRef.current === 0) {
-        setStatusState('saved');
-      } else if (data.lastSavedAt) {
-        const savedTime = new Date(data.lastSavedAt).getTime();
-        if (savedTime >= lastEditTimeRef.current) {
-          setStatusState('saved');
-          lastEditTimeRef.current = 0;
-        }
-      }
-    } catch {}
+    apiClient
+      .getSaveStatus(diagramId)
+      .then((data) => setSaveStatus(data))
+      .catch(() => {});
   }, [diagramId]);
 
   useEffect(() => {
-    if (!diagramId) return;
-    fetchStatus();
+    if (!diagramId || isReadOnly) return;
 
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchStatus();
-      }
-    }, 5000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        fetchStatus();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [diagramId, fetchStatus]);
-
-  useEffect(() => {
-    if (!saveStatus?.nextSnapshotAt) {
-      setCountdownStr('');
+    if (baselineSignatureRef.current === null || !userInteractedRef.current) {
+      baselineSignatureRef.current = canvasSignature;
       return;
     }
-    const updateCountdown = () => {
-      const target = new Date(saveStatus.nextSnapshotAt!).getTime();
-      const serverOffset = saveStatus.serverTime ? new Date(saveStatus.serverTime).getTime() - Date.now() : 0;
-      const current = Date.now() + serverOffset;
-      const diffMs = target - current;
-      if (diffMs <= 0) {
-        setCountdownStr('即将巡检');
+
+    if (canvasSignature === baselineSignatureRef.current) return;
+    baselineSignatureRef.current = canvasSignature;
+
+    if (countdownEndAtRef.current !== null) return;
+
+    clearPendingDebounce();
+    const runInitialSnapshotAndStart = async () => {
+      const now = Date.now();
+      if (!canTriggerSave(lastSaveAtRef.current, now)) {
+        const waitMs = MIN_SAVE_INTERVAL_MS - (now - lastSaveAtRef.current) + 50;
+        debounceTimerRef.current = setTimeout(runInitialSnapshotAndStart, waitMs);
         return;
       }
-      const mins = Math.floor(diffMs / 60000);
-      const secs = Math.floor((diffMs % 60000) / 1000);
-      setCountdownStr(`${mins}:${secs < 10 ? '0' : ''}${secs}`);
+      await saveAndCreateSnapshot('编辑前自动快照', 'auto');
+      startCountdown();
     };
-    updateCountdown();
-    const timer = setInterval(updateCountdown, 1000);
+
+    debounceTimerRef.current = setTimeout(runInitialSnapshotAndStart, CHANGE_DEBOUNCE_MS);
+  }, [
+    diagramId,
+    isReadOnly,
+    canvasSignature,
+    clearPendingDebounce,
+    saveAndCreateSnapshot,
+    startCountdown,
+  ]);
+
+  useEffect(() => {
+    if (statusState !== 'counting' || countdownEndAtRef.current === null) return;
+
+    const tick = async () => {
+      const endAt = countdownEndAtRef.current;
+      if (endAt === null) return;
+      const remainMs = endAt - Date.now();
+
+      if (remainMs <= 0) {
+        stopCountdown();
+        const ok = await saveAndCreateSnapshot('定时自动快照', 'timer');
+        setStatusState(ok ? 'saved' : 'idle');
+        return;
+      }
+
+      const ratio = 1 - remainMs / SNAPSHOT_COUNTDOWN_MS;
+      setProgress(Math.min(1, Math.max(0.001, ratio)));
+      setRemainingSecs(Math.ceil(remainMs / 1000));
+    };
+
+    const timer = setInterval(tick, 250);
     return () => clearInterval(timer);
-  }, [saveStatus?.nextSnapshotAt, saveStatus?.serverTime]);
+  }, [statusState, stopCountdown, saveAndCreateSnapshot]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingDebounce();
+    };
+  }, [clearPendingDebounce]);
 
   const handleManualSave = useCallback(async () => {
-    if (!diagramId || isReadOnly || isManualSaving) return;
-    try {
-      setIsManualSaving(true);
-      setStatusState('saving');
-      const res = await apiClient.forceSave(diagramId);
-      if (res.success) {
-        lastEditTimeRef.current = 0;
-        setSaveStatus(res.status);
-        setStatusState('saved');
-        onToast?.('已保存到数据库');
-      }
-    } catch (err: any) {
-      onToast?.(`保存失败: ${err.message || String(err)}`);
-    } finally {
-      setIsManualSaving(false);
+    if (!diagramId || isReadOnly || isSavingRef.current) return;
+    clearPendingDebounce();
+    const ok = await saveAndCreateSnapshot('手动保存快照', 'manual');
+    if (ok) {
+      stopCountdown();
+      baselineSignatureRef.current = canvasSignature;
+      setStatusState('saved');
+      onToast?.('已保存并创建快照');
+    } else if (countdownEndAtRef.current !== null) {
+      setStatusState('counting');
     }
-  }, [diagramId, isReadOnly, isManualSaving, onToast]);
+  }, [
+    diagramId,
+    isReadOnly,
+    clearPendingDebounce,
+    saveAndCreateSnapshot,
+    stopCountdown,
+    canvasSignature,
+    onToast,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -147,69 +258,68 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
   const formattedTime = saveStatus?.lastSavedAt
     ? new Date(saveStatus.lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
+  const countdownLabel = `${Math.floor(remainingSecs / 60)}:${String(remainingSecs % 60).padStart(2, '0')}`;
+  const dashOffset = RING_CIRCUMFERENCE * (1 - progress);
+
+  const tooltip = isSaving
+    ? '正在保存并创建快照...'
+    : progress > 0
+      ? `3 分钟自动快照倒计时：${countdownLabel} · 点击立即保存并创建快照 (Ctrl+S / Cmd+S)`
+      : `画布已同步${formattedTime ? `（上次保存于 ${formattedTime}）` : ''} · 点击立即保存并创建快照 (Ctrl+S / Cmd+S)`;
 
   return (
-    <div className="flex items-center gap-1.5 shrink-0 select-none">
-      <div
+    <div className="relative inline-flex items-center justify-center w-9 h-9 shrink-0 select-none">
+      <svg
+        data-testid="snapshot-progress-ring"
+        className="absolute inset-0 w-9 h-9 pointer-events-none"
+        viewBox="0 0 36 36"
+        aria-hidden="true"
+      >
+        <circle
+          cx="18"
+          cy="18"
+          r={RING_RADIUS}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          className="text-fs-border/70"
+        />
+        {progress > 0 && (
+          <circle
+            cx="18"
+            cy="18"
+            r={RING_RADIUS}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeDasharray={RING_CIRCUMFERENCE}
+            strokeDashoffset={dashOffset}
+            transform="rotate(-90 18 18)"
+            className="text-fs-primary transition-[stroke-dashoffset] duration-200 ease-linear"
+          />
+        )}
+      </svg>
+
+      <button
+        type="button"
         data-testid="save-status-indicator"
         data-status={statusState}
-        title={
-          statusState === 'editing'
-            ? '本地有未保存改动'
-            : statusState === 'saving'
-            ? '正在落库持久化...'
-            : `已安全保存至数据库${formattedTime ? `（上次保存于 ${formattedTime}）` : ''}`
-        }
-        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium border border-fs-border bg-fs-surface text-fs-text-muted"
+        data-progress={progress.toFixed(3)}
+        onClick={handleManualSave}
+        disabled={isReadOnly || isSaving}
+        title={tooltip}
+        aria-label="保存与定时快照"
+        className="relative z-10 inline-flex items-center justify-center w-7 h-7 rounded-full bg-fs-surface text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default"
       >
-        {statusState === 'editing' ? (
-          <>
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
-            <span className="hidden lg:inline text-amber-600 dark:text-amber-400">编辑中</span>
-          </>
-        ) : statusState === 'saving' ? (
-          <>
-            <RotateCcw className="w-3 h-3 text-blue-500 animate-spin shrink-0" />
-            <span className="hidden lg:inline text-blue-600 dark:text-blue-400">保存中...</span>
-          </>
+        {isSaving ? (
+          <RotateCcw className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+        ) : progress > 0 ? (
+          <Save className="w-3.5 h-3.5 text-fs-primary" />
         ) : (
-          <>
-            <Check className="w-3 h-3 text-emerald-500 shrink-0" />
-            <span className="hidden lg:inline">已自动保存</span>
-            {formattedTime && (
-              <span className="hidden 2xl:inline text-[10px] opacity-75">
-                · 上次保存于 {formattedTime}
-              </span>
-            )}
-          </>
+          <Check className="w-3.5 h-3.5 text-emerald-500" />
         )}
-      </div>
-
-      {saveStatus?.nextSnapshotAt && countdownStr && (
-        <div
-          data-testid="snapshot-timer-indicator"
-          title={`定时安全快照调度中，预计 ${countdownStr} 后执行下一次巡检备份（5分钟周期）`}
-          className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border border-purple-500/20 bg-purple-500/10 text-purple-700 dark:text-purple-300"
-        >
-          <Clock className="w-3 h-3 text-purple-500 shrink-0" />
-          <span>下次快照: {countdownStr}</span>
-        </div>
-      )}
-
-      {!isReadOnly && (
-        <button
-          type="button"
-          data-testid="manual-save-button"
-          onClick={handleManualSave}
-          disabled={isManualSaving}
-          title="立即保存到数据库 (Ctrl+S / Cmd+S)"
-          aria-label="手动保存"
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-        >
-          <Save className={`w-3.5 h-3.5 ${isManualSaving ? 'animate-spin text-fs-primary' : 'text-fs-text-muted'}`} />
-          <span className="hidden lg:inline">保存</span>
-        </button>
-      )}
+      </button>
     </div>
   );
 };
