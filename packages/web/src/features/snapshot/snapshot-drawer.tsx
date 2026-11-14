@@ -142,21 +142,25 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
   };
 
   useEffect(() => {
-    if (!confirmRestoreSnap) return;
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        setConfirmRestoreSnap(null);
-      } else if (e.key === 'Enter') {
+        if (confirmRestoreSnap) {
+          setConfirmRestoreSnap(null);
+        } else {
+          onClose();
+        }
+      } else if (e.key === 'Enter' && confirmRestoreSnap) {
         e.preventDefault();
         const target = confirmRestoreSnap;
         setConfirmRestoreSnap(null);
         executeRestore(target.id, target.label);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [confirmRestoreSnap, diagramId, revertingId, collab]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, confirmRestoreSnap, onClose, diagramId, revertingId, collab]);
 
   const handleRestore = (snapshotId: string, label: string) => {
     if (!diagramId || revertingId) return;
@@ -203,9 +207,17 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="w-96 h-full bg-[var(--fs-surface)] border-l border-[var(--fs-border)] shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+  const drawerContent = (
+    <div
+      data-testid="snapshot-drawer-overlay"
+      className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-xs animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
+        data-testid="snapshot-drawer-container"
+        className="w-96 max-w-full h-full bg-[var(--fs-surface)] border-l border-[var(--fs-border)] shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="h-12 px-4 border-b border-[var(--fs-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-purple-600 dark:text-purple-400" />
@@ -219,7 +231,9 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1 rounded-md text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-border)]/50 transition-colors"
+            title="关闭抽屉"
+            aria-label="关闭历史版本抽屉"
+            className="p-1 rounded-md text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-border)]/50 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -494,5 +508,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
         )}
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(drawerContent, document.body) : drawerContent;
 };
 

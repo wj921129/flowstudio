@@ -1358,5 +1358,36 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       );
       expect(awarenessCode).toContain('const userMap = new Map<string, AwarenessUserState>()');
     });
+
+    it('FS-032: SnapshotDrawer 遮罩 dismiss、Esc 监听关闭、顶栏版本按钮 toggle 与 active 高亮及响应式保底', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 1. SnapshotDrawer 源码审查：遮罩点击 dismiss + Esc 监听 + 关闭按钮无障碍
+      const drawerCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/snapshot/snapshot-drawer.tsx'),
+        'utf-8'
+      );
+      expect(drawerCode).toContain('data-testid="snapshot-drawer-overlay"');
+      expect(drawerCode).toContain('onClick={onClose}');
+      expect(drawerCode).toContain('data-testid="snapshot-drawer-container"');
+      expect(drawerCode).toContain('e.stopPropagation()');
+      expect(drawerCode).toContain("e.key === 'Escape'");
+      expect(drawerCode).toContain('onClose()');
+      expect(drawerCode).toContain('title="关闭抽屉"');
+      expect(drawerCode).toContain('aria-label="关闭历史版本抽屉"');
+
+      // 2. TopBar 源码审查：版本按钮 toggle、active 样式高亮、无障碍标签与响应式保底
+      const topbarCode = fs.readFileSync(
+        path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'),
+        'utf-8'
+      );
+      expect(topbarCode).toContain('onClick={() => setIsHistoryOpen(!isHistoryOpen)}');
+      expect(topbarCode).toContain('aria-expanded={isHistoryOpen}');
+      expect(topbarCode).toContain('aria-label="历史版本"');
+      expect(topbarCode).toContain('bg-purple-600 text-white border-purple-600 shadow-purple-500/20');
+      expect(topbarCode).toContain("isHistoryOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'");
+      expect(topbarCode).toContain('<span className="hidden lg:inline">版本</span>');
+    });
   });
 });

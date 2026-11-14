@@ -508,11 +508,17 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         {!isReadOnly && (
           <button
             type="button"
-            onClick={() => setIsHistoryOpen(true)}
+            onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+            aria-expanded={isHistoryOpen}
+            aria-label="历史版本"
             title="查看历史版本快照与无损差异恢复"
-            className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50 transition-colors cursor-pointer shadow-xs"
+            className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+              isHistoryOpen
+                ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
+                : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
+            }`}
           >
-            <History className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+            <History className={`w-3.5 h-3.5 ${isHistoryOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
             <span className="hidden lg:inline">版本</span>
           </button>
         )}
