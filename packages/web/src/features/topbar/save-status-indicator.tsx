@@ -19,7 +19,7 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
   const edges = useFlowStore((s) => s.edges);
   const diagramTitle = useFlowStore((s) => s.diagramTitle);
 
-  const isInitialRef = useRef(true);
+  const userInteractedRef = useRef(false);
   const lastEditTimeRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatusSummary | null>(null);
   const [statusState, setStatusState] = useState<'editing' | 'saving' | 'saved'>('saved');
@@ -27,10 +27,19 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
   const [countdownStr, setCountdownStr] = useState('');
 
   useEffect(() => {
-    if (isInitialRef.current) {
-      isInitialRef.current = false;
-      return;
-    }
+    const markInteracted = () => {
+      userInteractedRef.current = true;
+    };
+    window.addEventListener('pointerdown', markInteracted, { capture: true, passive: true });
+    window.addEventListener('keydown', markInteracted, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', markInteracted, true);
+      window.removeEventListener('keydown', markInteracted, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userInteractedRef.current) return;
     lastEditTimeRef.current = Date.now();
     setStatusState('editing');
     const timer = setTimeout(() => {
@@ -44,10 +53,13 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
     try {
       const data = await apiClient.getSaveStatus(diagramId);
       setSaveStatus(data);
-      if (data.lastSavedAt) {
+      if (!userInteractedRef.current || lastEditTimeRef.current === 0) {
+        setStatusState('saved');
+      } else if (data.lastSavedAt) {
         const savedTime = new Date(data.lastSavedAt).getTime();
         if (savedTime >= lastEditTimeRef.current) {
           setStatusState('saved');
+          lastEditTimeRef.current = 0;
         }
       }
     } catch {}
@@ -153,19 +165,19 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
         {statusState === 'editing' ? (
           <>
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
-            <span className="text-amber-600 dark:text-amber-400">编辑中</span>
+            <span className="hidden lg:inline text-amber-600 dark:text-amber-400">编辑中</span>
           </>
         ) : statusState === 'saving' ? (
           <>
             <RotateCcw className="w-3 h-3 text-blue-500 animate-spin shrink-0" />
-            <span className="text-blue-600 dark:text-blue-400">保存中...</span>
+            <span className="hidden lg:inline text-blue-600 dark:text-blue-400">保存中...</span>
           </>
         ) : (
           <>
             <Check className="w-3 h-3 text-emerald-500 shrink-0" />
-            <span>已自动保存</span>
+            <span className="hidden lg:inline">已自动保存</span>
             {formattedTime && (
-              <span className="hidden xl:inline text-[10px] opacity-75">
+              <span className="hidden 2xl:inline text-[10px] opacity-75">
                 · 上次保存于 {formattedTime}
               </span>
             )}
@@ -177,7 +189,7 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
         <div
           data-testid="snapshot-timer-indicator"
           title={`定时安全快照调度中，预计 ${countdownStr} 后执行下一次巡检备份（5分钟周期）`}
-          className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border border-purple-500/20 bg-purple-500/10 text-purple-700 dark:text-purple-300"
+          className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border border-purple-500/20 bg-purple-500/10 text-purple-700 dark:text-purple-300"
         >
           <Clock className="w-3 h-3 text-purple-500 shrink-0" />
           <span>下次快照: {countdownStr}</span>
@@ -195,7 +207,7 @@ export const SaveStatusIndicator: React.FC<SaveStatusIndicatorProps> = ({
           className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
         >
           <Save className={`w-3.5 h-3.5 ${isManualSaving ? 'animate-spin text-fs-primary' : 'text-fs-text-muted'}`} />
-          <span className="hidden sm:inline">保存</span>
+          <span className="hidden lg:inline">保存</span>
         </button>
       )}
     </div>

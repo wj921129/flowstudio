@@ -325,7 +325,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           title="返回图表列表"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">图表列表</span>
+          <span className="hidden xl:inline">图表列表</span>
         </button>
 
         <div className="h-4 w-px bg-fs-border shrink-0" />
@@ -342,7 +342,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             onKeyDown={handleTitleKeyDown}
             aria-label="图表标题"
             placeholder={DEFAULT_DIAGRAM_TITLE}
-            className={`px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent max-w-[120px] sm:max-w-[160px] md:max-w-[200px] lg:max-w-xs truncate transition-colors ${
+            className={`px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent max-w-[80px] sm:max-w-[100px] md:max-w-[120px] lg:max-w-[180px] truncate transition-colors ${
               isReadOnly
                 ? 'cursor-default text-fs-text opacity-90 border border-transparent'
                 : 'hover:bg-fs-bg/60 focus:bg-fs-surface border border-transparent hover:border-fs-border focus:border-fs-primary focus:outline-none focus:ring-1 focus:ring-fs-primary text-fs-text'
@@ -351,7 +351,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           {isReadOnly && (
             <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-medium select-none">
               <Lock className="w-3 h-3" />
-              <span className="hidden sm:inline">只读模式</span>
+              <span className="hidden md:inline">只读模式</span>
             </span>
           )}
 
@@ -377,7 +377,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             className="inline-flex items-center gap-1 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
           >
             <Share2 className="w-3.5 h-3.5 text-fs-primary" />
-            <span className="hidden md:inline">分享</span>
+            <span className="hidden lg:inline">分享</span>
             <ChevronDown className={`w-3 h-3 text-fs-text-muted transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
           </button>
 
@@ -421,7 +421,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-emerald-500/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
         >
           <Tv className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="hidden md:inline">演示</span>
+          <span className="hidden xl:inline">演示</span>
         </button>
 
         {/* 动态安全防泄密水印开关 */}
@@ -436,12 +436,12 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           }`}
         >
           <Shield className={`w-3.5 h-3.5 ${isWatermarkEnabled ? 'text-amber-500' : 'text-zinc-400'}`} />
-          <span className="hidden lg:inline">{isWatermarkEnabled ? '水印开' : '水印'}</span>
+          <span className="hidden 2xl:inline">{isWatermarkEnabled ? '水印开' : '水印'}</span>
         </button>
 
         {/* 节点与连线统计徽标 */}
         <div
-          className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-fs-bg border border-fs-border text-fs-text-muted select-none font-medium"
+          className="hidden 2xl:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-fs-bg border border-fs-border text-fs-text-muted select-none font-medium"
           title={`画布包含 ${nodes.length} 个节点，${edges.length} 条连线`}
         >
           <span className="w-1.5 h-1.5 rounded-full bg-fs-primary animate-pulse" />
@@ -462,7 +462,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           }`}
         >
           <Compass className={`w-3.5 h-3.5 ${spotlightActive ? 'text-white' : 'text-blue-500'}`} />
-          <span className="hidden xl:inline">{spotlightActive ? '全局走查中' : '链路走查'}</span>
+          <span className="hidden 2xl:inline">{spotlightActive ? '全局走查中' : '链路走查'}</span>
         </button>
 
         {/* 一键自动排版 */}
@@ -475,7 +475,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
-            <span className="hidden xl:inline">{isLayouting ? '排版中...' : '自动排版'}</span>
+            <span className="hidden 2xl:inline">{isLayouting ? '排版中...' : '自动排版'}</span>
           </button>
         )}
 
@@ -492,7 +492,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             }`}
           >
             <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
-            <span className="hidden xl:inline">AI Copilot</span>
+            <span className="hidden 2xl:inline">AI Copilot</span>
           </button>
         )}
 
