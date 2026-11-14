@@ -43,6 +43,11 @@ export class SqlitePersistenceExtension implements Extension {
     const compacted = await compactYDocState(update);
 
     const saved = this.repo.saveYDocState(documentName, compacted ?? update, title);
-    if (saved) this.saveStatus?.markSaved(documentName);
+    if (!saved) return;
+
+    this.saveStatus?.markSaved(documentName);
+    if (document.getMap('nodes').size === 0) {
+      this.repo.clearThumbnail(documentName);
+    }
   }
 }

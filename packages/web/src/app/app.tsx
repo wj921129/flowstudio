@@ -32,14 +32,15 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
   const [pendingTemplate, setPendingTemplate] = useState<DiagramTemplate | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
-  // 节点变化防抖上报缩略图至服务端
+  // 节点变化防抖上报缩略图至服务端（含清空画布时清空陈旧缩略图）
+  const isSynced = collab?.isSynced ?? false;
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (!isSynced) return;
 
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
       try {
-        const thumbnail = generateMiniSvgThumbnail(nodes, edges);
+        const thumbnail = nodes.length === 0 ? '' : generateMiniSvgThumbnail(nodes, edges);
         await apiClient.updateDiagram(diagramId, { thumbnail });
       } catch (err) {
         console.warn('[EditorWorkspace] 自动同步缩略图异常:', err);
@@ -49,7 +50,7 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [nodes, edges, diagramId]);
+  }, [nodes, edges, diagramId, isSynced]);
 
   const handleApplyTemplate = (template: DiagramTemplate) => {
     if (nodes.length === 0) {

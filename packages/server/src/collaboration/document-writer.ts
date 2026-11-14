@@ -132,6 +132,7 @@ export class DocumentWriter {
     const live = this.getLiveDocument(diagramId);
     if (live) {
       const result = this.applyTransaction(live, origin, fn);
+      this.clearThumbnailIfEmpty(diagramId, live);
       return { result, live: true };
     }
 
@@ -140,6 +141,7 @@ export class DocumentWriter {
       try {
         const doc = direct.document as unknown as Y.Doc;
         const result = this.applyTransaction(doc, origin, fn);
+        this.clearThumbnailIfEmpty(diagramId, doc);
         return { result, live: false };
       } finally {
         // 立即落库并卸载，确保冷写入具备持久性
@@ -179,9 +181,16 @@ export class DocumentWriter {
         increment,
         typeof metaTitle === 'string' ? metaTitle : undefined,
       );
+      this.clearThumbnailIfEmpty(diagramId, doc);
     }
 
     return { result, live: false };
+  }
+
+  private clearThumbnailIfEmpty(diagramId: string, doc: Y.Doc): void {
+    if (doc.getMap('nodes').size === 0) {
+      this.repo.clearThumbnail(diagramId);
+    }
   }
 
   /**

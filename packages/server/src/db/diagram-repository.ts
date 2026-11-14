@@ -274,6 +274,30 @@ export class DiagramRepository {
   }
 
   /**
+   * 列出全部图表的缩略图与二进制状态，供数据卫生定向迁移扫描
+   */
+  listDiagramStates(): Array<{ id: string; thumbnail: string; ydocState: Uint8Array | null }> {
+    const stmt = this.db.prepare<[], { id: string; thumbnail: string | null; ydoc_state: Buffer | null }>(`
+      SELECT id, thumbnail, ydoc_state FROM diagrams
+    `);
+    return stmt.all().map((r) => ({
+      id: r.id,
+      thumbnail: r.thumbnail ?? '',
+      ydocState: r.ydoc_state ? new Uint8Array(r.ydoc_state) : null,
+    }));
+  }
+
+  /**
+   * 仅清空缩略图，不触碰 updated_at（数据卫生动作不应改变看板排序）
+   */
+  clearThumbnail(id: string): boolean {
+    const info = this.db
+      .prepare(`UPDATE diagrams SET thumbnail = '' WHERE id = ? AND thumbnail <> ''`)
+      .run(id);
+    return info.changes > 0;
+  }
+
+  /**
    * 为指定图表创建历史版本快照（冷文档路径，直接读取 SQLite 状态）
    *
    * 在线文档享有 500ms~2s 的落库防抖窗口，此时 SQLite 可能落后于 Live Doc。
