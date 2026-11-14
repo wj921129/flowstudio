@@ -8,6 +8,7 @@ import { DiagramRepository } from './db/diagram-repository.js';
 import { createCollaborationServer } from './collaboration/hocuspocus.js';
 import { DocumentWriter } from './collaboration/document-writer.js';
 import { AutoSnapshotScheduler } from './collaboration/auto-snapshot.js';
+import { SaveStatusTracker } from './collaboration/save-status.js';
 import { diagramRoutes } from './routes/diagrams.js';
 import { mcpPlugin } from './mcp/mcp-server.js';
 import { AiBatchManager } from './collaboration/ai-batch-manager.js';
@@ -36,8 +37,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   // 初始化数据库与协同服务
   const db = initDatabase(options.dbPath);
   const repo = new DiagramRepository(db);
-  const hocuspocus = createCollaborationServer(repo);
-  const writer = new DocumentWriter(repo, hocuspocus);
+  const saveStatus = new SaveStatusTracker(repo);
+  const hocuspocus = createCollaborationServer(repo, { saveStatus });
+  const writer = new DocumentWriter(repo, hocuspocus, saveStatus);
   const aiBatchManager = new AiBatchManager(repo, writer);
   const autoSnapshot = new AutoSnapshotScheduler(repo, writer, {
     intervalMs: options.autoSnapshotIntervalMs,
@@ -59,6 +61,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     repo,
     aiBatchManager,
     writer,
+    saveStatus,
+    autoSnapshot,
   });
 
   // 注册 MCP 端点 (JSON-RPC 2.0 / Streamable HTTP)

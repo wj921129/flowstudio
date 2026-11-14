@@ -231,14 +231,14 @@ export class DiagramRepository {
    * 严禁整包 `SET ydoc_state = excluded.ydoc_state`，否则在线同事未落库的改动会被静默冲掉。
    * 同时若图表已被删除（行不存在），直接丢弃这次残余防抖写入，杜绝“删图复活”。
    */
-  saveYDocState(id: string, update: Uint8Array, titleFromMeta?: string): void {
+  saveYDocState(id: string, update: Uint8Array, titleFromMeta?: string): boolean {
     const existing = this.db
       .prepare<[string], { ydoc_state: Buffer | null }>(`SELECT ydoc_state FROM diagrams WHERE id = ?`)
       .get(id);
 
     if (!existing) {
       // 图表已删除：忽略尚未落库的防抖残余更新
-      return;
+      return false;
     }
 
     const merged =
@@ -260,6 +260,7 @@ export class DiagramRepository {
         .prepare(`UPDATE diagrams SET ydoc_state = ?, updated_at = ? WHERE id = ?`)
         .run(Buffer.from(merged), now, id);
     }
+    return true;
   }
 
   /**

@@ -9,12 +9,23 @@ export interface AutoSnapshotOptions {
   label?: string;
 }
 
+export interface AutoSnapshotStatus {
+  intervalMs: number;
+  running: boolean;
+  startedAt: string | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+}
+
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_LABEL = '定时自动快照';
 
 export class AutoSnapshotScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private fingerprints = new Map<string, string>();
+  private startedAt: number | null = null;
+  private lastRunAt: number | null = null;
+  private nextRunAt: number | null = null;
 
   constructor(
     private repo: DiagramRepository,
@@ -22,10 +33,20 @@ export class AutoSnapshotScheduler {
     private options: AutoSnapshotOptions = {},
   ) {}
 
+  private get intervalMs(): number {
+    return this.options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  }
+
   start(): void {
     if (this.timer) return;
     this.captureBaseline();
-    this.timer = setInterval(() => this.runOnce(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
+    this.startedAt = Date.now();
+    this.nextRunAt = this.startedAt + this.intervalMs;
+    this.timer = setInterval(() => {
+      this.lastRunAt = Date.now();
+      this.runOnce();
+      this.nextRunAt = Date.now() + this.intervalMs;
+    }, this.intervalMs);
     this.timer.unref?.();
   }
 
@@ -33,6 +54,18 @@ export class AutoSnapshotScheduler {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+    this.nextRunAt = null;
+  }
+
+  getStatus(): AutoSnapshotStatus {
+    const iso = (value: number | null) => (value === null ? null : new Date(value).toISOString());
+    return {
+      intervalMs: this.intervalMs,
+      running: this.timer !== null,
+      startedAt: iso(this.startedAt),
+      lastRunAt: iso(this.lastRunAt),
+      nextRunAt: iso(this.nextRunAt),
+    };
   }
 
   runOnce(): SnapshotSummary[] {

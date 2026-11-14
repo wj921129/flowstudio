@@ -1,10 +1,14 @@
 import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import type { SaveStatusTracker } from './save-status.js';
 import { compactYDocState } from './yjs-compaction.js';
 
 export class SqlitePersistenceExtension implements Extension {
-  constructor(private repo: DiagramRepository) {}
+  constructor(
+    private repo: DiagramRepository,
+    private saveStatus?: SaveStatusTracker,
+  ) {}
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<void> {
     const { documentName, document } = data;
@@ -38,6 +42,7 @@ export class SqlitePersistenceExtension implements Extension {
     // 仍持有膨胀历史的旧客户端会把大状态写回来，落库前再压一次守住体积上限
     const compacted = await compactYDocState(update);
 
-    this.repo.saveYDocState(documentName, compacted ?? update, title);
+    const saved = this.repo.saveYDocState(documentName, compacted ?? update, title);
+    if (saved) this.saveStatus?.markSaved(documentName);
   }
 }

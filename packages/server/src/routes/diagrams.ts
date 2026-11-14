@@ -6,19 +6,36 @@ import {
   updateDiagramInputSchema,
   type FlowNode,
   type FlowEdge,
+  type SaveStatusSummary,
 } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import type { DocumentWriter } from '../collaboration/document-writer.js';
+import type { SaveStatusTracker } from '../collaboration/save-status.js';
+import type { AutoSnapshotScheduler } from '../collaboration/auto-snapshot.js';
 
 interface DiagramRouteOptions {
   repo: DiagramRepository;
   aiBatchManager?: AiBatchManager;
   writer?: DocumentWriter;
+  saveStatus?: SaveStatusTracker;
+  autoSnapshot?: AutoSnapshotScheduler;
 }
 
 export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fastify, opts) => {
   const { repo } = opts;
+
+  const buildSaveStatus = (diagramId: string): SaveStatusSummary => {
+    const scheduler = opts.autoSnapshot?.getStatus();
+    return {
+      diagramId,
+      lastSavedAt: opts.saveStatus?.getLastSavedAt(diagramId) ?? null,
+      lastSnapshotAt: repo.listSnapshots(diagramId)[0]?.createdAt ?? null,
+      nextSnapshotAt: scheduler?.nextRunAt ?? null,
+      snapshotIntervalMs: scheduler?.intervalMs ?? null,
+      serverTime: new Date().toISOString(),
+    };
+  };
 
   // 查询列表（支持关键字搜索）
   fastify.get('/', async (request) => {
@@ -80,6 +97,25 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     }
 
     return updated;
+  });
+
+  // 保存状态信号（供前端保存指示器与定时快照可见性消费）
+  fastify.get('/:id/save-status', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!repo.getDiagramById(id)) {
+      return reply.status(404).send({ error: '图表不存在' });
+    }
+    return buildSaveStatus(id);
+  });
+
+  // 手动保存：跳过协同防抖窗口，立即将在线文档落库
+  fastify.post('/:id/save', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!repo.getDiagramById(id)) {
+      return reply.status(404).send({ error: '图表不存在' });
+    }
+    const flushed = opts.writer ? await opts.writer.flushDocument(id) : false;
+    return { success: true, flushed, status: buildSaveStatus(id) };
   });
 
   // 复制图表

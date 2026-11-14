@@ -560,3 +560,21 @@ export interface SnapshotSummary {
   createdAt: string;
 }
 
+/**
+ * 图表保存状态摘要（GET /api/diagrams/:id/save-status）
+ */
+export interface SaveStatusSummary {
+  /** 所属图表 ID */
+  diagramId: string;
+  /** 最近一次成功落库时间 ISO 字符串；本次进程无记录时回退为图表 updatedAt */
+  lastSavedAt: string | null;
+  /** 最近一次快照创建时间 ISO 字符串（任意触发类型） */
+  lastSnapshotAt: string | null;
+  /** 下一次定时快照巡检时间 ISO 字符串；调度器未运行时为 null */
+  nextSnapshotAt: string | null;
+  /** 定时快照周期间隔毫秒；调度器未运行时为 null */
+  snapshotIntervalMs: number | null;
+  /** 服务端当前时间 ISO 字符串，供前端校正倒计时时钟偏差 */
+  serverTime: string;
+}
+

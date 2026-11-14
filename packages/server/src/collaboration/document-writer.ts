@@ -9,6 +9,8 @@ import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type { SnapshotSummary } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import type { SaveStatusTracker } from './save-status.js';
+import { compactYDocState } from './yjs-compaction.js';
 import { deepEqual } from './entity-state.js';
 
 export type DocumentOrigin =
@@ -28,6 +30,7 @@ export class DocumentWriter {
   constructor(
     private repo: DiagramRepository,
     private hocuspocus?: Hocuspocus,
+    private saveStatus?: SaveStatusTracker,
   ) {}
 
   /**
@@ -83,6 +86,25 @@ export class DocumentWriter {
     if (!state) return null;
 
     return this.repo.createSnapshotFromState(diagramId, state, label, triggerType);
+  }
+
+  /**
+   * 手动保存：跳过 Hocuspocus 防抖窗口，将在线文档立即落库
+   */
+  async flushDocument(diagramId: string): Promise<boolean> {
+    const live = this.getLiveDocument(diagramId);
+    if (!live) return false;
+
+    const update = Y.encodeStateAsUpdate(live);
+    const compacted = await compactYDocState(update);
+    const metaTitle = live.getMap('meta').get('title');
+    const saved = this.repo.saveYDocState(
+      diagramId,
+      compacted ?? update,
+      typeof metaTitle === 'string' ? metaTitle : undefined,
+    );
+    if (saved) this.saveStatus?.markSaved(diagramId);
+    return saved;
   }
 
   /**

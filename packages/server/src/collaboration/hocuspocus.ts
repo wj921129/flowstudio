@@ -1,10 +1,12 @@
 import { Hocuspocus } from '@hocuspocus/server';
 import type { DiagramRepository } from '../db/diagram-repository.js';
+import type { SaveStatusTracker } from './save-status.js';
 import { SqlitePersistenceExtension } from './sqlite-extension.js';
 
 export interface CollaborationServerOptions {
   debounce?: number;
   maxDebounce?: number;
+  saveStatus?: SaveStatusTracker;
 }
 
 export function createCollaborationServer(
@@ -14,6 +16,6 @@ export function createCollaborationServer(
   return new Hocuspocus({
     debounce: options?.debounce ?? 500,
     maxDebounce: options?.maxDebounce ?? 2000,
-    extensions: [new SqlitePersistenceExtension(repo)],
+    extensions: [new SqlitePersistenceExtension(repo, options?.saveStatus)],
   });
 }
