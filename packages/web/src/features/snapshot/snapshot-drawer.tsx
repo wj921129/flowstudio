@@ -210,12 +210,12 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
   const drawerContent = (
     <div
       data-testid="snapshot-drawer-overlay"
-      className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-xs animate-in fade-in duration-200"
+      className="fixed inset-0 z-40 flex justify-end bg-black/30 backdrop-blur-xs animate-in fade-in duration-200"
       onClick={onClose}
     >
       <div
         data-testid="snapshot-drawer-container"
-        className="w-96 max-w-full h-full bg-[var(--fs-surface)] border-l border-[var(--fs-border)] shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
+        className="w-96 max-w-full mt-12 h-[calc(100vh-3rem)] bg-[var(--fs-surface)] border-l border-[var(--fs-border)] shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="h-12 px-4 border-b border-[var(--fs-border)] flex items-center justify-between shrink-0">
@@ -453,7 +453,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
         typeof document !== 'undefined' &&
         createPortal(
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-150"
             onClick={(e) => {
               e.stopPropagation();
               setConfirmRestoreSnap(null);

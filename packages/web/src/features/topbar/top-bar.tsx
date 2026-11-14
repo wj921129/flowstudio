@@ -311,7 +311,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
   return (
     <header
-      className={`h-12 border-b border-fs-border bg-fs-surface/85 backdrop-blur-md px-4 flex items-center justify-between select-none z-40 shrink-0 ${className}`}
+      className={`h-12 border-b border-fs-border bg-fs-surface/85 backdrop-blur-md px-4 flex items-center justify-between select-none z-50 shrink-0 ${className}`}
     >
       {/* 左侧：返回图列表 + 分隔线 + 可编辑图表标题 */}
       <div className="flex items-center gap-3 min-w-0">

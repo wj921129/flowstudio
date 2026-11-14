@@ -1268,12 +1268,12 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       useFlowStore.getState().resetDiagramState();
       expect(useFlowStore.getState().dismissedAiBatchIds.size).toBe(0);
 
-      // 2. top-bar.tsx 源码静态审查：header 必须为 z-40
+      // 2. top-bar.tsx 源码静态审查：header 必须为 z-40 或更高 (如 FS-032 升至 z-50 压过抽屉遮罩)
       const topBarCode = fs.readFileSync(
         path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'),
         'utf-8'
       );
-      expect(topBarCode).toMatch(/<header[^>]*z-40/);
+      expect(topBarCode).toMatch(/<header[^>]*z-(?:40|50)/);
 
       // 3. ai-batch-banner.tsx 源码静态审查：使用 dismissedAiBatchIds
       const bannerCode = fs.readFileSync(
@@ -1376,12 +1376,16 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(drawerCode).toContain('onClose()');
       expect(drawerCode).toContain('title="关闭抽屉"');
       expect(drawerCode).toContain('aria-label="关闭历史版本抽屉"');
+      expect(drawerCode).toContain('mt-12 h-[calc(100vh-3rem)]');
+      expect(drawerCode).toContain('z-40 flex justify-end');
+      expect(drawerCode).toContain('z-[60]');
 
       // 2. TopBar 源码审查：版本按钮 toggle、active 样式高亮、无障碍标签与响应式保底
       const topbarCode = fs.readFileSync(
         path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'),
         'utf-8'
       );
+      expect(topbarCode).toMatch(/<header[^>]*z-50/);
       expect(topbarCode).toContain('onClick={() => setIsHistoryOpen(!isHistoryOpen)}');
       expect(topbarCode).toContain('aria-expanded={isHistoryOpen}');
       expect(topbarCode).toContain('aria-label="历史版本"');
