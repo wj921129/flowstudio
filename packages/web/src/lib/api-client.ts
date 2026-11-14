@@ -1,4 +1,4 @@
-import type { DiagramSummary, FlowNode, FlowEdge, SnapshotSummary } from '@flowstudio/shared';
+import type { DiagramSummary, FlowNode, FlowEdge, SnapshotSummary, SaveStatusSummary } from '@flowstudio/shared';
 
 const API_BASE = '/api/diagrams';
 
@@ -88,6 +88,20 @@ export const apiClient = {
       body: JSON.stringify(options ?? {}),
     });
     if (!res.ok) throw new Error(`恢复快照失败: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getSaveStatus(diagramId: string): Promise<SaveStatusSummary> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/save-status`);
+    if (!res.ok) throw new Error(`获取保存状态失败: ${res.statusText}`);
+    return res.json();
+  },
+
+  async forceSave(diagramId: string): Promise<{ success: boolean; flushed: boolean; status: SaveStatusSummary }> {
+    const res = await fetch(`${API_BASE}/${encodeURIComponent(diagramId)}/save`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`手动保存失败: ${res.statusText}`);
     return res.json();
   },
 };

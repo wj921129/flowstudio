@@ -33,6 +33,7 @@ import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
+import { SaveStatusIndicator } from './save-status-indicator';
 import { layoutDiagram } from '../canvas/layout/elk-layout';
 import { SnapshotDrawer } from '../snapshot/snapshot-drawer';
 import { MermaidDrawer } from '../mermaid/mermaid-drawer';
@@ -353,6 +354,12 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
               <span className="hidden sm:inline">只读模式</span>
             </span>
           )}
+
+          <SaveStatusIndicator
+            diagramId={diagramId}
+            isReadOnly={isReadOnly}
+            onToast={showToast}
+          />
         </div>
       </div>
 
