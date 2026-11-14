@@ -191,7 +191,7 @@ describe('scaffold_diagram spec 差量渲染', () => {
   it('tools/list 含 8 个工具且 list_templates 返回 8 个预设', async () => {
     const listRes = await server.app.inject({ method: 'POST', url: '/mcp', payload: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
     const tools = listRes.json().result.tools;
-    expect(tools.length).toBe(8);
+    expect(tools.length).toBe(14);
     expect(tools.map((t: any) => t.name)).toContain('list_templates');
     const res = await callTool(server, 'list_templates', {});
     expect(res.data.length).toBe(8);

@@ -106,7 +106,7 @@ describe('节点锚定锁与 MCP 增强操作', () => {
 
     expect(applied.success).toBe(true);
     expect(applied.appliedCount).toBe(2);
-    expect(applied.warnings.length).toBe(3);
+    expect(applied.warnings.filter((w: string) => w.includes('锁定')).length).toBe(3);
     expect(applied.warnings.some((w: string) => w.includes('完全锁定'))).toBe(true);
     expect(applied.warnings.some((w: string) => w.includes('锁定坐标'))).toBe(true);
 

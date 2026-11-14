@@ -134,3 +134,34 @@ export const getSelectionInputSchema = z.object({
   diagramId: z.string().min(1),
   nickname: z.string().optional(),
 });
+
+export const undoAiBatchInputSchema = z.object({
+  diagramId: z.string().min(1),
+  batchId: z.string().min(1).optional(),
+});
+
+export const listSnapshotsInputSchema = z.object({
+  diagramId: z.string().min(1),
+});
+
+export const restoreSnapshotInputSchema = z.object({
+  diagramId: z.string().min(1),
+  snapshotId: z.string().min(1),
+});
+
+export const searchNodesInputSchema = z.object({
+  diagramId: z.string().min(1),
+  query: z.string().optional(),
+  laneId: z.string().min(1).optional(),
+  type: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export const renameDiagramInputSchema = z.object({
+  diagramId: z.string().min(1),
+  title: z.string().min(1),
+});
+
+export const deleteDiagramInputSchema = z.object({
+  diagramId: z.string().min(1),
+});

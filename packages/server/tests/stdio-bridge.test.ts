@@ -91,7 +91,7 @@ describe('MCP stdio Bridge Script (flowstudio-mcp.cjs)', () => {
     // 验证 tools/list
     const toolsRes = responses.find((r) => r.id === 2);
     expect(toolsRes).toBeDefined();
-    expect(toolsRes.result.tools.length).toBe(8);
+    expect(toolsRes.result.tools.length).toBe(14);
 
     child.kill();
     await server.app.close();

@@ -14,8 +14,14 @@ import type { McpOp, McpToolDefinition } from './types.js';
 import {
   applyOpsInputSchema,
   autoLayoutInputSchema,
+  deleteDiagramInputSchema,
   getSelectionInputSchema,
+  listSnapshotsInputSchema,
+  renameDiagramInputSchema,
+  restoreSnapshotInputSchema,
   scaffoldDiagramInputSchema,
+  searchNodesInputSchema,
+  undoAiBatchInputSchema,
 } from './op-schemas.js';
 
 export const MCP_TOOLS: McpToolDefinition[] = [
@@ -119,6 +125,79 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'undo_ai_batch',
+    description: '撤回指定 AI 批次（不传 batchId 时默认撤回最近一条活跃 AI 批次），字段级防冲突保留人类同事二次修改',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+        batchId: { type: 'string', description: '可选，指定要撤回的 AI 批次 ID' },
+      },
+      required: ['diagramId'],
+    },
+  },
+  {
+    name: 'list_snapshots',
+    description: '列出指定图表的历史备份快照（含快照 ID、标签、触发类型与创建时间）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+      },
+      required: ['diagramId'],
+    },
+  },
+  {
+    name: 'restore_snapshot',
+    description: '无损恢复指定历史快照（在单一 Y.Doc 协同事务中应用差量更新，全员在线无感同步）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+        snapshotId: { type: 'string', description: '快照 ID' },
+      },
+      required: ['diagramId', 'snapshotId'],
+    },
+  },
+  {
+    name: 'search_nodes',
+    description: '按关键词、泳道或节点类型局部检索图表中的节点及其直接关联连线，避免大图全量读取浪费上下文',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+        query: { type: 'string', description: '可选，节点名称或 ID 关键词' },
+        laneId: { type: 'string', description: '可选，按所属泳道 ID 过滤' },
+        type: { type: 'string', description: '可选，按节点类型过滤' },
+        limit: { type: 'number', description: '可选，最大返回节点数（默认 50，上限 200）' },
+      },
+      required: ['diagramId'],
+    },
+  },
+  {
+    name: 'rename_diagram',
+    description: '重命名指定图表的标题，并同步广播给在线协同客户端',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+        title: { type: 'string', description: '新标题' },
+      },
+      required: ['diagramId', 'title'],
+    },
+  },
+  {
+    name: 'delete_diagram',
+    description: '删除指定图表及其持久化数据',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diagramId: { type: 'string', description: '图表 ID' },
+      },
+      required: ['diagramId'],
     },
   },
 ];
@@ -241,6 +320,36 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
             break;
           case 'list_templates':
             toolResult = DIAGRAM_PRESETS;
+            break;
+          case 'undo_ai_batch':
+            toolResult = await collaborator.undoAiBatch(
+              parseOrThrow(undoAiBatchInputSchema, args, 'undo_ai_batch'),
+            );
+            break;
+          case 'list_snapshots':
+            toolResult = await collaborator.listSnapshots(
+              parseOrThrow(listSnapshotsInputSchema, args, 'list_snapshots').diagramId,
+            );
+            break;
+          case 'restore_snapshot':
+            toolResult = await collaborator.restoreSnapshot(
+              parseOrThrow(restoreSnapshotInputSchema, args, 'restore_snapshot'),
+            );
+            break;
+          case 'search_nodes':
+            toolResult = await collaborator.searchNodes(
+              parseOrThrow(searchNodesInputSchema, args, 'search_nodes'),
+            );
+            break;
+          case 'rename_diagram':
+            toolResult = await collaborator.renameDiagram(
+              parseOrThrow(renameDiagramInputSchema, args, 'rename_diagram'),
+            );
+            break;
+          case 'delete_diagram':
+            toolResult = await collaborator.deleteDiagram(
+              parseOrThrow(deleteDiagramInputSchema, args, 'delete_diagram').diagramId,
+            );
             break;
           default:
             return reply.status(404).send({

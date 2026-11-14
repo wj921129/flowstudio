@@ -482,7 +482,11 @@ export class AiCollaborator {
       metaMap.set('paradigm', input.spec.paradigm);
       metaMap.set('mainOrder', mainOrder);
       if (input.title) metaMap.set('title', input.title.trim());
-      return { diffs, warnings: [...rendered.warnings, ...diff.warnings, ...ancestorWarnings] };
+      const semanticWarnings = this.inspectDiagramSemantics(nodesMap, edgesMap);
+      return {
+        diffs,
+        warnings: Array.from(new Set([...rendered.warnings, ...diff.warnings, ...ancestorWarnings, ...semanticWarnings])),
+      };
     });
 
     this.batchManager.recordBatch({
@@ -1230,7 +1234,12 @@ export class AiCollaborator {
         }
       }
 
-      return { diffs, warnings, appliedCount };
+      const semanticWarnings = this.inspectDiagramSemantics(nodesMap, edgesMap);
+      return {
+        diffs,
+        warnings: Array.from(new Set([...warnings, ...semanticWarnings])),
+        appliedCount,
+      };
     });
 
     const { diffs, warnings, appliedCount } = outcome.result;
@@ -1618,6 +1627,172 @@ export class AiCollaborator {
       message: '服务端排版完成',
       warnings: outcome.result.warnings,
       live: outcome.live,
+    };
+  }
+
+  private inspectDiagramSemantics(
+    nodesMap: Y.Map<Y.Map<unknown>>,
+    edgesMap: Y.Map<Y.Map<unknown>>,
+  ): string[] {
+    const warnings: string[] = [];
+    const containerOrNoteTypes = new Set(['pool', 'lane', 'comment', 'group']);
+    const businessNodes: Array<{ id: string; type: string; label: string; parentId?: string }> = [];
+    let hasLane = false;
+
+    nodesMap.forEach((nodeMap, id) => {
+      const type = (nodeMap.get('type') as string) || 'process';
+      if (type === 'lane') hasLane = true;
+      if (containerOrNoteTypes.has(type)) return;
+      const data = (nodeMap.get('data') as Record<string, unknown>) || {};
+      const label = ((data.label as string) || id).trim();
+      const parentId = nodeMap.get('parentId') as string | undefined;
+      businessNodes.push({ id, type, label, parentId });
+    });
+
+    if (businessNodes.length === 0) return warnings;
+
+    const connectedIds = new Set<string>();
+    const outEdgesBySource = new Map<string, Array<{ label: string }>>();
+    edgesMap.forEach((edgeMap) => {
+      const source = edgeMap.get('source') as string;
+      const target = edgeMap.get('target') as string;
+      const data = (edgeMap.get('data') as Record<string, unknown>) || {};
+      const label = typeof data.label === 'string' ? data.label.trim() : '';
+      if (source) {
+        connectedIds.add(source);
+        const list = outEdgesBySource.get(source) ?? [];
+        list.push({ label });
+        outEdgesBySource.set(source, list);
+      }
+      if (target) connectedIds.add(target);
+    });
+
+    if (businessNodes.length >= 2) {
+      const isolated = businessNodes.filter((n) => !connectedIds.has(n.id)).map((n) => `${n.label}(${n.id})`);
+      if (isolated.length > 0) {
+        warnings.push(`检测到孤立节点: ${isolated.slice(0, 5).join('、')}${isolated.length > 5 ? ` 等 ${isolated.length} 个` : ''}，建议通过 connect 接入主链路`);
+      }
+    }
+
+    for (const n of businessNodes) {
+      if (n.type !== 'decision') continue;
+      const outEdges = outEdgesBySource.get(n.id) ?? [];
+      if (outEdges.length >= 2) {
+        const missingCount = outEdges.filter((e) => !e.label).length;
+        if (missingCount > 0) {
+          warnings.push(`判断节点 ${n.label}(${n.id}) 有 ${missingCount} 条分支连线缺少条件标签，建议补充是/否等分支说明`);
+        }
+      }
+    }
+
+    if (hasLane) {
+      const unlaned = businessNodes.filter((n) => !n.parentId).map((n) => `${n.label}(${n.id})`);
+      if (unlaned.length > 0) {
+        warnings.push(`泳道图中存在未归属泳道的游离节点: ${unlaned.slice(0, 5).join('、')}${unlaned.length > 5 ? ` 等 ${unlaned.length} 个` : ''}，建议通过 move_to_lane 归属泳道`);
+      }
+    }
+
+    return warnings;
+  }
+
+  async undoAiBatch(input: { diagramId: string; batchId?: string }) {
+    if (!this.repo.getDiagramById(input.diagramId)) {
+      throw new Error(`图表 ${input.diagramId} 不存在`);
+    }
+    const batches = this.batchManager.getBatches(input.diagramId);
+    const target = input.batchId
+      ? batches.find((b) => b.batchId === input.batchId)
+      : batches.find((b) => b.status === 'active');
+    if (!target) {
+      throw new Error(input.batchId ? `AI 批次 ${input.batchId} 不存在` : '当前图表没有可撤回的活跃 AI 批次');
+    }
+    return this.batchManager.revertBatch(input.diagramId, target.batchId);
+  }
+
+  async listSnapshots(diagramId: string) {
+    if (!this.repo.getDiagramById(diagramId)) {
+      throw new Error(`图表 ${diagramId} 不存在`);
+    }
+    return this.repo.listSnapshots(diagramId);
+  }
+
+  async restoreSnapshot(input: { diagramId: string; snapshotId: string }) {
+    if (!this.repo.getDiagramById(input.diagramId)) {
+      throw new Error(`图表 ${input.diagramId} 不存在`);
+    }
+    const result = await this.writer.restoreSnapshot(input.diagramId, input.snapshotId);
+    if (!result.success) {
+      throw new Error(result.error || '恢复快照失败');
+    }
+    return {
+      success: true,
+      diagramId: input.diagramId,
+      snapshotId: input.snapshotId,
+      message: '已无损恢复至指定快照',
+    };
+  }
+
+  async searchNodes(input: {
+    diagramId: string;
+    query?: string;
+    laneId?: string;
+    type?: string;
+    limit?: number;
+  }) {
+    if (!this.repo.getDiagramById(input.diagramId)) {
+      throw new Error(`图表 ${input.diagramId} 不存在`);
+    }
+    const compact = await this.writer.readDocument(input.diagramId, (doc) => this.buildCompact(input.diagramId, doc));
+    const q = input.query?.trim().toLowerCase();
+    const limit = input.limit ?? 50;
+    const matched = compact.nodes
+      .filter((n) => {
+        if (input.laneId && n.laneId !== input.laneId) return false;
+        if (input.type && n.type !== input.type) return false;
+        if (q && !n.label.toLowerCase().includes(q) && !n.id.toLowerCase().includes(q)) return false;
+        return true;
+      })
+      .slice(0, limit);
+    const matchedIds = new Set(matched.map((n) => n.id));
+    const relatedEdges = compact.edges.filter((e) => matchedIds.has(e.source) || matchedIds.has(e.target));
+    return {
+      diagramId: input.diagramId,
+      totalMatched: matched.length,
+      nodes: matched,
+      relatedEdges,
+    };
+  }
+
+  async renameDiagram(input: { diagramId: string; title: string }) {
+    const trimmed = input.title.trim();
+    if (!trimmed) {
+      throw new Error('图表标题不能为空');
+    }
+    const updated = this.repo.updateDiagram(input.diagramId, { title: trimmed });
+    if (!updated) {
+      throw new Error(`图表 ${input.diagramId} 不存在`);
+    }
+    const outcome = await this.writer.mutate(input.diagramId, `ai:rename-${input.diagramId}`, (doc) => {
+      doc.getMap<unknown>('meta').set('title', trimmed);
+    });
+    return {
+      success: true,
+      id: updated.id,
+      title: trimmed,
+      live: outcome.live,
+      url: `${this.serverBaseUrl}/#${updated.id}`,
+    };
+  }
+
+  async deleteDiagram(diagramId: string) {
+    const deleted = this.repo.deleteDiagram(diagramId);
+    if (!deleted) {
+      throw new Error(`图表 ${diagramId} 不存在`);
+    }
+    return {
+      success: true,
+      id: diagramId,
+      message: '图表已删除',
     };
   }
 }
