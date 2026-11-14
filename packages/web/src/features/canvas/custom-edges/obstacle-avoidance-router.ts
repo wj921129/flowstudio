@@ -135,46 +135,79 @@ export function buildRoutingGrid(
   return { xs, ys };
 }
 
-export function findObstacleAvoidingPath(
-  source: XYPosition,
-  target: XYPosition,
-  sourcePosition?: EdgeAnchorDirection,
-  targetPosition?: EdgeAnchorDirection,
-  obstacles: ObstacleBox[] = [],
-  options: RoutingOptions = {}
-): XYPosition[] {
-  const padding = options.padding ?? 14;
-  const filteredObstacles = obstacles.filter(
-    (o) => o.id !== options.sourceNodeId && o.id !== options.targetNodeId
-  );
-
-  const defaultWaypoints = deriveDefaultOrthogonalWaypoints(
-    source,
-    target,
-    sourcePosition,
-    targetPosition
-  );
-  const defaultPathPoints = [source, ...defaultWaypoints, target];
-
-  if (
-    filteredObstacles.length === 0 ||
-    !checkPathCollidesWithObstacles(defaultPathPoints, filteredObstacles, 4)
-  ) {
-    return defaultWaypoints;
+function getSafeAnchorPoint(
+  point: XYPosition,
+  dir?: EdgeAnchorDirection,
+  offset: number = 16
+): XYPosition {
+  switch (dir) {
+    case 'right':
+      return { x: point.x + offset, y: point.y };
+    case 'left':
+      return { x: point.x - offset, y: point.y };
+    case 'top':
+      return { x: point.x, y: point.y - offset };
+    case 'bottom':
+      return { x: point.x, y: point.y + offset };
+    default:
+      return { ...point };
   }
+}
 
-  const { xs, ys } = buildRoutingGrid(source, target, filteredObstacles, padding);
-  if (xs.length < 2 || ys.length < 2) return defaultWaypoints;
+function simplifyCollinearPoints(points: XYPosition[]): XYPosition[] {
+  if (points.length <= 2) return points;
+  const simplified: XYPosition[] = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = simplified[simplified.length - 1];
+    const mid = points[i];
+    const next = points[i + 1];
+    const isCollinearX = Math.abs(prev.x - mid.x) < 0.001 && Math.abs(mid.x - next.x) < 0.001;
+    const isCollinearY = Math.abs(prev.y - mid.y) < 0.001 && Math.abs(mid.y - next.y) < 0.001;
+    if (!isCollinearX && !isCollinearY) {
+      simplified.push(mid);
+    }
+  }
+  simplified.push(points[points.length - 1]);
+  return simplified;
+}
+
+function runAStarRoute(
+  start: XYPosition,
+  end: XYPosition,
+  gridObstacles: ObstacleBox[],
+  collisionObstacles: ObstacleBox[],
+  laneObstacles: ObstacleBox[],
+  selfIds: Set<string>,
+  padding: number,
+  laneCorridorPenalty: number
+): XYPosition[] | null {
+  const { xs, ys } = buildRoutingGrid(start, end, gridObstacles, padding);
+  if (!xs.includes(start.x)) {
+    xs.push(start.x);
+    xs.sort((a, b) => a - b);
+  }
+  if (!xs.includes(end.x)) {
+    xs.push(end.x);
+    xs.sort((a, b) => a - b);
+  }
+  if (!ys.includes(start.y)) {
+    ys.push(start.y);
+    ys.sort((a, b) => a - b);
+  }
+  if (!ys.includes(end.y)) {
+    ys.push(end.y);
+    ys.sort((a, b) => a - b);
+  }
+  if (xs.length < 2 || ys.length < 2) return null;
 
   const keyOf = (x: number, y: number) => `${x},${y}`;
-  const startKey = keyOf(source.x, source.y);
-  const targetKey = keyOf(target.x, target.y);
+  const startKey = keyOf(start.x, start.y);
 
   const openList: PriorityNode[] = [
     {
-      vertex: { x: source.x, y: source.y },
+      vertex: { x: start.x, y: start.y },
       g: 0,
-      f: Math.abs(source.x - target.x) + Math.abs(source.y - target.y),
+      f: Math.abs(start.x - end.x) + Math.abs(start.y - end.y),
       dir: null,
       parent: null,
     },
@@ -196,7 +229,7 @@ export function findObstacleAvoidingPath(
     const current = openList.splice(minIdx, 1)[0];
     const currKey = keyOf(current.vertex.x, current.vertex.y);
 
-    if (current.vertex.x === target.x && current.vertex.y === target.y) {
+    if (current.vertex.x === end.x && current.vertex.y === end.y) {
       bestNode = current;
       break;
     }
@@ -217,13 +250,30 @@ export function findObstacleAvoidingPath(
       const nextKey = keyOf(nextV.x, nextV.y);
       if (closed.has(nextKey)) continue;
 
-      const isTarget = nextV.x === target.x && nextV.y === target.y;
-      if (!isTarget && isPointInsideObstacle(nextV, filteredObstacles, 2)) continue;
+      const isTarget = nextV.x === end.x && nextV.y === end.y;
+      if (!isTarget) {
+        let inside = false;
+        for (const obs of collisionObstacles) {
+          if (obs.isLane) continue;
+          const pad = selfIds.has(obs.id) ? 0 : 2;
+          if (
+            nextV.x > obs.x - pad &&
+            nextV.x < obs.x + obs.width + pad &&
+            nextV.y > obs.y - pad &&
+            nextV.y < obs.y + obs.height + pad
+          ) {
+            inside = true;
+            break;
+          }
+        }
+        if (inside) continue;
+      }
 
       let blocked = false;
-      for (const obs of filteredObstacles) {
+      for (const obs of collisionObstacles) {
         if (obs.isLane) continue;
-        if (isSegmentIntersectingBox(current.vertex, nextV, obs, 4)) {
+        const pad = selfIds.has(obs.id) ? 0 : 4;
+        if (isSegmentIntersectingBox(current.vertex, nextV, obs, pad)) {
           blocked = true;
           break;
         }
@@ -231,21 +281,17 @@ export function findObstacleAvoidingPath(
       if (blocked) continue;
 
       const dist = Math.abs(current.vertex.x - nextV.x) + Math.abs(current.vertex.y - nextV.y);
-      let turnPenalty = 0;
-      if (current.dir && current.dir !== nextDir) {
-        turnPenalty = 30;
-      }
+      const turnPenalty = current.dir && current.dir !== nextDir ? 30 : 0;
 
       let lanePenalty = 0;
-      for (const obs of filteredObstacles) {
-        if (!obs.isLane) continue;
+      for (const obs of laneObstacles) {
         if (
           nextV.x > obs.x + 20 &&
           nextV.x < obs.x + obs.width - 20 &&
           nextV.y > obs.y + 20 &&
           nextV.y < obs.y + obs.height - 20
         ) {
-          lanePenalty = options.laneCorridorPenalty ?? 25;
+          lanePenalty = laneCorridorPenalty;
           break;
         }
       }
@@ -254,7 +300,7 @@ export function findObstacleAvoidingPath(
       const prevG = gScores.get(nextKey);
       if (prevG === undefined || tentativeG < prevG) {
         gScores.set(nextKey, tentativeG);
-        const h = Math.abs(nextV.x - target.x) + Math.abs(nextV.y - target.y);
+        const h = Math.abs(nextV.x - end.x) + Math.abs(nextV.y - end.y);
         openList.push({
           vertex: nextV,
           g: tentativeG,
@@ -266,7 +312,7 @@ export function findObstacleAvoidingPath(
     }
   }
 
-  if (!bestNode) return defaultWaypoints;
+  if (!bestNode) return null;
 
   const rawPath: XYPosition[] = [];
   let curr: PriorityNode | null = bestNode;
@@ -274,21 +320,79 @@ export function findObstacleAvoidingPath(
     rawPath.unshift(curr.vertex);
     curr = curr.parent;
   }
+  return simplifyCollinearPoints(rawPath);
+}
 
-  const simplified: XYPosition[] = [rawPath[0]];
-  for (let i = 1; i < rawPath.length - 1; i++) {
-    const prev = simplified[simplified.length - 1];
-    const mid = rawPath[i];
-    const next = rawPath[i + 1];
-    const isCollinearX = Math.abs(prev.x - mid.x) < 0.001 && Math.abs(mid.x - next.x) < 0.001;
-    const isCollinearY = Math.abs(prev.y - mid.y) < 0.001 && Math.abs(mid.y - next.y) < 0.001;
-    if (!isCollinearX && !isCollinearY) {
-      simplified.push(mid);
+export function findObstacleAvoidingPath(
+  source: XYPosition,
+  target: XYPosition,
+  sourcePosition?: EdgeAnchorDirection,
+  targetPosition?: EdgeAnchorDirection,
+  obstacles: ObstacleBox[] = [],
+  options: RoutingOptions = {}
+): XYPosition[] {
+  const padding = options.padding ?? 14;
+  const lanePenalty = options.laneCorridorPenalty ?? 25;
+  const selfIds = new Set<string>();
+  if (options.sourceNodeId) selfIds.add(options.sourceNodeId);
+  if (options.targetNodeId) selfIds.add(options.targetNodeId);
+
+  const otherObstacles = obstacles.filter((o) => !selfIds.has(o.id));
+  const selfObstacles = obstacles.filter((o) => selfIds.has(o.id) && !o.isLane);
+  const laneObstacles = otherObstacles.filter((o) => o.isLane);
+
+  const defaultWaypoints = deriveDefaultOrthogonalWaypoints(
+    source,
+    target,
+    sourcePosition,
+    targetPosition
+  );
+  const defaultPathPoints = [source, ...defaultWaypoints, target];
+
+  const collidesOther = checkPathCollidesWithObstacles(defaultPathPoints, otherObstacles, 4);
+  const collidesSelf =
+    selfObstacles.length > 0 && checkPathCollidesWithObstacles(defaultPathPoints, selfObstacles, -2);
+
+  if (!collidesOther && !collidesSelf) {
+    return defaultWaypoints;
+  }
+
+  if (selfObstacles.length > 0) {
+    const candidateStart = getSafeAnchorPoint(source, sourcePosition, 16);
+    const candidateEnd = getSafeAnchorPoint(target, targetPosition, 16);
+    const leadStart = isPointInsideObstacle(candidateStart, otherObstacles, 2) ? source : candidateStart;
+    const leadEnd = isPointInsideObstacle(candidateEnd, otherObstacles, 2) ? target : candidateEnd;
+    const allObs = [...otherObstacles, ...selfObstacles];
+
+    const routeWithSelf = runAStarRoute(
+      leadStart,
+      leadEnd,
+      allObs,
+      allObs,
+      laneObstacles,
+      selfIds,
+      padding,
+      lanePenalty
+    );
+
+    if (routeWithSelf) {
+      const fullPath = simplifyCollinearPoints([source, ...routeWithSelf, target]);
+      return fullPath.slice(1, -1);
     }
   }
-  simplified.push(rawPath[rawPath.length - 1]);
 
-  return simplified.slice(1, -1);
+  const fallbackRoute = runAStarRoute(
+    source,
+    target,
+    otherObstacles,
+    otherObstacles,
+    laneObstacles,
+    new Set(),
+    padding,
+    lanePenalty
+  );
+
+  return fallbackRoute ? fallbackRoute.slice(1, -1) : defaultWaypoints;
 }
 
 export function findSafeLabelPosition(

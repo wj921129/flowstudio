@@ -71,6 +71,9 @@ export const FlowCanvas: React.FC = () => {
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
+  const edgeConnectMode = useFlowStore((s) => s.edgeConnectMode);
+  const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
+  const setShiftPressed = useFlowStore((s) => s.setShiftPressed);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const setSpacePanning = useFlowStore((s) => s.setSpacePanning);
   const setDiagram = useFlowStore((s) => s.setDiagram);
@@ -663,9 +666,12 @@ export const FlowCanvas: React.FC = () => {
     canvasContainerRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // 画布聚焦中按住空格临时切换为平移交互，松开恢复原交互模式
+  // 画布聚焦中按住空格临时切换为平移交互，按住 Shift 临时切换连线类型，松开恢复原状态
   useEffect(() => {
-    const handleSpaceKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') {
+        setShiftPressed(true);
+      }
       if (e.code !== 'Space' || isPresenting) return;
       const target = e.target as HTMLElement | null;
       const isInput =
@@ -682,7 +688,10 @@ export const FlowCanvas: React.FC = () => {
       }
     };
 
-    const handleSpaceKeyUp = (e: KeyboardEvent) => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') {
+        setShiftPressed(false);
+      }
       if (e.code === 'Space') {
         setSpacePanning(false);
       }
@@ -690,18 +699,20 @@ export const FlowCanvas: React.FC = () => {
 
     const handleWindowBlur = () => {
       setSpacePanning(false);
+      setShiftPressed(false);
     };
 
-    window.addEventListener('keydown', handleSpaceKeyDown);
-    window.addEventListener('keyup', handleSpaceKeyUp);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleWindowBlur);
     return () => {
-      window.removeEventListener('keydown', handleSpaceKeyDown);
-      window.removeEventListener('keyup', handleSpaceKeyUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
       setSpacePanning(false);
+      setShiftPressed(false);
     };
-  }, [isPresenting, setSpacePanning]);
+  }, [isPresenting, setSpacePanning, setShiftPressed]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -969,13 +980,18 @@ export const FlowCanvas: React.FC = () => {
   }, [followingUserId, collab?.remoteUsers]);
 
   const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
+  const effectiveConnectMode = isShiftPressed
+    ? edgeConnectMode === 'orthogonal'
+      ? 'straight'
+      : 'orthogonal'
+    : edgeConnectMode;
 
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =
     isSpacePanning || activeTool === 'pan'
       ? 'fs-cursor-pan'
       : activeTool === 'connect'
-      ? 'cursor-crosshair [&_.react-flow__pane]:cursor-crosshair [&_.react-flow__node]:cursor-crosshair'
+      ? 'fs-cursor-connect'
       : '';
 
   return (
@@ -1098,7 +1114,11 @@ export const FlowCanvas: React.FC = () => {
         selectionMode={SelectionMode.Partial}
         selectionOnDrag={!isSpacePanning && !isReadOnly && activeTool === 'select'}
         connectionMode={ConnectionMode.Loose}
-        connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineType={
+          effectiveConnectMode === 'straight'
+            ? ConnectionLineType.Straight
+            : ConnectionLineType.SmoothStep
+        }
         connectionLineStyle={{
           stroke: 'var(--fs-selection-ring, #2563eb)',
           strokeWidth: 2,

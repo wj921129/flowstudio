@@ -8,6 +8,7 @@ export { buildWaypointPath, deriveDefaultOrthogonalWaypoints } from './waypoint-
 export const edgeTypes: EdgeTypes = {
   orthogonal: OrthogonalEdge,
   smoothstep: OrthogonalEdge,
+  straight: OrthogonalEdge,
 };
 
 export { OrthogonalEdge };

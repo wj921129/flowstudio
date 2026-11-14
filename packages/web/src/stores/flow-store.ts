@@ -43,6 +43,7 @@ import { isNodeLocked } from '../features/canvas/utils/node-lock-manager';
  * 画布操作工具模式枚举
  */
 export type ActiveTool = 'select' | 'pan' | 'connect';
+export type EdgeConnectMode = 'orthogonal' | 'straight';
 
 /**
  * 历史快照单元（用于单机撤销/重做）
@@ -66,6 +67,8 @@ export interface FlowStoreState {
   selectedEdgeId: string | null;
   /** 当前激活的操作工具模式 */
   activeTool: ActiveTool;
+  edgeConnectMode: EdgeConnectMode;
+  isShiftPressed: boolean;
   isSpacePanning: boolean;
   editingEdgeLabelId: string | null;
   /** 是否可撤销 */
@@ -146,6 +149,9 @@ export interface FlowStoreActions {
   setSelectedEdge: (id: string | null) => void;
   /** 切换激活工具 */
   setActiveTool: (tool: ActiveTool) => void;
+  setEdgeConnectMode: (mode: EdgeConnectMode) => void;
+  toggleEdgeConnectMode: () => void;
+  setShiftPressed: (pressed: boolean) => void;
   setSpacePanning: (panning: boolean) => void;
   setEditingEdgeLabelId: (id: string | null) => void;
   /** 记录视口缩放比例，供拖拽对齐感应半径换算 */
@@ -277,6 +283,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   selectedNodeIds: [],
   selectedEdgeId: null,
   activeTool: 'select',
+  edgeConnectMode: 'orthogonal',
+  isShiftPressed: false,
   isSpacePanning: false,
   editingEdgeLabelId: null,
   canUndo: false,
@@ -503,7 +511,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   onConnect: (connection: Connection) => {
     if (!connection.source || !connection.target) return;
 
-    const { nodes, edges, historyPast } = get();
+    const { nodes, edges, historyPast, edgeConnectMode, isShiftPressed } = get();
+    const effectiveMode = isShiftPressed
+      ? edgeConnectMode === 'orthogonal'
+        ? 'straight'
+        : 'orthogonal'
+      : edgeConnectMode;
 
     const newEdge: FlowEdge = {
       id: generateEdgeId(connection.source, connection.target),
@@ -511,7 +524,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       target: connection.target,
       sourceHandle: connection.sourceHandle ?? undefined,
       targetHandle: connection.targetHandle ?? undefined,
-      type: 'orthogonal',
+      type: effectiveMode,
+      ...(effectiveMode === 'straight' ? { data: { routingType: 'straight' } } : {}),
       markerEnd: { type: MarkerType.ArrowClosed },
       animated: false,
     };
@@ -1052,6 +1066,20 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setActiveTool: (tool: ActiveTool) => {
     set({ activeTool: tool, alignmentGuides: [] });
+  },
+
+  setEdgeConnectMode: (mode: EdgeConnectMode) => {
+    set({ edgeConnectMode: mode });
+  },
+
+  toggleEdgeConnectMode: () => {
+    set((s) => ({
+      edgeConnectMode: s.edgeConnectMode === 'orthogonal' ? 'straight' : 'orthogonal',
+    }));
+  },
+
+  setShiftPressed: (pressed: boolean) => {
+    set((s) => (s.isShiftPressed === pressed ? s : { isShiftPressed: pressed }));
   },
 
   setSpacePanning: (panning: boolean) => {

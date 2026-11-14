@@ -81,6 +81,7 @@ interface WaypointDragState {
 
 export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   id,
+  type,
   source,
   target,
   sourceX,
@@ -174,7 +175,19 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     if (currentNodes.length > 0) manager.updateNodes(currentNodes);
   }
 
+  const isStraight = type === 'straight' || data?.routingType === 'straight';
+
   const computedRoute = useMemo(() => {
+    if (isStraight) {
+      return {
+        path: `M ${dockSource.x} ${dockSource.y} L ${dockTarget.x} ${dockTarget.y}`,
+        waypoints: [],
+        labelPosition: {
+          x: (dockSource.x + dockTarget.x) / 2,
+          y: (dockSource.y + dockTarget.y) / 2,
+        },
+      };
+    }
     return manager.routeEdge({
       id,
       source: dockSource,
@@ -187,6 +200,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       label: data?.label,
     });
   }, [
+    isStraight,
     id,
     dockSource.x,
     dockSource.y,
@@ -480,13 +494,15 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
                 }}
                 className="nodrag nopan flex items-center gap-1 z-20"
               >
-                <button
-                  onClick={handleAddDefaultWaypoint}
-                  title="点击为当前连线启用折点调整"
-                  className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors"
-                >
-                  调折点
-                </button>
+                {!isStraight && (
+                  <button
+                    onClick={handleAddDefaultWaypoint}
+                    title="点击为当前连线启用折点调整"
+                    className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors"
+                  >
+                    调折点
+                  </button>
+                )}
                 {!data?.label && (
                   <button
                     onClick={(e) => {

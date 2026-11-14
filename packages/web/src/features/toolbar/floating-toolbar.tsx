@@ -9,6 +9,7 @@ import {
   MousePointer2,
   Hand,
   ArrowUpRight,
+  CornerDownRight,
   StickyNote,
   Undo2,
   Redo2,
@@ -25,9 +26,16 @@ export interface FloatingToolbarProps {
 
 export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = '' }) => {
   const activeTool = useFlowStore((s) => s.activeTool);
-  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const edgeConnectMode = useFlowStore((s) => s.edgeConnectMode);
+  const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
-  const effectiveTool = isSpacePanning ? 'pan' : activeTool;
+  const setEdgeConnectMode = useFlowStore((s) => s.setEdgeConnectMode);
+  const toggleEdgeConnectMode = useFlowStore((s) => s.toggleEdgeConnectMode);
+  const displayEdgeMode = isShiftPressed
+    ? edgeConnectMode === 'orthogonal'
+      ? 'straight'
+      : 'orthogonal'
+    : edgeConnectMode;
   const canUndo = useFlowStore((s) => s.canUndo);
   const canRedo = useFlowStore((s) => s.canRedo);
   const undo = useFlowStore((s) => s.undo);
@@ -73,6 +81,15 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
     }
   }, [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]);
 
+  const handleConnectToolToggle = useCallback(() => {
+    if (activeTool !== 'connect') {
+      setActiveTool('connect');
+      setEdgeConnectMode('orthogonal');
+    } else {
+      toggleEdgeConnectMode();
+    }
+  }, [activeTool, setActiveTool, setEdgeConnectMode, toggleEdgeConnectMode]);
+
   // 绑定全局工具模式快捷键 (V: 选择, H: 漫游平移, C: 连线, T: 便签)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -100,7 +117,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
         setActiveTool('pan');
       } else if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
-        setActiveTool('connect');
+        handleConnectToolToggle();
       } else if (e.key === 't' || e.key === 'T') {
         e.preventDefault();
         handleAddNote();
@@ -109,7 +126,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setActiveTool, handleAddNote]);
+  }, [setActiveTool, handleConnectToolToggle, handleAddNote]);
 
   return (
     <Panel
@@ -126,22 +143,26 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           icon={MousePointer2}
           label="选择与移动"
           shortcut="V"
-          active={effectiveTool === 'select'}
+          active={activeTool === 'select'}
           onClick={() => setActiveTool('select')}
         />
         <ToolbarButton
           icon={Hand}
           label="画布平移"
           shortcut="H"
-          active={effectiveTool === 'pan'}
+          active={activeTool === 'pan'}
           onClick={() => setActiveTool('pan')}
         />
         <ToolbarButton
-          icon={ArrowUpRight}
-          label="连线模式"
+          icon={displayEdgeMode === 'straight' ? ArrowUpRight : CornerDownRight}
+          label={
+            displayEdgeMode === 'straight'
+              ? '直线连线 (点击切折线 / Shift 临时切换)'
+              : '折线连线 (点击切直线 / Shift 临时切换)'
+          }
           shortcut="C"
-          active={effectiveTool === 'connect'}
-          onClick={() => setActiveTool('connect')}
+          active={activeTool === 'connect'}
+          onClick={handleConnectToolToggle}
         />
         <ToolbarButton
           icon={StickyNote}

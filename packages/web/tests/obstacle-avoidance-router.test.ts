@@ -78,4 +78,27 @@ describe('obstacle-avoidance-router', () => {
 
     expect(isOverlapping).toBe(false);
   });
+
+  it('routes around source and target node interiors when heights differ', () => {
+    const tallSource: ObstacleBox = { id: 'tall', x: 200, y: 100, width: 120, height: 220 };
+    const shortTarget: ObstacleBox = { id: 'short', x: 60, y: 40, width: 100, height: 40 };
+    const source = { x: 320, y: 210 };
+    const target = { x: 60, y: 60 };
+
+    const waypoints = findObstacleAvoidingPath(
+      source,
+      target,
+      'right',
+      'left',
+      [tallSource, shortTarget],
+      { sourceNodeId: 'tall', targetNodeId: 'short', padding: 14 }
+    );
+
+    expect(waypoints.length).toBeGreaterThanOrEqual(2);
+    const fullPath = [source, ...waypoints, target];
+    for (let i = 0; i < fullPath.length - 1; i++) {
+      expect(isSegmentIntersectingBox(fullPath[i], fullPath[i + 1], tallSource, -1)).toBe(false);
+      expect(isSegmentIntersectingBox(fullPath[i], fullPath[i + 1], shortTarget, -1)).toBe(false);
+    }
+  });
 });
