@@ -1298,8 +1298,8 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
       expect(canvasCode).not.toContain('elevateEdgesOnSelect={true}');
 
       // 2. flow-canvas.tsx 聚光灯态降噪边 interactionWidth=0 与 pointerEvents='none'
-      expect(canvasCode).toContain("pointerEvents: isHighlighted ? undefined : 'none'");
-      expect(canvasCode).toContain('interactionWidth: isHighlighted ? undefined : 0');
+      expect(canvasCode).toContain("pointerEvents: dimOthers && !isHighlighted ? 'none' : undefined");
+      expect(canvasCode).toContain('interactionWidth: dimOthers && !isHighlighted ? 0 : undefined');
 
       // 3. orthogonal-edge.tsx 确保在 pointerEvents==none 时 interactionWidth 为 0
       const edgeCode = fs.readFileSync(

@@ -24,6 +24,15 @@
   --fs-note-bg: #fef9c3;
   --fs-note-border: #facc15;
   --fs-align-guide: #f43f5e;
+  --fs-node-start-bg: #ecfdf5;
+  --fs-node-start-border: #10b981;
+  --fs-node-start-text: #065f46;
+  --fs-node-process-bg: #eff6ff;
+  --fs-node-process-border: #3b82f6;
+  --fs-node-process-text: #1e3a8a;
+  --fs-node-end-bg: #fff1f2;
+  --fs-node-end-border: #f43f5e;
+  --fs-node-end-text: #9f1239;
 
   /* 快速调色盘预设令牌 */
   --fs-palette-1: #3b82f6;
@@ -57,6 +66,15 @@ html.dark {
   --fs-note-bg: #422006;
   --fs-note-border: #a16207;
   --fs-align-guide: #fb7185;
+  --fs-node-start-bg: #064e3b;
+  --fs-node-start-border: #34d399;
+  --fs-node-start-text: #d1fae5;
+  --fs-node-process-bg: #172554;
+  --fs-node-process-border: #60a5fa;
+  --fs-node-process-text: #dbeafe;
+  --fs-node-end-bg: #4c0519;
+  --fs-node-end-border: #fb7185;
+  --fs-node-end-text: #ffe4e6;
 
   /* 快速调色盘预设令牌 (深色) */
   --fs-palette-1: #60a5fa;
@@ -118,4 +136,50 @@ body {
 
 .react-flow__node-io .react-flow__handle-right {
   right: 6%;
+}
+
+.fs-handle-dot {
+  position: absolute;
+  flex-shrink: 0;
+  aspect-ratio: 1 / 1;
+  border-radius: 9999px;
+  box-sizing: border-box;
+}
+
+.react-flow__handle-top > .fs-handle-dot {
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.react-flow__handle-bottom > .fs-handle-dot {
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 50%);
+}
+
+.react-flow__handle-left > .fs-handle-dot {
+  left: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.react-flow__handle-right > .fs-handle-dot {
+  right: 0;
+  top: 50%;
+  transform: translate(50%, -50%);
+}
+
+.fs-cursor-pan,
+.fs-cursor-pan .react-flow__pane,
+.fs-cursor-pan .react-flow__node,
+.fs-cursor-pan .react-flow__edge {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%23ffffff' stroke='%230f172a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2'/%3E%3Cpath d='M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2'/%3E%3Cpath d='M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8'/%3E%3Cpath d='M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15'/%3E%3C/svg%3E") 12 12, grab !important;
+}
+
+.fs-cursor-pan:active,
+.fs-cursor-pan .react-flow__pane:active,
+.fs-cursor-pan .react-flow__node:active,
+.fs-cursor-pan .react-flow__edge:active {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%23ffffff' stroke='%230f172a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 11.5V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1.4'/%3E%3Cpath d='M14 10V8a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2'/%3E%3Cpath d='M10 9.9V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v5'/%3E%3Cpath d='M6 14a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2a7 7 0 0 0 7 7h3a7 7 0 0 0 7-7v-4.5a2 2 0 0 0-2-2a2 2 0 0 0-2 2'/%3E%3C/svg%3E") 12 12, grabbing !important;
 }

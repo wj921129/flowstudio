@@ -252,6 +252,8 @@ export interface FlowNodeData {
 export interface FlowEdgeData {
   /** 连线标签文本 */
   label?: string;
+  /** 标签沿连线路径的比例位置 (0~1) */
+  labelRatio?: number;
   /** 连线自定义样式覆盖 */
   style?: EdgeStyleData;
   /** 手动调线折拐点坐标集合 */

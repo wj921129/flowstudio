@@ -66,6 +66,8 @@ export interface FlowStoreState {
   selectedEdgeId: string | null;
   /** 当前激活的操作工具模式 */
   activeTool: ActiveTool;
+  isSpacePanning: boolean;
+  editingEdgeLabelId: string | null;
   /** 是否可撤销 */
   canUndo: boolean;
   /** 是否可重做 */
@@ -144,6 +146,8 @@ export interface FlowStoreActions {
   setSelectedEdge: (id: string | null) => void;
   /** 切换激活工具 */
   setActiveTool: (tool: ActiveTool) => void;
+  setSpacePanning: (panning: boolean) => void;
+  setEditingEdgeLabelId: (id: string | null) => void;
   /** 记录视口缩放比例，供拖拽对齐感应半径换算 */
   setViewportZoom: (zoom: number) => void;
   /** 临时启停拖拽智能对齐吸附 */
@@ -273,6 +277,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   selectedNodeIds: [],
   selectedEdgeId: null,
   activeTool: 'select',
+  isSpacePanning: false,
+  editingEdgeLabelId: null,
   canUndo: false,
   canRedo: false,
   diagramTitle: '未命名流程图',
@@ -1046,6 +1052,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setActiveTool: (tool: ActiveTool) => {
     set({ activeTool: tool, alignmentGuides: [] });
+  },
+
+  setSpacePanning: (panning: boolean) => {
+    set((s) => (s.isSpacePanning === panning ? s : { isSpacePanning: panning }));
+  },
+
+  setEditingEdgeLabelId: (id: string | null) => {
+    set({ editingEdgeLabelId: id });
   },
 
   setViewportZoom: (zoom: number) => {

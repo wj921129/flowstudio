@@ -71,6 +71,8 @@ export const FlowCanvas: React.FC = () => {
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const setSpacePanning = useFlowStore((s) => s.setSpacePanning);
   const setDiagram = useFlowStore((s) => s.setDiagram);
   const spotlightActive = useFlowStore((s) => s.spotlightActive);
   const spotlightTargetId = useFlowStore((s) => s.spotlightTargetId);
@@ -88,7 +90,6 @@ export const FlowCanvas: React.FC = () => {
   const collab = useCollaboration();
   const setAlignmentSnapEnabled = useFlowStore((s) => s.setAlignmentSnapEnabled);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const [isSpacePanning, setIsSpacePanning] = useState(false);
 
   useEffect(() => {
     EdgeRoutingManager.getInstance().updateNodes(nodes);
@@ -163,7 +164,7 @@ export const FlowCanvas: React.FC = () => {
 
   // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定及包含锁定子节点的容器禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
-    const hasSpotlight = Boolean(spotlightResult);
+    const hasSpotlightDim = Boolean(spotlightActive && spotlightResult);
     // 检查是否有 position/full 锁定的节点 (B8 性能优化)
     const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
     // 检查是否有包含锁定子节点的祖先容器（lane / pool / group）(B3 容器拖拽穿透防护)
@@ -180,14 +181,14 @@ export const FlowCanvas: React.FC = () => {
     }
 
     const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
-    // B8: 无聚光灯激活且无任何锁定节点/容器时，直接返回原数组引用，防止每帧生成新对象导致 React Flow 重渲
-    if (!hasSpotlight && !hasAnyLocked && !isReadOnly) {
+    // B8: 无聚光灯降噪且无任何锁定节点/容器时，直接返回原数组引用，防止每帧生成新对象导致 React Flow 重渲
+    if (!hasSpotlightDim && !hasAnyLocked && !isReadOnly) {
       return nodes;
     }
 
     return nodes.map((node) => {
       const isLockedFromDrag = isReadOnly || lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
-      const isHighlighted = spotlightResult
+      const isHighlighted = hasSpotlightDim && spotlightResult
         ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
         : true;
 
@@ -196,7 +197,7 @@ export const FlowCanvas: React.FC = () => {
         draggable: isLockedFromDrag ? false : undefined,
         style: {
           ...node.style,
-          ...(spotlightResult
+          ...(hasSpotlightDim
             ? {
                 opacity: isHighlighted ? 1 : 0.15,
                 filter: isHighlighted ? undefined : 'grayscale(80%)',
@@ -230,14 +231,15 @@ export const FlowCanvas: React.FC = () => {
 
       if (spotlightResult) {
         const isHighlighted = edgeIds ? edgeIds.has(edge.id) : true;
+        const dimOthers = spotlightActive;
         return {
           ...edge,
           animated: isHighlighted,
-          interactionWidth: isHighlighted ? undefined : 0,
+          interactionWidth: dimOthers && !isHighlighted ? 0 : undefined,
           style: {
             ...edge.style,
-            opacity: isHighlighted ? 1 : 0.15,
-            pointerEvents: isHighlighted ? undefined : 'none',
+            opacity: dimOthers ? (isHighlighted ? 1 : 0.15) : 1,
+            pointerEvents: dimOthers && !isHighlighted ? 'none' : undefined,
             stroke: isHighlighted ? 'var(--fs-selection-ring, #2563eb)' : edge.style?.stroke,
             strokeWidth: isHighlighted ? 2.5 : edge.style?.strokeWidth ?? 1.5,
             transition: 'opacity 0.2s ease',
@@ -247,7 +249,7 @@ export const FlowCanvas: React.FC = () => {
 
       return edge;
     });
-  }, [edges, spotlightResult, hoveredEdgeForInsert]);
+  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert]);
 
   const lastCursorBroadcastRef = useRef(0);
 
@@ -674,23 +676,20 @@ export const FlowCanvas: React.FC = () => {
           target.isContentEditable);
       if (isInput) return;
 
-      const isCanvasFocused = canvasContainerRef.current?.contains(document.activeElement);
-      if (!isCanvasFocused) return;
-
       e.preventDefault();
       if (!e.repeat) {
-        setIsSpacePanning(true);
+        setSpacePanning(true);
       }
     };
 
     const handleSpaceKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        setIsSpacePanning(false);
+        setSpacePanning(false);
       }
     };
 
     const handleWindowBlur = () => {
-      setIsSpacePanning(false);
+      setSpacePanning(false);
     };
 
     window.addEventListener('keydown', handleSpaceKeyDown);
@@ -700,8 +699,9 @@ export const FlowCanvas: React.FC = () => {
       window.removeEventListener('keydown', handleSpaceKeyDown);
       window.removeEventListener('keyup', handleSpaceKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
+      setSpacePanning(false);
     };
-  }, [isPresenting]);
+  }, [isPresenting, setSpacePanning]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -973,7 +973,7 @@ export const FlowCanvas: React.FC = () => {
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =
     isSpacePanning || activeTool === 'pan'
-      ? 'cursor-grab active:cursor-grabbing [&_.react-flow__pane]:cursor-grab [&_.react-flow__pane:active]:cursor-grabbing'
+      ? 'fs-cursor-pan'
       : activeTool === 'connect'
       ? 'cursor-crosshair [&_.react-flow__pane]:cursor-crosshair [&_.react-flow__node]:cursor-crosshair'
       : '';
@@ -1019,7 +1019,7 @@ export const FlowCanvas: React.FC = () => {
       )}
 
       {/* 聚光灯决策节点分支单选筛选胶囊 */}
-      {effectiveSpotlightTargetId && decisionBranches.length > 0 && (
+      {spotlightActive && effectiveSpotlightTargetId && decisionBranches.length > 0 && (
         <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1 bg-slate-900/85 text-white rounded-full shadow-xl border border-slate-700/60 backdrop-blur-md">
           <span className="text-[11px] font-medium text-slate-300 pl-2.5 pr-1">因果分支:</span>
           <button
@@ -1076,6 +1076,12 @@ export const FlowCanvas: React.FC = () => {
         onConnect={handleConnect}
         onConnectStart={handleConnectStart}
         onEdgeClick={handleEdgeClick}
+        onEdgeDoubleClick={(_e, edge) => {
+          if (isReadOnly) return;
+          setSelectedNodes([]);
+          setSelectedEdge(edge.id);
+          useFlowStore.getState().setEditingEdgeLabelId(edge.id);
+        }}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
         onMove={handleViewportMove}

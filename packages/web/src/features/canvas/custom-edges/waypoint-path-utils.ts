@@ -101,3 +101,75 @@ export function deriveDefaultOrthogonalWaypoints(
     { x: midX, y: target.y },
   ];
 }
+
+export function getPointAtPolylineRatio(points: XYPosition[], ratio: number): XYPosition {
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (points.length === 1) return points[0];
+  const clamped = Math.max(0, Math.min(1, ratio));
+  let total = 0;
+  const lengths: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const len = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    lengths.push(len);
+    total += len;
+  }
+  if (total <= 0) return points[0];
+  let remain = total * clamped;
+  for (let i = 0; i < lengths.length; i++) {
+    const len = lengths[i];
+    if (remain <= len || i === lengths.length - 1) {
+      const t = len > 0 ? remain / len : 0;
+      return {
+        x: points[i].x + (points[i + 1].x - points[i].x) * t,
+        y: points[i].y + (points[i + 1].y - points[i].y) * t,
+      };
+    }
+    remain -= len;
+  }
+  return points[points.length - 1];
+}
+
+export function projectPointOntoPolyline(
+  points: XYPosition[],
+  cursor: XYPosition
+): { point: XYPosition; ratio: number } {
+  if (points.length === 0) return { point: cursor, ratio: 0.5 };
+  if (points.length === 1) return { point: points[0], ratio: 0.5 };
+  let total = 0;
+  const lengths: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const len = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    lengths.push(len);
+    total += len;
+  }
+  if (total <= 0) return { point: points[0], ratio: 0.5 };
+
+  let bestDistSq = Infinity;
+  let bestPoint = points[0];
+  let bestRatio = 0.5;
+  let acc = 0;
+
+  for (let i = 0; i < lengths.length; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const len = lengths[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq > 0 ? Math.max(0, Math.min(1, ((cursor.x - a.x) * dx + (cursor.y - a.y) * dy) / lenSq)) : 0;
+    const px = a.x + dx * t;
+    const py = a.y + dy * t;
+    const distSq = (cursor.x - px) ** 2 + (cursor.y - py) ** 2;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestPoint = { x: px, y: py };
+      bestRatio = (acc + len * t) / total;
+    }
+    acc += len;
+  }
+
+  return {
+    point: bestPoint,
+    ratio: Math.max(0.03, Math.min(0.97, Math.round(bestRatio * 1000) / 1000)),
+  };
+}

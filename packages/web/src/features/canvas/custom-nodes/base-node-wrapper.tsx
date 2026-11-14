@@ -26,6 +26,55 @@ const POSITION_MAP: Record<HandlePosition, Position> = {
   left: Position.Left,
 };
 
+export type NodeSemanticRole = 'start' | 'process' | 'end' | 'neutral';
+
+export function resolveNodeSemanticRole(
+  id: string,
+  type: FlowNodeType,
+  label: string | undefined,
+  edges: ReadonlyArray<{ source: string; target: string }>
+): NodeSemanticRole {
+  if (type === 'comment' || type === 'pool' || type === 'lane' || type === 'group') {
+    return 'neutral';
+  }
+  if (type === 'start-end') {
+    let inCount = 0;
+    let outCount = 0;
+    for (const e of edges) {
+      if (e.target === id) inCount += 1;
+      if (e.source === id) outCount += 1;
+    }
+    if (inCount === 0 && outCount > 0) return 'start';
+    if (outCount === 0 && inCount > 0) return 'end';
+    if (label && /结束|完成|归档|终止|失败|关闭|end|finish|done|complete/i.test(label)) {
+      return 'end';
+    }
+    return 'start';
+  }
+  if (type === 'process' || type === 'subprocess') {
+    return 'process';
+  }
+  return 'neutral';
+}
+
+const ROLE_TOKENS: Record<Exclude<NodeSemanticRole, 'neutral'>, { bg: string; border: string; text: string }> = {
+  start: {
+    bg: 'var(--fs-node-start-bg)',
+    border: 'var(--fs-node-start-border)',
+    text: 'var(--fs-node-start-text)',
+  },
+  process: {
+    bg: 'var(--fs-node-process-bg)',
+    border: 'var(--fs-node-process-border)',
+    text: 'var(--fs-node-process-text)',
+  },
+  end: {
+    bg: 'var(--fs-node-end-bg)',
+    border: 'var(--fs-node-end-border)',
+    text: 'var(--fs-node-end-text)',
+  },
+};
+
 export interface BaseNodeWrapperProps {
   id: string;
   data: FlowNodeData;
@@ -64,6 +113,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     // 兼容可能无 ReactFlowProvider 包装的单测上下文
   }
   const activeTool = useFlowStore((s) => s.activeTool);
+  const semanticRole = useFlowStore((s) => resolveNodeSemanticRole(id, data.type, data.label, s.edges));
   const showHandles = isConnecting || activeTool === 'connect' || selected;
   const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
 
@@ -161,8 +211,10 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const isPool = data.type === 'pool';
   const isContainer = isLane || isPool;
 
-  const defaultBg = isComment ? 'var(--fs-note-bg)' : isContainer ? undefined : 'var(--fs-node-bg)';
-  const defaultBorder = isComment ? 'var(--fs-note-border)' : isContainer ? undefined : 'var(--fs-node-border)';
+  const roleToken = semanticRole === 'neutral' ? null : ROLE_TOKENS[semanticRole];
+  const defaultBg = isComment ? 'var(--fs-note-bg)' : isContainer ? undefined : (roleToken?.bg ?? 'var(--fs-node-bg)');
+  const defaultBorder = isComment ? 'var(--fs-note-border)' : isContainer ? undefined : (roleToken?.border ?? 'var(--fs-node-border)');
+  const defaultText = roleToken?.text ?? 'var(--fs-node-text)';
   const defaultBorderWidth = isContainer ? undefined : '1.5px';
 
   const mergedStyle: React.CSSProperties = {
@@ -170,7 +222,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     borderColor: nodeStyle.borderColor ? String(nodeStyle.borderColor) : defaultBorder,
     borderWidth: typeof nodeStyle.borderWidth === 'number' ? `${nodeStyle.borderWidth}px` : defaultBorderWidth,
     borderStyle: nodeStyle.borderStyle || undefined,
-    color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : 'var(--fs-node-text)',
+    color: nodeStyle.fontColor ? String(nodeStyle.fontColor) : defaultText,
     fontSize: typeof nodeStyle.fontSize === 'number' ? `${nodeStyle.fontSize}px` : '14px',
     boxShadow: selected
       ? '0 0 0 2px var(--fs-selection-ring)'
@@ -232,7 +284,8 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       ).map((handle) => {
         const pos = POSITION_MAP[handle.position];
         const hasIncomingEdge = incomingHandles.has(handle.id);
-        const showVisualIndicator = !hasIncomingEdge && (showHandles || isConnecting);
+        const isForceShowHandles = isConnecting || activeTool === 'connect';
+        const showVisualIndicator = isForceShowHandles ? true : (!hasIncomingEdge && showHandles);
 
         return (
           <React.Fragment key={handle.id}>
@@ -250,15 +303,15 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               position={pos}
               id={handle.id}
               isConnectable={true}
-              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] flex items-center justify-center cursor-crosshair group/handle !pointer-events-auto ${
+              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] cursor-crosshair group/handle !pointer-events-auto ${
                 hasIncomingEdge ? 'z-0' : 'z-10'
-              } transition-all duration-150 ${
+              } transition-opacity duration-150 ${
                 showHandles ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >
               {showVisualIndicator && (
                 <span
-                  className={`rounded-full transition-all duration-150 pointer-events-none ${
+                  className={`fs-handle-dot transition-all duration-150 pointer-events-none ${
                     showHandles
                       ? 'w-3 h-3 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.5)]'
                       : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] border-2 border-[var(--fs-selection-ring,#2563eb)] group-hover/handle:w-3.5 group-hover/handle:h-3.5 group-hover/handle:bg-[var(--fs-selection-ring,#2563eb)] group-hover/handle:border-white shadow-xs group-hover/handle:shadow-[0_0_0_3px_rgba(37,99,235,0.35)]'

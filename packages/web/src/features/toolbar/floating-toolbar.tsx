@@ -25,7 +25,9 @@ export interface FloatingToolbarProps {
 
 export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = '' }) => {
   const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
+  const effectiveTool = isSpacePanning ? 'pan' : activeTool;
   const canUndo = useFlowStore((s) => s.canUndo);
   const canRedo = useFlowStore((s) => s.canRedo);
   const undo = useFlowStore((s) => s.undo);
@@ -124,21 +126,21 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           icon={MousePointer2}
           label="选择与移动"
           shortcut="V"
-          active={activeTool === 'select'}
+          active={effectiveTool === 'select'}
           onClick={() => setActiveTool('select')}
         />
         <ToolbarButton
           icon={Hand}
           label="画布平移"
           shortcut="H"
-          active={activeTool === 'pan'}
+          active={effectiveTool === 'pan'}
           onClick={() => setActiveTool('pan')}
         />
         <ToolbarButton
           icon={ArrowUpRight}
           label="连线模式"
           shortcut="C"
-          active={activeTool === 'connect'}
+          active={effectiveTool === 'connect'}
           onClick={() => setActiveTool('connect')}
         />
         <ToolbarButton

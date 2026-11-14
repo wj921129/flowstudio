@@ -56,6 +56,7 @@ export const flowNodeSchema = z.object({
 
 export const flowEdgeDataSchema = z.object({
   label: z.string().optional(),
+  labelRatio: z.number().min(0).max(1).optional(),
   style: z.record(z.string(), z.unknown()).optional(),
   waypoints: z.array(xyPositionSchema).optional(),
   routingType: z.enum(['orthogonal', 'bezier', 'straight']).optional(),

@@ -9,7 +9,13 @@ import {
   type Edge,
 } from '@xyflow/react';
 import type { FlowEdgeData, XYPosition } from '@flowstudio/shared';
-import { buildWaypointPath, deriveDefaultOrthogonalWaypoints, type EdgeAnchorDirection } from './waypoint-path-utils';
+import {
+  buildWaypointPath,
+  deriveDefaultOrthogonalWaypoints,
+  getPointAtPolylineRatio,
+  projectPointOntoPolyline,
+  type EdgeAnchorDirection,
+} from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
 import { EdgeRoutingManager } from './edge-routing-manager';
 
@@ -95,6 +101,23 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const dragRef = useRef<WaypointDragState | null>(null);
   const dragEndRef = useRef<() => void>(() => {});
   const [dragWaypoints, setDragWaypoints] = useState<XYPosition[] | null>(null);
+  const [dragLabelRatio, setDragLabelRatio] = useState<number | null>(null);
+  const labelDragEndRef = useRef<() => void>(() => {});
+  const editingEdgeLabelId = useFlowStore((s) => s.editingEdgeLabelId);
+  const setEditingEdgeLabelId = useFlowStore((s) => s.setEditingEdgeLabelId);
+  const isEditingLabel = editingEdgeLabelId === id;
+  const [labelDraft, setLabelDraft] = useState(data?.label || '');
+  const labelInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditingLabel) {
+      setLabelDraft(data?.label || '');
+      requestAnimationFrame(() => {
+        labelInputRef.current?.focus();
+        labelInputRef.current?.select();
+      });
+    }
+  }, [isEditingLabel, data?.label]);
 
   const waypoints = dragWaypoints ?? storedWaypoints;
   const hasWaypoints = Array.isArray(waypoints) && waypoints.length > 0;
@@ -178,8 +201,75 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   ]);
 
   const edgePath = computedRoute.path;
-  const labelX = computedRoute.labelPosition.x;
-  const labelY = computedRoute.labelPosition.y;
+  const polylinePoints = useMemo(
+    () => [dockSource, ...(computedRoute.waypoints || []), dockTarget],
+    [dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints]
+  );
+  const activeRatio = dragLabelRatio ?? (typeof data?.labelRatio === 'number' ? data.labelRatio : null);
+  const resolvedLabelPos = useMemo(
+    () =>
+      activeRatio !== null
+        ? getPointAtPolylineRatio(polylinePoints, activeRatio)
+        : computedRoute.labelPosition,
+    [activeRatio, polylinePoints, computedRoute.labelPosition]
+  );
+  const labelX = resolvedLabelPos.x;
+  const labelY = resolvedLabelPos.y;
+
+  const commitLabel = useCallback(() => {
+    if (!isEditingLabel) return;
+    setEditingEdgeLabelId(null);
+    const trimmed = labelDraft.trim();
+    const prev = (data?.label || '').trim();
+    if (trimmed !== prev) {
+      useFlowStore.getState().updateEdgeData(id, { label: trimmed || undefined });
+    }
+  }, [isEditingLabel, setEditingEdgeLabelId, labelDraft, data?.label, id]);
+
+  const handleLabelPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || isEditingLabel) return;
+      e.stopPropagation();
+      const startClient = { x: e.clientX, y: e.clientY };
+      let moved = false;
+      let latestRatio: number | null = null;
+
+      const onMove = (moveEvent: PointerEvent) => {
+        if (!moved && Math.hypot(moveEvent.clientX - startClient.x, moveEvent.clientY - startClient.y) < 3) {
+          return;
+        }
+        moved = true;
+        const cursor = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
+        const { ratio } = projectPointOntoPolyline(polylinePoints, cursor);
+        latestRatio = ratio;
+        setDragLabelRatio(ratio);
+      };
+
+      let detach = () => {};
+      const finish = () => {
+        detach();
+        setDragLabelRatio(null);
+        if (moved && latestRatio !== null) {
+          useFlowStore.getState().updateEdgeData(id, { labelRatio: latestRatio });
+        }
+      };
+
+      detach = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+      };
+      labelDragEndRef.current = () => {
+        detach();
+        setDragLabelRatio(null);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+    },
+    [isEditingLabel, screenToFlowPosition, polylinePoints, id]
+  );
 
   const handleAddDefaultWaypoint = useCallback(
     (e: React.MouseEvent) => {
@@ -269,6 +359,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
   useEffect(() => () => {
     dragEndRef.current();
+    labelDragEndRef.current();
     manager.unregisterEdge(id);
   }, [id]);
 
@@ -284,20 +375,58 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       />
 
       <EdgeLabelRenderer>
-        {data?.label && (
+        {isEditingLabel ? (
           <div
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className="nodrag nopan px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] text-[var(--fs-text)] shadow-xs select-none"
+            className="nodrag nopan z-30"
+          >
+            <input
+              ref={labelInputRef}
+              type="text"
+              value={labelDraft}
+              placeholder="输入连线标签…"
+              onChange={(e) => setLabelDraft(e.target.value)}
+              onBlur={commitLabel}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitLabel();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setEditingEdgeLabelId(null);
+                }
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="nodrag nopan w-28 px-2 py-0.5 text-center text-xs rounded bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] outline-none shadow-md"
+            />
+          </div>
+        ) : data?.label ? (
+          <div
+            onPointerDown={handleLabelPointerDown}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditingEdgeLabelId(id);
+            }}
+            title="按住沿连线拖动位置，双击编辑标签"
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: 'all',
+            }}
+            className={`nodrag nopan px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] text-[var(--fs-text)] shadow-xs select-none touch-none ${
+              dragLabelRatio !== null ? 'cursor-grabbing ring-2 ring-[var(--fs-selection-ring)]' : 'cursor-grab hover:border-[var(--fs-selection-ring)]'
+            }`}
           >
             {data.label}
           </div>
-        )}
+        ) : null}
 
-        {selected && (
+        {selected && !isEditingLabel && (
           <>
             {hasWaypoints ? (
               <>
@@ -325,20 +454,52 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
                     />
                   </div>
                 ))}
+                {!data?.label && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingEdgeLabelId(id);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+                      pointerEvents: 'all',
+                    }}
+                    className="nodrag nopan px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors z-20"
+                  >
+                    + 标签
+                  </button>
+                )}
               </>
             ) : (
-              <button
-                onClick={handleAddDefaultWaypoint}
-                title="点击为当前连线启用折点调整"
+              <div
                 style={{
                   position: 'absolute',
-                  transform: `translate(-50%, -50%) translate(${labelX}px,${labelY + (data?.label ? 18 : 0)}px)`,
+                  transform: `translate(-50%, -50%) translate(${labelX}px,${labelY + (data?.label ? 20 : 0)}px)`,
                   pointerEvents: 'all',
                 }}
-                className="nodrag nopan px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors z-20"
+                className="nodrag nopan flex items-center gap-1 z-20"
               >
-                调折点
-              </button>
+                <button
+                  onClick={handleAddDefaultWaypoint}
+                  title="点击为当前连线启用折点调整"
+                  className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors"
+                >
+                  调折点
+                </button>
+                {!data?.label && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingEdgeLabelId(id);
+                    }}
+                    title="点击为连线添加中间标签"
+                    className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors"
+                  >
+                    + 标签
+                  </button>
+                )}
+              </div>
             )}
           </>
         )}
