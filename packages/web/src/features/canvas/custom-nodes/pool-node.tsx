@@ -3,12 +3,13 @@
  * @description 代表多泳道编组的顶级容器，支持横向 (Horizontal) 与纵向 (Vertical) 两种布局模式
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { NodeProps, Node } from '@xyflow/react';
 import { NodeResizer } from '@xyflow/react';
 import type { FlowNodeData } from '@flowstudio/shared';
 import { Columns3, Rows3, Plus, ArrowLeftRight } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
+import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
 import { isNodeLocked } from '../utils/node-lock-manager';
 import { reorderPoolOrientation } from '../utils/lane-nesting-manager';
@@ -20,20 +21,12 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '泳道池');
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isEditing) {
       setLabelValue(data.label || '泳道池');
     }
   }, [data.label, isEditing]);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -155,21 +148,16 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
           </div>
 
           {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
+            <InlineTextEditor
               value={labelValue}
-              onChange={(e) => setLabelValue(e.target.value)}
-              onBlur={handleSave}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave();
-                if (e.key === 'Escape') {
-                  setIsEditing(false);
-                  setLabelValue(data.label || '泳道池');
-                }
+              onChange={setLabelValue}
+              onCommit={handleSave}
+              onCancel={() => {
+                setIsEditing(false);
+                setLabelValue(data.label || '泳道池');
               }}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="nodrag nopan w-44 px-2 py-0.5 text-xs font-semibold bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] rounded-md outline-none"
+              wrapperClassName="min-w-16 rounded ring-1 ring-[var(--fs-selection-ring)]/60"
+              className="text-xs font-semibold text-[var(--fs-text)] tracking-wide"
             />
           ) : (
             <span className="text-xs font-semibold text-[var(--fs-text)] tracking-wide truncate">

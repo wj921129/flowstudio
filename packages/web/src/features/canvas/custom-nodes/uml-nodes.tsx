@@ -1,22 +1,16 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { NodeProps, Node } from '@xyflow/react';
 import type { FlowNodeData, UmlMessageKind } from '@flowstudio/shared';
 import { BaseNodeWrapper } from './base-node-wrapper';
+import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
 
-const useHeaderEditor = (id: string, label: string) => {
+const useHeaderEditor = (id: string, label: string, textClassName: string) => {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(label);
-  const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!editing) setValue(label);
   }, [label, editing]);
-  useEffect(() => {
-    if (editing && ref.current) {
-      ref.current.focus();
-      ref.current.select();
-    }
-  }, [editing]);
   const save = () => {
     if (!editing) return;
     setEditing(false);
@@ -24,28 +18,27 @@ const useHeaderEditor = (id: string, label: string) => {
     if (trimmed !== label) useFlowStore.getState().updateNodeData(id, { label: trimmed });
   };
   const editor = editing ? (
-    <input
-      ref={ref}
+    <InlineTextEditor
       value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') save();
-        if (e.key === 'Escape') {
-          setEditing(false);
-          setValue(label);
-        }
+      onChange={setValue}
+      onCommit={save}
+      onCancel={() => {
+        setEditing(false);
+        setValue(label);
       }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      className="nodrag nopan w-full px-1 py-0.5 text-center text-xs bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] rounded outline-none"
+      wrapperClassName="w-full rounded ring-1 ring-[var(--fs-selection-ring)]/60"
+      className={textClassName}
     />
   ) : null;
   return { editing, setEditing, editor };
 };
 
 export const UmlLifelineNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
-  const { editing, setEditing, editor } = useHeaderEditor(props.id, props.data.label || '');
+  const { editing, setEditing, editor } = useHeaderEditor(
+    props.id,
+    props.data.label || '',
+    'text-xs font-semibold text-[var(--fs-node-text)] text-center'
+  );
   return (
     <BaseNodeWrapper {...props} customContent className="!bg-transparent !border-transparent">
       <div className="w-full h-full flex flex-col items-center">
@@ -85,7 +78,11 @@ const MESSAGE_ARROW_MAP: Record<UmlMessageKind, { dash?: string; open: boolean }
 export const UmlMessageNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const kind: UmlMessageKind = props.data.messageKind ?? 'sync';
   const arrow = MESSAGE_ARROW_MAP[kind];
-  const { editing, setEditing, editor } = useHeaderEditor(props.id, props.data.label || '');
+  const { editing, setEditing, editor } = useHeaderEditor(
+    props.id,
+    props.data.label || '',
+    'text-[11px] leading-none text-center text-[var(--fs-node-text)]'
+  );
   const lineColor = 'var(--fs-node-text)';
   return (
     <BaseNodeWrapper {...props} customContent className="!bg-transparent !border-transparent">

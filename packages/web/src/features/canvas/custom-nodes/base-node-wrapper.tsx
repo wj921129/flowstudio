@@ -3,12 +3,13 @@
  * @description 统一封装 Handles 锚点生成、选中焦点环、双击内联文本编辑与设计令牌样式映射
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Handle, Position, NodeResizer, useConnection } from '@xyflow/react';
 import type { FlowNodeData, FlowNodeType, HandlePosition } from '@flowstudio/shared';
 import { getNodeRegistryEntry } from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
 import { useCollaboration } from '../../collaboration/collaboration-provider';
+import { InlineTextEditor } from './inline-text-editor';
 
 
 /**
@@ -100,7 +101,6 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '');
-  const inputRef = useRef<HTMLInputElement>(null);
   const collab = useCollaboration();
 
   const remoteSelector = collab?.remoteUsers.find((u) => (u.selectedNodeIds ?? []).includes(id));
@@ -148,20 +148,11 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     [incomingHandleKeys]
   );
 
-  // 当外部 data.label 变更且非编辑态时同步
   useEffect(() => {
     if (!isEditing) {
       setLabelValue(data.label || '');
     }
   }, [data.label, isEditing]);
-
-  // 自动聚焦与选中文本
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
 
   const isLocked = Boolean(data.lockMode && data.lockMode !== 'none');
   const isFullLocked = data.lockMode === 'full';
@@ -188,16 +179,6 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const handleCancel = () => {
     setIsEditing(false);
     setLabelValue(data.label || '');
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSave();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancel();
-    }
   };
 
   // 获取该节点类型预定义的 handles
@@ -326,23 +307,19 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       {/* 自定义几何轮廓或子元素插槽 */}
       {children}
 
-      {/* 默认文本与双击内联编辑 */}
       {!customContent && (
-        <div className="relative z-10 w-full px-2 text-center pointer-events-none">
+        <div className={`relative z-10 w-full px-2 text-center ${isEditing ? 'pointer-events-auto' : 'pointer-events-none'}`}>
           {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
+            <InlineTextEditor
               value={labelValue}
-              onChange={(e) => setLabelValue(e.target.value)}
-              onBlur={handleSave}
-              onKeyDown={handleKeyDown}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="nodrag nopan pointer-events-auto w-full px-1 py-0.5 text-center text-xs bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] rounded outline-none shadow-sm"
+              onChange={setLabelValue}
+              onCommit={handleSave}
+              onCancel={handleCancel}
+              wrapperClassName="w-full rounded ring-1 ring-[var(--fs-selection-ring)]/60"
+              className="text-sm font-medium leading-snug text-center text-inherit"
             />
           ) : (
-            <span className="break-words line-clamp-3 text-sm font-medium leading-snug">
+            <span className="block whitespace-pre-wrap break-words line-clamp-3 text-sm font-medium leading-snug">
               {data.label || ''}
             </span>
           )}

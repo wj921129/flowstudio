@@ -18,6 +18,7 @@ import {
 } from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
 import { EdgeRoutingManager } from './edge-routing-manager';
+import { InlineTextEditor } from '../custom-nodes/inline-text-editor';
 
 const WAYPOINT_HIT_SIZE = 22;
 export const TERMINAL_ARROW_DOCKING_GAP = 2.5;
@@ -108,15 +109,10 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const setEditingEdgeLabelId = useFlowStore((s) => s.setEditingEdgeLabelId);
   const isEditingLabel = editingEdgeLabelId === id;
   const [labelDraft, setLabelDraft] = useState(data?.label || '');
-  const labelInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isEditingLabel) {
       setLabelDraft(data?.label || '');
-      requestAnimationFrame(() => {
-        labelInputRef.current?.focus();
-        labelInputRef.current?.select();
-      });
     }
   }, [isEditingLabel, data?.label]);
 
@@ -398,25 +394,14 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
             }}
             className="nodrag nopan z-30"
           >
-            <input
-              ref={labelInputRef}
-              type="text"
+            <InlineTextEditor
               value={labelDraft}
+              onChange={setLabelDraft}
+              onCommit={commitLabel}
+              onCancel={() => setEditingEdgeLabelId(null)}
               placeholder="输入连线标签…"
-              onChange={(e) => setLabelDraft(e.target.value)}
-              onBlur={commitLabel}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitLabel();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setEditingEdgeLabelId(null);
-                }
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="nodrag nopan w-28 px-2 py-0.5 text-center text-xs rounded bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] outline-none shadow-md"
+              wrapperClassName="min-w-16 px-1.5 py-0.5 rounded bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] shadow-md"
+              className="text-center text-xs text-[var(--fs-text)]"
             />
           </div>
         ) : data?.label ? (
@@ -432,7 +417,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className={`nodrag nopan px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] text-[var(--fs-text)] shadow-xs select-none touch-none ${
+            className={`nodrag nopan whitespace-pre-wrap text-center px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] text-[var(--fs-text)] shadow-xs select-none touch-none ${
               dragLabelRatio !== null ? 'cursor-grabbing ring-2 ring-[var(--fs-selection-ring)]' : 'cursor-grab hover:border-[var(--fs-selection-ring)]'
             }`}
           >

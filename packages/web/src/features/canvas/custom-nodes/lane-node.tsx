@@ -3,13 +3,14 @@
  * @description 挂载于 Pool 内部的单条泳道容器，承载并限制归属该泳道的业务流程节点
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { NodeProps, Node } from '@xyflow/react';
 import { NodeResizer } from '@xyflow/react';
 import type { FlowNodeData } from '@flowstudio/shared';
 import { Trash2, AlertTriangle } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
+import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
 import { isNodeLocked } from '../utils/node-lock-manager';
 
@@ -23,7 +24,6 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const [titleValue, setTitleValue] = useState(data.laneTitle || data.label || '泳道');
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const [confirmChildCount, setConfirmChildCount] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isConfirmDeleteOpen) return;
@@ -45,13 +45,6 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       setTitleValue(data.laneTitle || data.label || '泳道');
     }
   }, [data.laneTitle, data.label, isEditing]);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -141,22 +134,17 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         }`}
       >
         {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
+          <InlineTextEditor
             value={titleValue}
-            onChange={(e) => setTitleValue(e.target.value)}
-            onBlur={handleSave}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSave();
-              if (e.key === 'Escape') {
-                setIsEditing(false);
-                setTitleValue(data.laneTitle || data.label || '泳道');
-              }
+            onChange={setTitleValue}
+            onCommit={handleSave}
+            onCancel={() => {
+              setIsEditing(false);
+              setTitleValue(data.laneTitle || data.label || '泳道');
             }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={`nodrag nopan text-xs font-semibold bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] rounded outline-none ${
-              isHorizontal ? 'w-24 -rotate-90 origin-center my-6' : 'w-32 px-1 py-0.5'
+            wrapperClassName="rounded ring-1 ring-[var(--fs-selection-ring)]/60"
+            className={`text-xs font-semibold text-[var(--fs-text)] ${
+              isHorizontal ? '[writing-mode:vertical-lr] tracking-widest' : 'tracking-wide'
             }`}
           />
         ) : (

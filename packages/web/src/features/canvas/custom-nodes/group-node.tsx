@@ -3,30 +3,23 @@
  * @description 支持逻辑组合框 (Logical Group) 与显式容器框 (Container Frame) 双模态呈现
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { NodeProps, Node } from '@xyflow/react';
 import type { FlowNodeData } from '@flowstudio/shared';
 import { BaseNodeWrapper } from './base-node-wrapper';
+import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
 
 export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const isFrame = Boolean(props.data.isFrame);
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(props.data.label || '');
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isEditing) {
       setLabelValue(props.data.label || '');
     }
   }, [props.data.label, isEditing]);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -54,21 +47,16 @@ export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
           className="h-8 px-3 flex items-center justify-between border-b border-[var(--fs-border)] bg-[var(--fs-surface)]/80 rounded-t-xl text-xs font-semibold text-[var(--fs-text-muted)] cursor-grab active:cursor-grabbing"
         >
           {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
+            <InlineTextEditor
               value={labelValue}
-              onChange={(e) => setLabelValue(e.target.value)}
-              onBlur={handleSave}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave();
-                if (e.key === 'Escape') {
-                  setIsEditing(false);
-                  setLabelValue(props.data.label || '');
-                }
+              onChange={setLabelValue}
+              onCommit={handleSave}
+              onCancel={() => {
+                setIsEditing(false);
+                setLabelValue(props.data.label || '');
               }}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="nodrag nopan w-32 px-1 py-0.5 text-xs bg-[var(--fs-surface)] text-[var(--fs-text)] border border-[var(--fs-selection-ring)] rounded outline-none"
+              wrapperClassName="min-w-16 rounded ring-1 ring-[var(--fs-selection-ring)]/60"
+              className="text-xs font-semibold text-[var(--fs-text)]"
             />
           ) : (
             <span className="truncate">{props.data.label || '容器框'}</span>
