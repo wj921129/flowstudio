@@ -188,13 +188,10 @@ describe('scaffold_diagram spec 差量渲染', () => {
     expect(after.laneY).toBe(before.laneY);
   });
 
-  it('tools/list 含 8 个工具且 list_templates 返回 8 个预设', async () => {
+  it('tools/list 含 9 个标准协同工具且不暴露冗余工具', async () => {
     const listRes = await server.app.inject({ method: 'POST', url: '/mcp', payload: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
     const tools = listRes.json().result.tools;
-    expect(tools.length).toBe(14);
-    expect(tools.map((t: any) => t.name)).toContain('list_templates');
-    const res = await callTool(server, 'list_templates', {});
-    expect(res.data.length).toBe(8);
-    expect(res.data[0].spec.paradigm).toBeTruthy();
+    expect(tools.length).toBe(9);
+    expect(tools.map((t: any) => t.name)).not.toContain('list_templates');
   });
 });

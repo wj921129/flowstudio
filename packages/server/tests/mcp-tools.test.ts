@@ -52,7 +52,7 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     });
     expect(listRes.statusCode).toBe(200);
     const tools = listRes.json().result.tools;
-    expect(tools.length).toBe(14);
+    expect(tools.length).toBe(9);
 
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain('list_diagrams');
@@ -62,13 +62,13 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     expect(toolNames).toContain('scaffold_diagram');
     expect(toolNames).toContain('apply_ops');
     expect(toolNames).toContain('auto_layout');
-    expect(toolNames).toContain('list_templates');
     expect(toolNames).toContain('undo_ai_batch');
-    expect(toolNames).toContain('list_snapshots');
-    expect(toolNames).toContain('restore_snapshot');
     expect(toolNames).toContain('search_nodes');
-    expect(toolNames).toContain('rename_diagram');
-    expect(toolNames).toContain('delete_diagram');
+    expect(toolNames).not.toContain('list_templates');
+    expect(toolNames).not.toContain('list_snapshots');
+    expect(toolNames).not.toContain('restore_snapshot');
+    expect(toolNames).not.toContain('rename_diagram');
+    expect(toolNames).not.toContain('delete_diagram');
 
     await server.app.close();
   });
@@ -237,7 +237,7 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     await server.app.close();
   });
 
-  it('supports search_nodes, rename_diagram, undo_ai_batch, list_snapshots, restore_snapshot, delete_diagram', async () => {
+  it('supports search_nodes, undo_ai_batch and rejects retired tools', async () => {
     const server = await buildServer({ dbPath: tmpDbPath });
     const callTool = async (id: number, name: string, args: Record<string, unknown>) => {
       const res = await server.app.inject({
@@ -251,13 +251,10 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
       return JSON.parse(body.result.content[0].text);
     };
 
-    const created = await callTool(1, 'create_diagram', { title: '初始名称' });
+    const created = await callTool(1, 'create_diagram', { title: '支付核心链路' });
     const diagramId = created.id;
 
-    const renamed = await callTool(2, 'rename_diagram', { diagramId, title: '支付核心链路' });
-    expect(renamed.title).toBe('支付核心链路');
-
-    const ops1 = await callTool(3, 'apply_ops', {
+    const ops1 = await callTool(2, 'apply_ops', {
       diagramId,
       ops: [
         { op: 'add_node', id: 'n1', type: 'start-end', label: '发起支付' },
@@ -267,34 +264,26 @@ describe('Server MCP Endpoint & 7 AI Collaborative Tools', () => {
     });
     expect(ops1.appliedCount).toBe(3);
 
-    const searchRes = await callTool(4, 'search_nodes', { diagramId, query: '风控' });
+    const searchRes = await callTool(3, 'search_nodes', { diagramId, query: '风控' });
     expect(searchRes.totalMatched).toBe(1);
     expect(searchRes.nodes[0].id).toBe('n2');
     expect(searchRes.relatedEdges.length).toBe(1);
 
-    const undoRes = await callTool(5, 'undo_ai_batch', { diagramId });
+    const undoRes = await callTool(4, 'undo_ai_batch', { diagramId });
     expect(undoRes.success).toBe(true);
 
-    const afterUndo = await callTool(6, 'get_diagram', { diagramId });
+    const afterUndo = await callTool(5, 'get_diagram', { diagramId });
     expect(afterUndo.nodes.length).toBe(0);
 
-    const snaps = await callTool(7, 'list_snapshots', { diagramId });
-    expect(snaps.length).toBeGreaterThanOrEqual(1);
-
-    await callTool(8, 'apply_ops', {
-      diagramId,
-      ops: [{ op: 'add_node', id: 'n3', type: 'process', label: '恢复前节点' }],
-    });
-
-    const restored = await callTool(9, 'restore_snapshot', { diagramId, snapshotId: snaps[0].id });
-    expect(restored.success).toBe(true);
-    const afterRestore = await callTool(10, 'get_diagram', { diagramId });
-    expect(afterRestore.nodes.length).toBe(0);
-
-    const deleted = await callTool(11, 'delete_diagram', { diagramId });
-    expect(deleted.success).toBe(true);
-    const all = await callTool(12, 'list_diagrams', {});
-    expect(all.some((d: any) => d.id === diagramId)).toBe(false);
+    for (const retiredTool of ['list_templates', 'list_snapshots', 'restore_snapshot', 'rename_diagram', 'delete_diagram']) {
+      const res = await server.app.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: { jsonrpc: '2.0', id: 99, method: 'tools/call', params: { name: retiredTool, arguments: { diagramId } } },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe(-32601);
+    }
 
     await server.app.close();
   });
