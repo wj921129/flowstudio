@@ -26,6 +26,7 @@ export interface ServerContext {
   repo: DiagramRepository;
   hocuspocus: Hocuspocus;
   writer: DocumentWriter;
+  saveStatus: SaveStatusTracker;
   aiBatchManager: AiBatchManager;
   autoSnapshot: AutoSnapshotScheduler;
 }
@@ -54,13 +55,18 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
-  // WebSocket 支持
-  await app.register(websocket);
+  // WebSocket 支持（限制单帧最大负载 16MB）
+  await app.register(websocket, {
+    options: {
+      maxPayload: 16 * 1024 * 1024,
+    },
+  });
 
   // 注册 REST API 路由
   await app.register(diagramRoutes, {
     prefix: '/api/diagrams',
     repo,
+    hocuspocus,
     aiBatchManager,
     writer,
     saveStatus,
@@ -80,16 +86,30 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     try {
       const clientConnection = hocuspocus.handleConnection(socket, reqRaw);
 
-      socket.on('message', (data: any) => {
-        let uint8: Uint8Array;
-        if (data instanceof Uint8Array) {
-          uint8 = data;
-        } else if (Array.isArray(data)) {
-          uint8 = new Uint8Array(Buffer.concat(data));
-        } else {
-          uint8 = new Uint8Array(data);
+      socket.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+        if (!isBinary) {
+          app.log.warn('[WebSocket] 拒绝非二进制协同消息帧');
+          if (socket.readyState === socket.OPEN) {
+            socket.close(1003, '仅支持二进制协同帧');
+          }
+          return;
         }
-        clientConnection.handleMessage(uint8);
+        try {
+          let uint8: Uint8Array;
+          if (data instanceof Uint8Array) {
+            uint8 = data;
+          } else if (Array.isArray(data)) {
+            uint8 = new Uint8Array(Buffer.concat(data));
+          } else {
+            uint8 = new Uint8Array(data);
+          }
+          clientConnection.handleMessage(uint8);
+        } catch (err) {
+          app.log.error(err, '[WebSocket] 处理协同消息异常');
+          if (socket.readyState === socket.OPEN) {
+            socket.close(1011, '协同消息处理异常');
+          }
+        }
       });
 
       socket.on('close', (code: number, reason: Buffer) => {
@@ -120,9 +140,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   });
 
   // 静态文件托管（若配置且存在）
-  if (options.webDistPath && fs.existsSync(options.webDistPath)) {
+  const hasWebDist = Boolean(options.webDistPath && fs.existsSync(options.webDistPath));
+  if (hasWebDist) {
     await app.register(fastifyStatic, {
-      root: options.webDistPath,
+      root: options.webDistPath!,
       prefix: '/',
       setHeaders: (res, pathName) => {
         if (pathName.endsWith('.html')) {
@@ -132,14 +153,27 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
         }
       },
     });
+  }
 
-    app.setNotFoundHandler((_req, reply) => {
+  app.setNotFoundHandler((req, reply) => {
+    const pathname = req.url.split('?')[0];
+    if (
+      req.method !== 'GET' ||
+      pathname === '/api' ||
+      pathname.startsWith('/api/') ||
+      pathname === '/mcp' ||
+      pathname.startsWith('/mcp/')
+    ) {
+      return reply.status(404).send({ error: '接口不存在' });
+    }
+    if (hasWebDist) {
       reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
       reply.header('Pragma', 'no-cache');
       reply.header('Expires', '0');
-      reply.sendFile('index.html');
-    });
-  }
+      return reply.sendFile('index.html');
+    }
+    return reply.status(404).send({ error: '接口不存在' });
+  });
 
   // 关闭钩子
   app.addHook('onClose', async () => {
@@ -148,5 +182,5 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
     db.close();
   });
 
-  return { app, repo, hocuspocus, writer, aiBatchManager, autoSnapshot };
+  return { app, repo, hocuspocus, writer, saveStatus, aiBatchManager, autoSnapshot };
 }

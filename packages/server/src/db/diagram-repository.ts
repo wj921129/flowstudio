@@ -41,25 +41,32 @@ export class DiagramRepository {
   constructor(private db: Database.Database) {}
 
   /**
-   * 查询所有图表列表，支持按标题模糊搜索
+   * 查询所有图表列表，支持按标题模糊搜索与分页
    */
-  listDiagrams(searchQuery?: string): DiagramSummary[] {
+  listDiagrams(searchQuery?: string, options?: { limit?: number; offset?: number }): DiagramSummary[] {
+    const limit = options?.limit ?? -1;
+    const offset = options?.offset ?? 0;
+    const trimmed = searchQuery?.trim();
+
     let rows: DiagramRow[];
-    if (searchQuery && searchQuery.trim().length > 0) {
-      const stmt = this.db.prepare<[string], DiagramRow>(`
+    if (trimmed && trimmed.length > 0) {
+      const escaped = trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+      const stmt = this.db.prepare<[string, number, number], DiagramRow>(`
         SELECT id, title, description, thumbnail, created_at, updated_at
         FROM diagrams
-        WHERE title LIKE ?
+        WHERE title LIKE ? ESCAPE '\\'
         ORDER BY updated_at DESC
+        LIMIT ? OFFSET ?
       `);
-      rows = stmt.all(`%${searchQuery.trim()}%`);
+      rows = stmt.all(`%${escaped}%`, limit, offset);
     } else {
-      const stmt = this.db.prepare<[], DiagramRow>(`
+      const stmt = this.db.prepare<[number, number], DiagramRow>(`
         SELECT id, title, description, thumbnail, created_at, updated_at
         FROM diagrams
         ORDER BY updated_at DESC
+        LIMIT ? OFFSET ?
       `);
-      rows = stmt.all();
+      rows = stmt.all(limit, offset);
     }
 
     return rows.map((r) => this.mapRowToSummary(r));
@@ -342,16 +349,19 @@ export class DiagramRepository {
   }
 
   /**
-   * 查询指定图表的所有历史快照列表 (按时间倒序)
+   * 查询指定图表的所有历史快照列表 (按时间倒序，支持分页)
    */
-  listSnapshots(diagramId: string): SnapshotSummary[] {
-    const stmt = this.db.prepare<[string], SnapshotRow>(`
+  listSnapshots(diagramId: string, options?: { limit?: number; offset?: number }): SnapshotSummary[] {
+    const limit = options?.limit ?? -1;
+    const offset = options?.offset ?? 0;
+    const stmt = this.db.prepare<[string, number, number], SnapshotRow>(`
       SELECT id, diagram_id, label, trigger_type, created_at
       FROM snapshots
       WHERE diagram_id = ?
       ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
     `);
-    const rows = stmt.all(diagramId);
+    const rows = stmt.all(diagramId, limit, offset);
     return rows.map((r) => ({
       id: r.id,
       diagramId: r.diagram_id,

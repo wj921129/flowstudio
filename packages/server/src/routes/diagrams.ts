@@ -1,7 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import {
   createDiagramInputSchema,
+  createSnapshotInputSchema,
+  listQuerySchema,
+  restoreSnapshotInputSchema,
   revertBatchItemsRequestSchema,
   updateDiagramInputSchema,
   type FlowNode,
@@ -16,6 +20,7 @@ import type { AutoSnapshotScheduler } from '../collaboration/auto-snapshot.js';
 
 interface DiagramRouteOptions {
   repo: DiagramRepository;
+  hocuspocus?: Hocuspocus;
   aiBatchManager?: AiBatchManager;
   writer?: DocumentWriter;
   saveStatus?: SaveStatusTracker;
@@ -37,10 +42,17 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     };
   };
 
-  // 查询列表（支持关键字搜索）
-  fastify.get('/', async (request) => {
-    const { q } = request.query as { q?: string };
-    const diagrams = repo.listDiagrams(q);
+  // 查询列表（支持关键字搜索与分页）
+  fastify.get('/', async (request, reply) => {
+    const parsed = listQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: '请求参数校验失败',
+        details: parsed.error.issues,
+      });
+    }
+    const { q, limit, offset } = parsed.data;
+    const diagrams = repo.listDiagrams(q, { limit, offset });
     return { diagrams };
   });
 
@@ -135,17 +147,27 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     if (!deleted) {
       return reply.status(404).send({ error: '图表不存在' });
     }
+    opts.hocuspocus?.closeConnections(id);
+    opts.saveStatus?.clear(id);
     return reply.status(204).send();
   });
 
-  // 获取图表快照列表
+  // 获取图表快照列表（支持可选分页）
   fastify.get('/:id/snapshots', async (request, reply) => {
     const { id } = request.params as { id: string };
+    const parsed = listQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: '请求参数校验失败',
+        details: parsed.error.issues,
+      });
+    }
     const diagram = repo.getDiagramById(id);
     if (!diagram) {
       return reply.status(404).send({ error: '图表不存在' });
     }
-    return repo.listSnapshots(id);
+    const { limit, offset } = parsed.data;
+    return repo.listSnapshots(id, { limit, offset });
   });
 
   fastify.get('/:id/snapshots/:snapshotId', async (request, reply) => {
@@ -181,12 +203,15 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
   // 创建新快照
   fastify.post('/:id/snapshots', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = (request.body || {}) as {
-      label?: string;
-      triggerType?: 'manual' | 'ai_batch' | 'auto' | 'timer';
-    };
-    const label = body.label || '手动快照';
-    const triggerType = body.triggerType || 'manual';
+    const parsed = createSnapshotInputSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: '请求参数校验失败',
+        details: parsed.error.issues,
+      });
+    }
+    const label = parsed.data.label || '手动快照';
+    const triggerType = parsed.data.triggerType ?? 'manual';
     // 在线优先：优先截取 Live Doc，避免漏掉落库防抖窗口内的最新协作编辑
     const snapshot = opts.writer
       ? opts.writer.createSnapshot(id, label, triggerType)
@@ -203,7 +228,14 @@ export const diagramRoutes: FastifyPluginAsync<DiagramRouteOptions> = async (fas
     if (!opts.writer) {
       return reply.status(500).send({ error: '文档写入引擎未配置' });
     }
-    const body = (request.body || {}) as { mode?: 'apply' | 'delta'; applyLocal?: boolean };
+    const parsed = restoreSnapshotInputSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: '请求参数校验失败',
+        details: parsed.error.issues,
+      });
+    }
+    const body = parsed.data;
     if (body.mode === 'delta' || body.applyLocal === true) {
       const delta = opts.writer.computeSnapshotRestoreUpdate(id, snapshotId);
       if (!delta.success) {

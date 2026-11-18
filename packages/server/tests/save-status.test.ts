@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as Y from 'yjs';
+import WebSocket from 'ws';
+import { HocuspocusProvider } from '@hocuspocus/provider';
 import { initDatabase } from '../src/db/database.js';
 import { DiagramRepository } from '../src/db/diagram-repository.js';
 import { DocumentWriter } from '../src/collaboration/document-writer.js';
@@ -159,5 +161,76 @@ describe('保存状态信号与手动保存', () => {
     expect(scheduler.getStatus().nextRunAt).toBeNull();
 
     db.close();
+  });
+
+  it('SaveStatusTracker.clear 清理内存 lastSavedAt 缓存', () => {
+    const db = initDatabase(':memory:');
+    const repo = new DiagramRepository(db);
+    const tracker = new SaveStatusTracker(repo);
+    const diagram = repo.createDiagram({ title: '待清理图' });
+
+    tracker.markSaved(diagram.id, '2026-11-18T10:00:00.000Z');
+    repo.deleteDiagram(diagram.id);
+    expect(tracker.getLastSavedAt(diagram.id)).toBe('2026-11-18T10:00:00.000Z');
+
+    tracker.clear(diagram.id);
+    expect(tracker.getLastSavedAt(diagram.id)).toBeNull();
+
+    db.close();
+  });
+
+  it('DELETE /api/diagrams/:id 立即驱逐在线协同连接并清理保存状态', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    await server.app.listen({ port: 0, host: '127.0.0.1' });
+    const addr = server.app.server.address() as { port: number };
+
+    const createRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/diagrams',
+      payload: { title: '待驱逐协同图' },
+    });
+    const diagramId = createRes.json().id as string;
+
+    const clientDoc = new Y.Doc();
+    const provider = new HocuspocusProvider({
+      url: `ws://127.0.0.1:${addr.port}/collaboration`,
+      name: diagramId,
+      document: clientDoc,
+      WebSocketPolyfill: WebSocket as any,
+    });
+
+    await new Promise<void>((resolve) => {
+      if (provider.isSynced) resolve();
+      else provider.on('synced', () => resolve());
+    });
+
+    // 触发一次手动保存，确保内存 SaveStatusTracker 缓存了 lastSavedAt
+    await server.app.inject({ method: 'POST', url: `/api/diagrams/${diagramId}/save` });
+    expect(server.hocuspocus.getConnectionsCount()).toBe(1);
+
+    const closedPromise = new Promise<void>((resolve) => {
+      provider.on('close', () => {
+        provider.destroy();
+        resolve();
+      });
+    });
+
+    const delRes = await server.app.inject({
+      method: 'DELETE',
+      url: `/api/diagrams/${diagramId}`,
+    });
+    expect(delRes.statusCode).toBe(204);
+
+    await closedPromise;
+    expect(server.hocuspocus.getConnectionsCount()).toBe(0);
+    expect(server.saveStatus.getLastSavedAt(diagramId)).toBeNull();
+
+    const statusRes = await server.app.inject({
+      method: 'GET',
+      url: `/api/diagrams/${diagramId}/save-status`,
+    });
+    expect(statusRes.statusCode).toBe(404);
+
+    await server.app.close();
   });
 });

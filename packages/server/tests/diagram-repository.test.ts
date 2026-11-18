@@ -58,4 +58,27 @@ describe('DiagramRepository', () => {
     expect(copyDoc.getMap('meta').get('title')).toBe('原流程图 (副本)');
     expect(copyDoc.getMap('nodes').has('node-1')).toBe(true);
   });
+
+  it('listDiagrams 转义 LIKE 通配符 %、_、\\ 并支持分页', () => {
+    repo.createDiagram({ title: '增长率 100% 方案' });
+    repo.createDiagram({ title: '增长率 1000 方案' });
+    repo.createDiagram({ title: 'order_v1_flow' });
+    repo.createDiagram({ title: 'orderXv1Xflow' });
+    repo.createDiagram({ title: 'path\\to\\diagram' });
+
+    const pctMatches = repo.listDiagrams('100%');
+    expect(pctMatches.map((d) => d.title)).toEqual(['增长率 100% 方案']);
+
+    const underscoreMatches = repo.listDiagrams('order_v1');
+    expect(underscoreMatches.map((d) => d.title)).toEqual(['order_v1_flow']);
+
+    const slashMatches = repo.listDiagrams('path\\to');
+    expect(slashMatches.map((d) => d.title)).toEqual(['path\\to\\diagram']);
+
+    const page1 = (repo as any).listDiagrams(undefined, { limit: 2, offset: 0 });
+    const page2 = (repo as any).listDiagrams(undefined, { limit: 2, offset: 2 });
+    expect(page1).toHaveLength(2);
+    expect(page2).toHaveLength(2);
+    expect(page1[0].id).not.toBe(page2[0].id);
+  });
 });

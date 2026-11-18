@@ -212,4 +212,56 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
 
     await server.app.close();
   }, 20000);
+
+  it('校验快照创建/恢复入参并支持快照列表分页', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '快照校验图' });
+
+    const badCreate1 = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diag.id}/snapshots`,
+      payload: { triggerType: 'invalid_trigger' },
+    });
+    expect(badCreate1.statusCode).toBe(400);
+
+    const badCreate2 = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diag.id}/snapshots`,
+      payload: { label: 'a'.repeat(101) },
+    });
+    expect(badCreate2.statusCode).toBe(400);
+
+    const s1 = (await server.app.inject({ method: 'POST', url: `/api/diagrams/${diag.id}/snapshots`, payload: { label: 'S1' } })).json();
+    await server.app.inject({ method: 'POST', url: `/api/diagrams/${diag.id}/snapshots`, payload: { label: 'S2' } });
+    await server.app.inject({ method: 'POST', url: `/api/diagrams/${diag.id}/snapshots`, payload: { label: 'S3' } });
+
+    const pagedList = await server.app.inject({
+      method: 'GET',
+      url: `/api/diagrams/${diag.id}/snapshots?limit=2&offset=1`,
+    });
+    expect(pagedList.statusCode).toBe(200);
+    expect(pagedList.json()).toHaveLength(2);
+
+    const badQuery = await server.app.inject({
+      method: 'GET',
+      url: `/api/diagrams/${diag.id}/snapshots?limit=0`,
+    });
+    expect(badQuery.statusCode).toBe(400);
+
+    const badRestore1 = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diag.id}/snapshots/${s1.id}/restore`,
+      payload: { mode: 'overwrite' },
+    });
+    expect(badRestore1.statusCode).toBe(400);
+
+    const badRestore2 = await server.app.inject({
+      method: 'POST',
+      url: `/api/diagrams/${diag.id}/snapshots/${s1.id}/restore`,
+      payload: { applyLocal: 'yes' },
+    });
+    expect(badRestore2.statusCode).toBe(400);
+
+    await server.app.close();
+  });
 });
