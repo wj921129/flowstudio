@@ -4,6 +4,7 @@
  */
 
 import type { NodeTypes } from '@xyflow/react';
+import type { FlowNodeType } from '@flowstudio/shared';
 import { StartEndNode } from './start-end-node';
 import { ProcessNode } from './process-node';
 import { DecisionNode } from './decision-node';
@@ -48,7 +49,7 @@ export const nodeTypes: NodeTypes = {
   'arch-k8s-pod': ArchK8sPodNode,
   'arch-docker': ArchDockerNode,
   'rich-card': RichCardNode,
-};
+} satisfies Record<FlowNodeType, unknown>;
 
 export {
   StartEndNode,

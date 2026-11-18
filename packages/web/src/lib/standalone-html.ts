@@ -1,10 +1,10 @@
-import type { FlowEdge, FlowNode } from '@flowstudio/shared';
+import type { FlowEdge, FlowNode, FlowNodeType } from '@flowstudio/shared';
 import { getNodeRegistryEntry } from '@flowstudio/shared';
 
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-const SHAPE_COLORS: Record<string, { fill: string; stroke: string }> = {
+const SHAPE_COLORS = {
   'start-end': { fill: '#dcfce7', stroke: '#16a34a' },
   process: { fill: '#dbeafe', stroke: '#2563eb' },
   decision: { fill: '#fef9c3', stroke: '#ca8a04' },
@@ -26,7 +26,7 @@ const SHAPE_COLORS: Record<string, { fill: string; stroke: string }> = {
   'arch-cache': { fill: '#fffbeb', stroke: '#f59e0b' },
   'arch-k8s-pod': { fill: '#eff6ff', stroke: '#3b82f6' },
   'arch-docker': { fill: '#f0f9ff', stroke: '#0284c7' },
-};
+} as const satisfies Record<FlowNodeType, { fill: string; stroke: string }>;
 
 const ARCH_GLYPH: Record<string, string> = {
   'arch-microservice': '⚙',
