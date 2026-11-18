@@ -76,7 +76,7 @@ export const FlowCanvas: React.FC = () => {
   const setShiftPressed = useFlowStore((s) => s.setShiftPressed);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const setSpacePanning = useFlowStore((s) => s.setSpacePanning);
-  const setDiagram = useFlowStore((s) => s.setDiagram);
+  const applyIncrementalUpdate = useFlowStore((s) => s.applyIncrementalUpdate);
   const spotlightActive = useFlowStore((s) => s.spotlightActive);
   const spotlightTargetId = useFlowStore((s) => s.spotlightTargetId);
   const spotlightBranchFilter = useFlowStore((s) => s.spotlightBranchFilter);
@@ -429,9 +429,16 @@ export const FlowCanvas: React.FC = () => {
           newNode,
           safetyGap: 60,
         });
-        setDiagram(nextNodes, nextEdges);
-        setSelectedNodes([newNode.id]);
-        setSelectedEdge(null);
+        const prevNodeById = new Map(currentNodes.map((n) => [n.id, n]));
+        const prevEdgeById = new Map(currentEdges.map((edge) => [edge.id, edge]));
+        const changedNodes = nextNodes.filter((n) => prevNodeById.get(n.id) !== n);
+        const addedEdges = nextEdges.filter((edge) => !prevEdgeById.has(edge.id));
+        applyIncrementalUpdate({
+          putNodes: changedNodes,
+          putEdges: addedEdges,
+          removeEdgeIds: [hitResult.edge.id],
+          selectNodeIds: [newNode.id],
+        });
         setHoveredEdgeForInsert(null);
         return;
       }
@@ -499,7 +506,7 @@ export const FlowCanvas: React.FC = () => {
       addNode,
       addNodes,
       appendSubgraph,
-      setDiagram,
+      applyIncrementalUpdate,
       setSelectedNodes,
       setSelectedEdge,
     ]
@@ -635,15 +642,24 @@ export const FlowCanvas: React.FC = () => {
               newNode: targetNode,
               safetyGap: 60,
             });
-            store.setDiagram(nextNodes, nextEdges);
+            const prevNodeById = new Map(store.nodes.map((n) => [n.id, n]));
+            const prevEdgeById = new Map(store.edges.map((e) => [e.id, e]));
+            store.applyIncrementalUpdate({
+              putNodes: nextNodes.filter((n) => prevNodeById.get(n.id) !== n),
+              putEdges: nextEdges.filter((e) => !prevEdgeById.has(e.id)),
+              removeEdgeIds: [hitResult.edge.id],
+            });
             return;
           }
         }
       }
 
+      const prevNodeById = new Map(store.nodes.map((n) => [n.id, n]));
       const { updated, nextNodes } = handleNodeDragNesting(node.id, store.nodes);
       if (updated) {
-        store.setDiagram(nextNodes, store.edges);
+        store.applyIncrementalUpdate({
+          putNodes: nextNodes.filter((n) => prevNodeById.get(n.id) !== n),
+        });
       }
     },
     []
@@ -883,9 +899,11 @@ export const FlowCanvas: React.FC = () => {
           if (curSel.length === 1) {
             const healRes = healOnDelete(curSel[0], curNodes, curEdges);
             if (healRes.canHeal) {
-              useFlowStore.getState().setDiagram(healRes.nextNodes, healRes.nextEdges);
-              setSelectedNodes([]);
-              setSelectedEdge(null);
+              useFlowStore.getState().applyIncrementalUpdate({
+                removeNodeIds: [curSel[0]],
+                putEdges: healRes.healedEdge ? [healRes.healedEdge] : [],
+                clearSelection: true,
+              });
               return;
             }
           }

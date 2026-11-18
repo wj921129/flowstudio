@@ -53,6 +53,15 @@ export interface DiagramSnapshot {
   edges: FlowEdge[];
 }
 
+export interface IncrementalGraphDelta {
+  putNodes?: FlowNode[];
+  removeNodeIds?: string[];
+  putEdges?: FlowEdge[];
+  removeEdgeIds?: string[];
+  selectNodeIds?: string[];
+  clearSelection?: boolean;
+}
+
 /**
  * FlowStore 状态定义
  */
@@ -177,6 +186,8 @@ export interface FlowStoreActions {
   distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => void;
   /** 批量追加子图（节点与连线）至画布 */
   appendSubgraph: (newNodes: FlowNode[], newEdges: FlowEdge[]) => void;
+  /** 局部增量更新图元（仅提交变更节点与连线至协同文档） */
+  applyIncrementalUpdate: (delta: IncrementalGraphDelta) => void;
   /** 全量替换图表数据 */
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
   /** 设置当前图表标题 */
@@ -229,11 +240,38 @@ let toastTimer: any = null;
  */
 const centeredResizes = new Map<string, { x: number; y: number }>();
 
-function commitGraph(nodes: FlowNode[], edges: FlowEdge[]) {
+function commitBridgeDelta(fn: (bridge: YjsDiagramBridge) => void) {
   if (activeBridge) {
-    activeBridge.setDiagram(nodes, edges);
+    activeBridge.transact(() => {
+      fn(activeBridge!);
+    });
     activeUndoManager?.stopCapturing();
   }
+}
+
+function sortNodesByDepth(nodes: FlowNode[]): FlowNode[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const depthCache = new Map<string, number>();
+
+  const getDepth = (node: FlowNode): number => {
+    const cached = depthCache.get(node.id);
+    if (cached !== undefined) return cached;
+
+    let depth = 0;
+    const visited = new Set<string>([node.id]);
+    let curr: FlowNode | undefined = node;
+    while (curr?.parentId && !visited.has(curr.parentId)) {
+      visited.add(curr.parentId);
+      const parent = byId.get(curr.parentId);
+      if (!parent) break;
+      depth++;
+      curr = parent;
+    }
+    depthCache.set(node.id, depth);
+    return depth;
+  };
+
+  return [...nodes].sort((a, b) => getDepth(a) - getDepth(b));
 }
 
 function cloneSnapshot(nodes: FlowNode[], edges: FlowEdge[]): DiagramSnapshot {
@@ -372,7 +410,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       safeChanges.length > 0 &&
       safeChanges.every(
         (c) =>
-          c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true
+          c.type === 'select' ||
+          (c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true)
+      ) &&
+      safeChanges.some(
+        (c) => c.type === 'position' && (c as unknown as { dragging?: boolean }).dragging === true
       );
 
     const hasDragStart = safeChanges.some(
@@ -481,10 +523,61 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
      * 纯测量变更若写入 Y.Doc，会触发桥回灌把 React Flow 的 handleBounds 清零，
      * 连线拖拽与边渲染随之失效，因此这里与选中态一样不提交
      */
-    if (!isDraggingOnly && !isSelectionOnly && !isMeasureOnly) {
-      commitGraph(nextNodes, nextEdges);
-    } else if (hasDragEnd) {
-      commitGraph(nextNodes, nextEdges);
+    if ((!isDraggingOnly && !isSelectionOnly && !isMeasureOnly) || hasDragEnd) {
+      const nextNodeMap = new Map(nextNodes.map((n) => [n.id, n]));
+      const removedIds: string[] = [];
+      const addedOrReplaced: FlowNode[] = [];
+      const patches: Array<{ id: string; patch: Partial<FlowNode> }> = [];
+
+      for (const change of safeChanges) {
+        if (change.type === 'remove') {
+          removedIds.push(change.id);
+        } else if (change.type === 'add') {
+          const n = nextNodeMap.get(change.item.id);
+          if (n) addedOrReplaced.push(n);
+        } else if (change.type === 'replace') {
+          const n = nextNodeMap.get(change.id);
+          if (n) addedOrReplaced.push(n);
+        } else if (change.type === 'position') {
+          const dragging = (change as unknown as { dragging?: boolean }).dragging;
+          if (dragging !== true) {
+            const n = nextNodeMap.get(change.id);
+            if (n) patches.push({ id: n.id, patch: { position: n.position } });
+          }
+        } else if (change.type === 'dimensions') {
+          const raw = change as unknown as {
+            dimensions?: unknown;
+            setAttributes?: unknown;
+            resizing?: unknown;
+          };
+          const isPureMeasure =
+            raw.dimensions !== undefined &&
+            raw.setAttributes === undefined &&
+            raw.resizing === undefined;
+          if (!isPureMeasure) {
+            const n = nextNodeMap.get(change.id);
+            if (n) {
+              patches.push({
+                id: n.id,
+                patch: {
+                  width: n.width,
+                  height: n.height,
+                  style: n.style,
+                  ...(centeredResizes.has(n.id) ? { position: n.position } : {}),
+                },
+              });
+            }
+          }
+        }
+      }
+
+      if (removedIds.length > 0 || addedOrReplaced.length > 0 || patches.length > 0) {
+        commitBridgeDelta((bridge) => {
+          if (removedIds.length > 0) bridge.removeNodes(removedIds);
+          if (addedOrReplaced.length > 0) bridge.putNodes(addedOrReplaced);
+          if (patches.length > 0) bridge.patchNodes(patches);
+        });
+      }
     }
   },
 
@@ -510,7 +603,26 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     });
 
     if (!isSelectionOnly) {
-      commitGraph(nodes, nextEdges);
+      const nextEdgeMap = new Map(nextEdges.map((e) => [e.id, e]));
+      const removedIds: string[] = [];
+      const addedOrReplaced: FlowEdge[] = [];
+      for (const change of changes) {
+        if (change.type === 'remove') {
+          removedIds.push(change.id);
+        } else if (change.type === 'add') {
+          const e = nextEdgeMap.get(change.item.id);
+          if (e) addedOrReplaced.push(e);
+        } else if (change.type === 'replace') {
+          const e = nextEdgeMap.get(change.id);
+          if (e) addedOrReplaced.push(e);
+        }
+      }
+      if (removedIds.length > 0 || addedOrReplaced.length > 0) {
+        commitBridgeDelta((bridge) => {
+          if (removedIds.length > 0) bridge.removeEdges(removedIds);
+          if (addedOrReplaced.length > 0) bridge.putEdges(addedOrReplaced);
+        });
+      }
     }
   },
 
@@ -546,7 +658,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nodes, nextEdges);
+    const addedEdge = nextEdges.find((e) => e.id === newEdge.id) ?? newEdge;
+    commitBridgeDelta((bridge) => {
+      bridge.putEdges([addedEdge]);
+    });
   },
 
   reconnectEdge: (oldEdge: FlowEdge, newConnection: Connection) => {
@@ -575,7 +690,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nodes, nextEdges);
+    const updatedEdge = nextEdges.find((e) => e.id === oldEdge.id);
+    if (updatedEdge) {
+      commitBridgeDelta((bridge) => {
+        bridge.putEdges([updatedEdge]);
+      });
+    }
   },
 
   addNode: (type: FlowNodeType, position: { x: number; y: number }, options?: CreateNodeOptions): FlowNode => {
@@ -702,7 +822,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
           selectedNodeIds: [laneId],
           ...historyUpdate,
         });
-        commitGraph([...nextNodes, newLane], edges);
+        const updatedPool = nextNodes.find((n) => n.id === pool.id);
+        commitBridgeDelta((bridge) => {
+          if (updatedPool) {
+            bridge.patchNode(pool.id, {
+              width: updatedPool.width,
+              height: updatedPool.height,
+              style: updatedPool.style,
+              data: updatedPool.data,
+            });
+          }
+          bridge.putNodes([newLane]);
+        });
         return newLane;
       } else {
         const poolId = generateUniqueId('pool');
@@ -745,7 +876,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    commitBridgeDelta((bridge) => {
+      bridge.putNodes([newNode]);
+    });
     return newNode;
   },
 
@@ -768,7 +901,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    commitBridgeDelta((bridge) => {
+      bridge.putNodes(newNodes);
+    });
   },
 
   appendSubgraph: (newNodes: FlowNode[], newEdges: FlowEdge[]) => {
@@ -824,7 +959,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, nextEdges);
+    commitBridgeDelta((bridge) => {
+      if (safeNodes.length > 0) bridge.putNodes(safeNodes);
+      if (safeEdges.length > 0) bridge.putEdges(safeEdges);
+    });
   },
 
   deleteSelected: () => {
@@ -918,7 +1056,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, nextEdges);
+    commitBridgeDelta((bridge) => {
+      if (nodeIdsToDelete.size > 0) bridge.removeNodes(Array.from(nodeIdsToDelete));
+      if (edgeIdsToDelete.size > 0) bridge.removeEdges(Array.from(edgeIdsToDelete));
+    });
   },
 
   updateNodeData: (id: string, data: Partial<FlowNodeData>) => {
@@ -933,18 +1074,20 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
+    let updatedData: FlowNodeData | null = null;
     const nextNodes = nodes.map((n) => {
       if (n.id === id) {
+        updatedData = {
+          ...n.data,
+          ...data,
+          style: {
+            ...n.data.style,
+            ...data.style,
+          },
+        };
         return {
           ...n,
-          data: {
-            ...n.data,
-            ...data,
-            style: {
-              ...n.data.style,
-              ...data.style,
-            },
-          },
+          data: updatedData,
         };
       }
       return n;
@@ -955,7 +1098,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    if (updatedData) {
+      commitBridgeDelta((bridge) => {
+        bridge.patchNode(id, { data: updatedData! });
+      });
+    }
   },
 
   updateNodeDimensions: (id: string, width: number, height: number) => {
@@ -965,9 +1112,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
+    let updatedNode: FlowNode | null = null;
     const nextNodes = nodes.map((n) => {
       if (n.id === id) {
-        return {
+        updatedNode = {
           ...n,
           width,
           height,
@@ -977,6 +1125,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             height,
           },
         };
+        return updatedNode;
       }
       return n;
     });
@@ -986,7 +1135,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    if (updatedNode) {
+      const target = updatedNode as FlowNode;
+      commitBridgeDelta((bridge) => {
+        bridge.patchNode(id, { width: target.width, height: target.height, style: target.style });
+      });
+    }
   },
 
   startCenteredResize: (id: string) => {
@@ -1003,8 +1157,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   finishCenteredResize: (id: string) => {
     if (!centeredResizes.delete(id)) return;
 
-    const { nodes, edges } = get();
-    commitGraph(nodes, edges);
+    const node = get().nodes.find((n) => n.id === id);
+    if (!node) return;
+    commitBridgeDelta((bridge) => {
+      bridge.patchNode(id, {
+        position: node.position,
+        width: node.width,
+        height: node.height,
+        style: node.style,
+      });
+    });
   },
 
   batchUpdateNodeData: (updates: Array<{ id: string; data: Partial<FlowNodeData> }>) => {
@@ -1013,6 +1175,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const updateMap = new Map(updates.map((u) => [u.id, u.data]));
+    const patches: Array<{ id: string; patch: Partial<FlowNode> }> = [];
 
     const nextNodes = nodes.map((n) => {
       if (updateMap.has(n.id)) {
@@ -1021,16 +1184,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         if (isNodeLocked(n, 'content') && patch.lockMode === undefined) {
           return n;
         }
+        const nextData: FlowNodeData = {
+          ...n.data,
+          ...patch,
+          style: {
+            ...n.data.style,
+            ...patch.style,
+          },
+        };
+        patches.push({ id: n.id, patch: { data: nextData } });
         return {
           ...n,
-          data: {
-            ...n.data,
-            ...patch,
-            style: {
-              ...n.data.style,
-              ...patch.style,
-            },
-          },
+          data: nextData,
         };
       }
       return n;
@@ -1041,7 +1206,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    if (patches.length > 0) {
+      commitBridgeDelta((bridge) => {
+        bridge.patchNodes(patches);
+      });
+    }
   },
 
   updateEdgeData: (id: string, data: Partial<FlowEdgeData>) => {
@@ -1051,12 +1220,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
+    let updatedEdge: FlowEdge | null = null;
     const nextEdges = edges.map((e) => {
       if (e.id === id) {
         const nextAnimated =
           data.style?.animated !== undefined ? data.style.animated : e.animated;
         const nextLabel = 'label' in data ? (data.label || undefined) : e.label;
-        return {
+        updatedEdge = {
           ...e,
           label: nextLabel,
           animated: nextAnimated,
@@ -1069,6 +1239,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
             },
           },
         };
+        return updatedEdge;
       }
       return e;
     });
@@ -1078,7 +1249,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nodes, nextEdges);
+    if (updatedEdge) {
+      const target = updatedEdge as FlowEdge;
+      commitBridgeDelta((bridge) => {
+        bridge.patchEdge(id, {
+          label: target.label,
+          animated: target.animated,
+          data: target.data,
+        });
+      });
+    }
   },
 
   setSelectedNodes: (ids: string[]) => {
@@ -1168,7 +1348,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       editingEdgeLabelId: get().editingEdgeLabelId === id ? null : get().editingEdgeLabelId,
       ...historyUpdate,
     });
-    commitGraph(nodes, nextEdges);
+    const updatedEdge = nextEdges.find((e) => e.id === id);
+    if (updatedEdge) {
+      commitBridgeDelta((bridge) => {
+        bridge.putEdges([updatedEdge]);
+      });
+    }
   },
 
   setViewportZoom: (zoom: number) => {
@@ -1341,7 +1526,21 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    const childPatches = nextNodes
+      .filter((n) => targetIdSet.has(n.id))
+      .map((n) => ({
+        id: n.id,
+        patch: {
+          parentId: n.parentId,
+          extent: n.extent,
+          position: n.position,
+          data: n.data,
+        },
+      }));
+    commitBridgeDelta((bridge) => {
+      bridge.putNodes([groupNode]);
+      if (childPatches.length > 0) bridge.patchNodes(childPatches);
+    });
     return groupId;
   },
 
@@ -1418,7 +1617,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
-    commitGraph(nextNodes, edges);
+    const ungroupedSet = new Set(unGroupedChildIds);
+    const updatedChildren = nextNodes.filter((n) => ungroupedSet.has(n.id));
+    commitBridgeDelta((bridge) => {
+      bridge.removeNodes(filteredGroupIds);
+      if (updatedChildren.length > 0) bridge.putNodes(updatedChildren);
+    });
   },
 
   alignSelectedNodes: (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
@@ -1497,7 +1701,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     });
 
     set({ nodes: nextNodes, ...historyUpdate });
-    commitGraph(nextNodes, edges);
+    const patches = nextNodes
+      .filter((n) => targetIdSet.has(n.id) && !isNodeLocked(n, 'position'))
+      .map((n) => ({ id: n.id, patch: { position: n.position } }));
+    if (patches.length > 0) {
+      commitBridgeDelta((bridge) => {
+        bridge.patchNodes(patches);
+      });
+    }
   },
 
   distributeSelectedNodes: (axis: 'horizontal' | 'vertical') => {
@@ -1533,7 +1744,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       set({ nodes: nextNodes, ...historyUpdate });
-      commitGraph(nextNodes, edges);
+      const patches = nextNodes
+        .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
+        .map((n) => ({ id: n.id, patch: { position: n.position } }));
+      if (patches.length > 0) {
+        commitBridgeDelta((bridge) => {
+          bridge.patchNodes(patches);
+        });
+      }
     } else {
       const sorted = [...targetNodes].sort((a, b) => a.position.y - b.position.y);
       const first = sorted[0];
@@ -1558,8 +1776,112 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       });
 
       set({ nodes: nextNodes, ...historyUpdate });
-      commitGraph(nextNodes, edges);
+      const patches = nextNodes
+        .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
+        .map((n) => ({ id: n.id, patch: { position: n.position } }));
+      if (patches.length > 0) {
+        commitBridgeDelta((bridge) => {
+          bridge.patchNodes(patches);
+        });
+      }
     }
+  },
+
+  applyIncrementalUpdate: (delta: IncrementalGraphDelta) => {
+    const {
+      nodes,
+      edges,
+      historyPast,
+      selectedNodeIds,
+      selectedEdgeId,
+      editingEdgeLabelId,
+      selectedEdgeLabelId,
+    } = get();
+
+    const removedNodeSet = new Set(delta.removeNodeIds ?? []);
+    const putNodes = delta.putNodes ?? [];
+    const putNodeMap = new Map(putNodes.map((n) => [n.id, n]));
+
+    let nextNodes = nodes
+      .filter((n) => !removedNodeSet.has(n.id))
+      .map((n) => putNodeMap.get(n.id) ?? n);
+
+    const existingNodeIdSet = new Set(nextNodes.map((n) => n.id));
+    for (const n of putNodes) {
+      if (!existingNodeIdSet.has(n.id)) {
+        nextNodes.push(n);
+        existingNodeIdSet.add(n.id);
+      }
+    }
+
+    if (putNodes.some((n) => n.parentId)) {
+      nextNodes = sortNodesByDepth(nextNodes);
+    }
+
+    const activeNodeIds = new Set(nextNodes.map((n) => n.id));
+    const removedEdgeSet = new Set(delta.removeEdgeIds ?? []);
+    const putEdges = delta.putEdges ?? [];
+    const putEdgeMap = new Map(putEdges.map((e) => [e.id, e]));
+
+    const nextEdges = edges
+      .filter(
+        (e) =>
+          !removedEdgeSet.has(e.id) &&
+          activeNodeIds.has(e.source) &&
+          activeNodeIds.has(e.target)
+      )
+      .map((e) => putEdgeMap.get(e.id) ?? e);
+
+    const existingEdgeIdSet = new Set(nextEdges.map((e) => e.id));
+    for (const e of putEdges) {
+      if (!existingEdgeIdSet.has(e.id) && activeNodeIds.has(e.source) && activeNodeIds.has(e.target)) {
+        nextEdges.push(e);
+        existingEdgeIdSet.add(e.id);
+      }
+    }
+
+    let nextSelectedNodeIds = selectedNodeIds;
+    let nextSelectedEdgeId = selectedEdgeId;
+    if (delta.clearSelection) {
+      nextSelectedNodeIds = [];
+      nextSelectedEdgeId = null;
+      nextNodes = nextNodes.map((n) => (n.selected ? { ...n, selected: false } : n));
+    } else if (delta.selectNodeIds) {
+      const selSet = new Set(delta.selectNodeIds);
+      nextSelectedNodeIds = delta.selectNodeIds;
+      nextSelectedEdgeId = null;
+      nextNodes = nextNodes.map((n) => ({ ...n, selected: selSet.has(n.id) }));
+    } else {
+      nextSelectedNodeIds = selectedNodeIds.filter((id) => activeNodeIds.has(id));
+      nextSelectedEdgeId =
+        selectedEdgeId && existingEdgeIdSet.has(selectedEdgeId) ? selectedEdgeId : null;
+    }
+
+    const finalEdges =
+      delta.clearSelection || delta.selectNodeIds
+        ? nextEdges.map((e) => (e.selected ? { ...e, selected: false } : e))
+        : nextEdges;
+
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    set({
+      nodes: nextNodes,
+      edges: finalEdges,
+      selectedNodeIds: nextSelectedNodeIds,
+      selectedEdgeId: nextSelectedEdgeId,
+      editingEdgeLabelId:
+        editingEdgeLabelId && existingEdgeIdSet.has(editingEdgeLabelId) ? editingEdgeLabelId : null,
+      selectedEdgeLabelId:
+        selectedEdgeLabelId && existingEdgeIdSet.has(selectedEdgeLabelId) ? selectedEdgeLabelId : null,
+      ...historyUpdate,
+    });
+
+    commitBridgeDelta((bridge) => {
+      if (delta.removeNodeIds?.length) bridge.removeNodes(delta.removeNodeIds);
+      if (putNodes.length > 0) bridge.putNodes(putNodes);
+      if (delta.removeEdgeIds?.length) bridge.removeEdges(delta.removeEdgeIds);
+      if (putEdges.length > 0) bridge.putEdges(putEdges);
+    });
   },
 
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => {
@@ -1586,7 +1908,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       isInteracting: false,
     });
 
-    commitGraph(cleanNodes, cleanEdges);
+    commitBridgeDelta((bridge) => {
+      bridge.setDiagram(cleanNodes, cleanEdges);
+    });
   },
 
   setDiagramTitle: (title: string) => {
@@ -1953,7 +2277,21 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       ...historyUpdate,
     });
-    commitGraph(nextNodes, nextEdges);
+
+    const prevNodeMap = new Map(nodes.map((n) => [n.id, n]));
+    const prevEdgeMap = new Map(edges.map((e) => [e.id, e]));
+    const nextEdgeIds = new Set(nextEdges.map((e) => e.id));
+    const putNodes = nextNodes.filter((n) => prevNodeMap.get(n.id) !== n);
+    const putEdges = nextEdges.filter((e) => prevEdgeMap.get(e.id) !== e);
+    const removeEdgeIds = edges.filter((e) => !nextEdgeIds.has(e.id)).map((e) => e.id);
+
+    if (putNodes.length > 0 || putEdges.length > 0 || removeEdgeIds.length > 0) {
+      commitBridgeDelta((bridge) => {
+        if (removeEdgeIds.length > 0) bridge.removeEdges(removeEdgeIds);
+        if (putNodes.length > 0) bridge.putNodes(putNodes);
+        if (putEdges.length > 0) bridge.putEdges(putEdges);
+      });
+    }
 
     return { addedNodes: addedNodesCount, addedEdges: addedEdgesCount };
   },
@@ -1977,35 +2315,114 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
+    let prevBridgeNodes: FlowNode[] | null = bridgeState.nodes.length > 0 ? bridgeState.nodes : null;
+    let prevBridgeEdges: FlowEdge[] | null = bridgeState.edges.length > 0 ? bridgeState.edges : null;
+    const prevRawNodeById = new Map<string, FlowNode>(bridgeState.nodes.map((n) => [n.id, n]));
+    const prevRawEdgeById = new Map<string, FlowEdge>(bridgeState.edges.map((e) => [e.id, e]));
+
     if (unsubscribeBridge) unsubscribeBridge();
     unsubscribeBridge = bridge.subscribe((state) => {
-      const { nodes: prevNodes, selectedNodeIds, selectedEdgeId } = get();
-      const prevMeasured = new Map(
-        prevNodes.map((n) => [
-          n.id,
-          (n as { measured?: { width?: number; height?: number } }).measured,
-        ])
-      );
-      const mergedNodes = state.nodes.map((n) => {
-        const measured = prevMeasured.get(n.id);
-        return {
-          ...n,
-          /*
-           * measured 由 React Flow 拥有：一旦回灌成缺失它的纯数据节点，
-           * adoptUserNodes 会清空 internals.handleBounds，连线与边渲染随即失效
-           */
-          ...(measured ? { measured } : {}),
-          selected: selectedNodeIds.includes(n.id),
-        };
-      });
-      const mergedEdges = state.edges.map((e) => ({
-        ...e,
-        selected: e.id === selectedEdgeId,
-      }));
+      if (state.metaOnly) {
+        if (state.title !== get().diagramTitle) {
+          set({ diagramTitle: state.title });
+        }
+        return;
+      }
+
+      const {
+        nodes: prevNodes,
+        edges: prevEdges,
+        selectedNodeIds,
+        selectedEdgeId,
+        editingEdgeLabelId,
+        selectedEdgeLabelId,
+        diagramTitle,
+      } = get();
+
+      const validNodeIds = new Set(state.nodes.map((n) => n.id));
+      const validEdgeIds = new Set(state.edges.map((e) => e.id));
+
+      for (const id of Array.from(centeredResizes.keys())) {
+        if (!validNodeIds.has(id)) {
+          centeredResizes.delete(id);
+        }
+      }
+
+      const nextSelectedNodeIds = selectedNodeIds.every((id) => validNodeIds.has(id))
+        ? selectedNodeIds
+        : selectedNodeIds.filter((id) => validNodeIds.has(id));
+      const selectedNodeSet = new Set(nextSelectedNodeIds);
+      const nextSelectedEdgeId =
+        selectedEdgeId && validEdgeIds.has(selectedEdgeId) ? selectedEdgeId : null;
+      const nextEditingEdgeLabelId =
+        editingEdgeLabelId && validEdgeIds.has(editingEdgeLabelId) ? editingEdgeLabelId : null;
+      const nextSelectedEdgeLabelId =
+        selectedEdgeLabelId && validEdgeIds.has(selectedEdgeLabelId) ? selectedEdgeLabelId : null;
+
+      const prevNodeById = new Map(prevNodes.map((n) => [n.id, n]));
+      const prevEdgeById = new Map(prevEdges.map((e) => [e.id, e]));
+
+      let mergedNodes: FlowNode[];
+      if (state.nodes === prevBridgeNodes && nextSelectedNodeIds === selectedNodeIds) {
+        mergedNodes = prevNodes;
+      } else {
+        mergedNodes = state.nodes.map((n) => {
+          const prevNode = prevNodeById.get(n.id);
+          const isSelected = selectedNodeSet.has(n.id);
+          if (
+            prevNode &&
+            prevRawNodeById.get(n.id) === n &&
+            Boolean(prevNode.selected) === isSelected
+          ) {
+            return prevNode;
+          }
+          const measured = (prevNode as { measured?: { width?: number; height?: number } } | undefined)?.measured;
+          const isDragging = prevNode?.dragging === true;
+          return {
+            ...n,
+            ...(measured ? { measured } : {}),
+            ...(isDragging ? { position: prevNode.position, dragging: true } : {}),
+            selected: isSelected,
+          };
+        });
+      }
+
+      let mergedEdges: FlowEdge[];
+      if (state.edges === prevBridgeEdges && nextSelectedEdgeId === selectedEdgeId) {
+        mergedEdges = prevEdges;
+      } else {
+        mergedEdges = state.edges.map((e) => {
+          const prevEdge = prevEdgeById.get(e.id);
+          const isSelected = e.id === nextSelectedEdgeId;
+          if (
+            prevEdge &&
+            prevRawEdgeById.get(e.id) === e &&
+            Boolean(prevEdge.selected) === isSelected
+          ) {
+            return prevEdge;
+          }
+          return {
+            ...e,
+            selected: isSelected,
+          };
+        });
+      }
+
+      prevBridgeNodes = state.nodes;
+      prevBridgeEdges = state.edges;
+      prevRawNodeById.clear();
+      for (const n of state.nodes) prevRawNodeById.set(n.id, n);
+      prevRawEdgeById.clear();
+      for (const e of state.edges) prevRawEdgeById.set(e.id, e);
+
       set({
         nodes: mergedNodes,
         edges: mergedEdges,
-        diagramTitle: state.title,
+        selectedNodeIds: nextSelectedNodeIds,
+        selectedEdgeId: nextSelectedEdgeId,
+        editingEdgeLabelId: nextEditingEdgeLabelId,
+        selectedEdgeLabelId: nextSelectedEdgeLabelId,
+        ...(state.title !== diagramTitle ? { diagramTitle: state.title } : {}),
       });
     });
 

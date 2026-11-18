@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as Y from 'yjs';
 import { YjsDiagramBridge } from '../src/features/collaboration/yjs-doc-bridge';
+import { getThemePreset } from '../src/features/sidebar/styles/theme-presets';
 import type { FlowNode, FlowEdge } from '@flowstudio/shared';
 
 describe('YjsDiagramBridge', () => {
@@ -124,5 +125,105 @@ describe('YjsDiagramBridge', () => {
     const state = bridgeB.toReactFlowState();
     expect(state.nodes.map((n) => n.id)).toEqual(['a']);
     expect(state.edges).toEqual([]);
+  });
+
+  it('sorts multi-level nested containers (pool -> lane -> group -> node) strictly parent-before-child', () => {
+    const leaf: FlowNode = { id: 'leaf', type: 'process', parentId: 'group-1', position: { x: 10, y: 10 }, data: { label: 'Leaf' } };
+    const group: FlowNode = { id: 'group-1', type: 'group', parentId: 'lane-1', position: { x: 20, y: 20 }, data: { label: 'Group' } };
+    const lane: FlowNode = { id: 'lane-1', type: 'lane', parentId: 'pool-1', position: { x: 0, y: 40 }, data: { label: 'Lane' } };
+    const pool: FlowNode = { id: 'pool-1', type: 'pool', position: { x: 50, y: 50 }, data: { label: 'Pool' } };
+
+    // 故意以最深子孙在前、根池在后的逆序写入
+    bridgeA.setDiagram([leaf, group, lane, pool], []);
+
+    const ids = bridgeB.toReactFlowState().nodes.map((n) => n.id);
+    expect(ids).toEqual(['pool-1', 'lane-1', 'group-1', 'leaf']);
+  });
+
+  it('skips redundant full toReactFlowState rebuild & subscriber broadcast on local graph mutations, while still syncing title and theme', () => {
+    const n1: FlowNode = { id: 'n1', type: 'process', position: { x: 0, y: 0 }, data: { label: 'N1', type: 'process' } };
+    bridgeA.putNodes([n1]);
+
+    const spyToReactFlow = vi.spyOn(bridgeA, 'toReactFlowState');
+    const localStates: Array<{ title: string; themeId?: string }> = [];
+    bridgeA.subscribe((state) => {
+      localStates.push({ title: state.title, themeId: state.themeId });
+    });
+
+    bridgeA.patchNode('n1', { position: { x: 80, y: 90 } });
+    expect(spyToReactFlow).not.toHaveBeenCalled();
+    expect(localStates.length).toBe(0);
+
+    // 标题变更与主题变更仍需通知订阅者
+    bridgeA.setTitle('新流程标题');
+    expect(localStates.length).toBe(1);
+    expect(localStates[0].title).toBe('新流程标题');
+
+    bridgeA.applyTheme(getThemePreset('business-blue'));
+    expect(localStates.length).toBe(2);
+    expect(localStates[1].themeId).toBe('business-blue');
+    expect(spyToReactFlow).not.toHaveBeenCalled();
+  });
+
+  it('reuses untouched node and edge object references on incremental remote updates', () => {
+    const n1: FlowNode = { id: 'n1', type: 'process', position: { x: 0, y: 0 }, data: { label: 'N1', type: 'process' } };
+    const n2: FlowNode = { id: 'n2', type: 'process', position: { x: 200, y: 0 }, data: { label: 'N2', type: 'process' } };
+    const e1: FlowEdge = { id: 'e1', source: 'n1', target: 'n2', data: { label: '连接' } };
+
+    bridgeA.setDiagram([n1, n2], [e1]);
+
+    let latestStateB = bridgeB.getState();
+    const unsub = bridgeB.subscribe((state) => {
+      latestStateB = state;
+    });
+
+    const prevN1 = latestStateB.nodes.find((n) => n.id === 'n1')!;
+    const prevN2 = latestStateB.nodes.find((n) => n.id === 'n2')!;
+    const prevEdges = latestStateB.edges;
+
+    // 远端仅更新 n1 位置，n2 与 edges 引用应保持完全不变
+    bridgeA.patchNode('n1', { position: { x: 50, y: 60 } });
+
+    const nextN1 = latestStateB.nodes.find((n) => n.id === 'n1')!;
+    const nextN2 = latestStateB.nodes.find((n) => n.id === 'n2')!;
+    expect(nextN1).not.toBe(prevN1);
+    expect(nextN1.position).toEqual({ x: 50, y: 60 });
+    expect(nextN2).toBe(prevN2);
+    expect(latestStateB.edges).toBe(prevEdges);
+
+    // 远端仅更新 e1 标签，nodes 数组引用应保持完全不变
+    const prevNodes = latestStateB.nodes;
+    const prevE1 = latestStateB.edges[0];
+    bridgeA.patchEdge('e1', { label: '通过' });
+
+    expect(latestStateB.nodes).toBe(prevNodes);
+    expect(latestStateB.edges[0]).not.toBe(prevE1);
+    expect(latestStateB.edges[0].label).toBe('通过');
+
+    unsub();
+  });
+
+  it('allows patchNode and patchEdge to clear optional fields with explicit undefined', () => {
+    const n1: FlowNode = {
+      id: 'n1',
+      type: 'process',
+      parentId: 'lane-1',
+      extent: 'parent',
+      position: { x: 10, y: 10 },
+      data: { label: 'N1' },
+    };
+    const lane: FlowNode = { id: 'lane-1', type: 'lane', position: { x: 0, y: 0 }, data: { label: 'L1' } };
+    const e1: FlowEdge = { id: 'e1', source: 'lane-1', target: 'n1', label: '旧标签' };
+
+    bridgeA.setDiagram([lane, n1], [e1]);
+    bridgeA.patchNode('n1', { parentId: undefined, extent: undefined });
+    bridgeA.patchEdge('e1', { label: undefined });
+
+    const stateB = bridgeB.toReactFlowState();
+    const syncedN1 = stateB.nodes.find((n) => n.id === 'n1')!;
+    const syncedE1 = stateB.edges.find((e) => e.id === 'e1')!;
+    expect(syncedN1.parentId).toBeUndefined();
+    expect(syncedN1.extent).toBeUndefined();
+    expect(syncedE1.label).toBeUndefined();
   });
 });
