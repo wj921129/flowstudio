@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { FLOW_NODE_TYPES } from '../types.js';
 
-export const flowNodeTypeSchema = z.enum(FLOW_NODE_TYPES as unknown as [string, ...string[]]);
+export const flowNodeTypeSchema = z.enum([...FLOW_NODE_TYPES]);
 
 export const xyPositionSchema = z.object({
   x: z.number(),

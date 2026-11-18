@@ -4,7 +4,39 @@
  */
 
 /**
- * 流程图 9 种基础节点类型与 2 种泳道容器类型枚举
+ * 所有支持的节点类型列表（单一真实来源 SSOT 常量数组）
+ */
+export const FLOW_NODE_TYPES = [
+  'start-end',
+  'process',
+  'decision',
+  'io',
+  'document',
+  'subprocess',
+  'database',
+  'comment',
+  'group',
+  'pool',
+  'lane',
+  'uml-lifeline',
+  'uml-activation',
+  'uml-message',
+  'arch-microservice',
+  'arch-gateway',
+  'arch-db-shard',
+  'arch-cache',
+  'arch-k8s-pod',
+  'arch-docker',
+  'rich-card',
+] as const;
+
+/**
+ * 流程图节点类型联合类型（基于 FLOW_NODE_TYPES 派生）
+ */
+export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
+
+/**
+ * 流程图节点类型枚举映射表
  */
 export const FlowNodeTypeEnum = {
   StartEnd: 'start-end',
@@ -28,60 +60,7 @@ export const FlowNodeTypeEnum = {
   ArchK8sPod: 'arch-k8s-pod',
   ArchDocker: 'arch-docker',
   RichCard: 'rich-card',
-} as const;
-
-/**
- * 流程图节点类型联合类型（含流程节点、泳道容器、UML 图元、架构图元与富文本卡片）
- */
-export type FlowNodeType =
-  | 'start-end'
-  | 'process'
-  | 'decision'
-  | 'io'
-  | 'document'
-  | 'subprocess'
-  | 'database'
-  | 'comment'
-  | 'group'
-  | 'pool'
-  | 'lane'
-  | 'uml-lifeline'
-  | 'uml-activation'
-  | 'uml-message'
-  | 'arch-microservice'
-  | 'arch-gateway'
-  | 'arch-db-shard'
-  | 'arch-cache'
-  | 'arch-k8s-pod'
-  | 'arch-docker'
-  | 'rich-card';
-
-/**
- * 所有支持的节点类型列表（只读元组）
- */
-export const FLOW_NODE_TYPES: readonly FlowNodeType[] = [
-  'start-end',
-  'process',
-  'decision',
-  'io',
-  'document',
-  'subprocess',
-  'database',
-  'comment',
-  'group',
-  'pool',
-  'lane',
-  'uml-lifeline',
-  'uml-activation',
-  'uml-message',
-  'arch-microservice',
-  'arch-gateway',
-  'arch-db-shard',
-  'arch-cache',
-  'arch-k8s-pod',
-  'arch-docker',
-  'rich-card',
-] as const;
+} as const satisfies Record<string, FlowNodeType>;
 
 /**
  * 节点资产库侧边栏分组分类

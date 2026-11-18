@@ -804,6 +804,9 @@ export class AiCollaborator {
       for (const op of input.ops) {
         switch (op.op) {
           case 'add_node': {
+            if (op.type === 'pool' || op.type === 'lane') {
+              throw new Error(`add_node 不支持创建容器节点 "${op.type}"，请使用 scaffold_diagram 的 lanes 或 add_lane 创建`);
+            }
             const nodeId = op.id || this.newEntityId('node');
             if (nodesMap.has(nodeId)) {
               if (isAtomic) throw new Error(`节点 "${nodeId}" 已存在，操作终止`);
@@ -1047,6 +1050,9 @@ export class AiCollaborator {
           }
 
           case 'insert_between': {
+            if (op.node.type === 'pool' || op.node.type === 'lane') {
+              throw new Error(`insert_between 不支持插入容器节点 "${op.node.type}"`);
+            }
             const sourceMap = nodesMap.get(op.source);
             const targetMap = nodesMap.get(op.target);
             if (!sourceMap || !targetMap) {

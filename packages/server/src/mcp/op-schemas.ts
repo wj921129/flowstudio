@@ -4,38 +4,13 @@
  */
 
 import { z } from 'zod';
-import { diagramSpecSchema } from '@flowstudio/shared';
+import { FLOW_NODE_TYPES, diagramSpecSchema } from '@flowstudio/shared';
 
 const positionSchema = z.object({ x: z.number(), y: z.number() });
 
 const styleSchema = z.record(z.string(), z.unknown());
 
-/**
- * 允许 AI 创建的流程 / 形状 / UML / 架构节点类型。
- * pool / lane 是容器结构，只能通过 scaffold_diagram 的 lanes 或 add_lane 创建，
- * 严禁经 add_node / insert_between / scaffold nodes 伪造，否则会破坏「pool → lane → 节点」层级。
- */
-const flowNodeTypeSchema = z.enum([
-  'start-end',
-  'process',
-  'decision',
-  'io',
-  'document',
-  'subprocess',
-  'database',
-  'comment',
-  'group',
-  'uml-lifeline',
-  'uml-activation',
-  'uml-message',
-  'arch-microservice',
-  'arch-gateway',
-  'arch-db-shard',
-  'arch-cache',
-  'arch-k8s-pod',
-  'arch-docker',
-  'rich-card',
-]);
+const flowNodeTypeSchema = z.enum([...FLOW_NODE_TYPES]);
 
 const borderHandleSchema = z.string().regex(/^(top|right|bottom|left)(@\d+(\.\d+)?)?$/);
 

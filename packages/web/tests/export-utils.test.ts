@@ -119,6 +119,132 @@ describe('export-utils: Pure Vector SVG & High-Fidelity 9-Node Geometry', () => 
     expect(svg).toContain('stroke="#3B82F6"');
   });
 
+  it('工单14：保真导出 UML、云原生架构与富文本卡片，具有专属几何轮廓与元数据标记而非白板矩形', () => {
+    const nodes: FlowNode[] = [
+      {
+        id: 'node-lifeline',
+        type: 'uml-lifeline',
+        position: { x: 50, y: 50 },
+        width: 120,
+        height: 300,
+        data: { label: '用户代理', type: 'uml-lifeline' },
+      },
+      {
+        id: 'node-act',
+        type: 'uml-activation',
+        position: { x: 102, y: 120 },
+        width: 16,
+        height: 80,
+        data: { label: '激活段', type: 'uml-activation' },
+      },
+      {
+        id: 'node-msg',
+        type: 'uml-message',
+        position: { x: 120, y: 150 },
+        width: 180,
+        height: 24,
+        data: { label: 'fetchUserData()', type: 'uml-message', messageKind: 'sync' },
+      },
+      {
+        id: 'node-card',
+        type: 'rich-card',
+        position: { x: 350, y: 50 },
+        width: 220,
+        height: 120,
+        data: { label: '发布说明', type: 'rich-card', cardStatus: 'wip', markdown: '第一行说明\n第二行指标' },
+      },
+      {
+        id: 'node-ms',
+        type: 'arch-microservice',
+        position: { x: 50, y: 400 },
+        width: 160,
+        height: 80,
+        data: { label: '订单中心', type: 'arch-microservice', protocol: 'gRPC:8080', envTag: 'prod' },
+      },
+      {
+        id: 'node-gw',
+        type: 'arch-gateway',
+        position: { x: 250, y: 400 },
+        width: 160,
+        height: 80,
+        data: { label: 'API 网关', type: 'arch-gateway', protocol: 'HTTPS:443' },
+      },
+      {
+        id: 'node-shard',
+        type: 'arch-db-shard',
+        position: { x: 450, y: 400 },
+        width: 160,
+        height: 80,
+        data: { label: '分库分表集群', type: 'arch-db-shard', health: 'ok' },
+      },
+      {
+        id: 'node-cache',
+        type: 'arch-cache',
+        position: { x: 650, y: 400 },
+        width: 160,
+        height: 80,
+        data: { label: 'Redis 哨兵', type: 'arch-cache' },
+      },
+      {
+        id: 'node-pod',
+        type: 'arch-k8s-pod',
+        position: { x: 50, y: 520 },
+        width: 160,
+        height: 80,
+        data: { label: 'Workload Pod', type: 'arch-k8s-pod' },
+      },
+      {
+        id: 'node-docker',
+        type: 'arch-docker',
+        position: { x: 250, y: 520 },
+        width: 160,
+        height: 80,
+        data: { label: 'Worker Container', type: 'arch-docker' },
+      },
+    ];
+
+    const svg = generateDiagramSvg(nodes, [], '保真架构导出');
+
+    // 1. UML 生命线特征：垂直虚线 (stroke-dasharray) 与角色头部方框
+    expect(svg).toContain('<!-- UmlLifeline: node-lifeline -->');
+    expect(svg).toMatch(/stroke-dasharray="[45][ ,][45]"/);
+
+    // 2. UML 激活条：专属标记与圆角激活条
+    expect(svg).toContain('<!-- UmlActivation: node-act -->');
+
+    // 3. UML 消息线：专属标记与消息箭头
+    expect(svg).toContain('<!-- UmlMessage: node-msg -->');
+    expect(svg).toContain('fetchUserData()');
+
+    // 4. 富文本卡片：状态标签 (WIP/DONE/DRAFT) 与 markdown 多行文本
+    expect(svg).toContain('<!-- RichCard: node-card -->');
+    expect(svg).toContain('WIP');
+    expect(svg).toContain('发布说明');
+    expect(svg).toContain('第一行说明');
+
+    // 5. 架构图元：专属 glyph/图形标识与环境/协议元数据
+    expect(svg).toContain('<!-- ArchMicroservice: node-ms -->');
+    expect(svg).toContain('⚙');
+    expect(svg).toContain('gRPC:8080');
+    expect(svg).toContain('PROD');
+
+    expect(svg).toContain('<!-- ArchGateway: node-gw -->');
+    expect(svg).toContain('⇄');
+    expect(svg).toContain('HTTPS:443');
+
+    expect(svg).toContain('<!-- ArchDbShard: node-shard -->');
+    expect(svg).toContain('🗄');
+
+    expect(svg).toContain('<!-- ArchCache: node-cache -->');
+    expect(svg).toContain('⚡');
+
+    expect(svg).toContain('<!-- ArchK8sPod: node-pod -->');
+    expect(svg).toContain('☸');
+
+    expect(svg).toContain('<!-- ArchDocker: node-docker -->');
+    expect(svg).toContain('🐳');
+  });
+
   describe('validateAndParseDiagramJson', () => {
     it('正确解析合法的 JSON 流程图工程文件', () => {
       const validJson = JSON.stringify({
