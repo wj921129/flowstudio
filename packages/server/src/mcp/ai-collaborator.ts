@@ -607,14 +607,15 @@ export class AiCollaborator {
   /**
    * 6. apply_ops（原子增量操作 + 实体级 Diff 账本 + 锚定锁保护）
    */
-  async applyOps(input: { diagramId: string; agentName?: string; ops: McpOp[] }) {
+  async applyOps(input: { diagramId: string; agentName?: string; atomic?: boolean; ops: McpOp[] }) {
     if (!this.repo.getDiagramById(input.diagramId)) {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    this.writer.createSnapshot(input.diagramId, 'AI 增量修改前快照', 'ai_batch');
-
+    const preSnapshotState = this.writer.getSnapshotState(input.diagramId);
     const batchId = this.newBatchId();
+    const isAtomic = Boolean(input.atomic);
+
     const outcome = await this.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
@@ -622,6 +623,19 @@ export class AiCollaborator {
       const diffs: AiBatchEntityDiff[] = [];
       const warnings: string[] = [];
       let appliedCount = 0;
+
+      const getCandidateNodeIds = () => {
+        const ids: string[] = [];
+        nodesMap.forEach((_map, id) => { ids.push(id); });
+        return ids.slice(0, 10);
+      };
+      const getCandidateLaneIds = () => {
+        const ids: string[] = [];
+        nodesMap.forEach((map, id) => {
+          if (map.get('type') === 'lane') ids.push(id);
+        });
+        return ids.slice(0, 10);
+      };
 
       const recordAdd = (entityType: 'node' | 'edge', entityId: string, map: Y.Map<unknown>) => {
         diffs.push({
@@ -792,8 +806,15 @@ export class AiCollaborator {
           case 'add_node': {
             const nodeId = op.id || this.newEntityId('node');
             if (nodesMap.has(nodeId)) {
+              if (isAtomic) throw new Error(`节点 "${nodeId}" 已存在，操作终止`);
               warnings.push(`节点 ${nodeId} 已存在，跳过新增`);
               break;
+            }
+            if (op.laneId && !nodesMap.has(op.laneId)) {
+              if (isAtomic) {
+                throw new Error(`目标泳道 "${op.laneId}" 不存在。候选可用泳道: [${getCandidateLaneIds().join(', ')}]`);
+              }
+              warnings.push(`目标泳道 ${op.laneId} 不存在，将作为独立浮动节点创建`);
             }
             createNodeMap({
               id: nodeId,
@@ -812,10 +833,14 @@ export class AiCollaborator {
           case 'update_node': {
             const nodeMap = nodesMap.get(op.id);
             if (!nodeMap) {
+              if (isAtomic) throw new Error(`未找到节点 "${op.id}"。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
               warnings.push(`未找到节点 ${op.id}，跳过更新`);
               break;
             }
-            if (isBlocked(nodeMap, 'modify')) break;
+            if (isBlocked(nodeMap, 'modify')) {
+              if (isAtomic) throw new Error(`节点 "${op.id}"(${nodeLabel(nodeMap)}) 已被人类完全锁定，禁止修改`);
+              break;
+            }
 
             const before = snapshotMap(nodeMap);
             const data = (nodeMap.get('data') as Record<string, unknown>) || {};
@@ -836,11 +861,16 @@ export class AiCollaborator {
           case 'delete_node': {
             const nodeMap = nodesMap.get(op.id);
             if (!nodeMap) {
+              if (isAtomic) throw new Error(`未找到节点 "${op.id}"。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
               warnings.push(`未找到节点 ${op.id}，跳过删除`);
               break;
             }
-            if (isBlocked(nodeMap, 'delete')) break;
+            if (isBlocked(nodeMap, 'delete')) {
+              if (isAtomic) throw new Error(`节点 "${op.id}"(${nodeLabel(nodeMap)}) 已被人类完全锁定，禁止删除`);
+              break;
+            }
             if (hasFullLockedDescendant(op.id)) {
+              if (isAtomic) throw new Error(`容器 "${op.id}"(${nodeLabel(nodeMap)}) 内含人工锁定节点，禁止整体删除`);
               warnings.push(
                 `容器 ${op.id}(${nodeLabel(nodeMap)}) 内含人工锁定节点，禁止整体删除`,
               );
@@ -866,6 +896,12 @@ export class AiCollaborator {
 
           case 'connect': {
             if (!nodesMap.has(op.source) || !nodesMap.has(op.target)) {
+              const missingEndpoint = !nodesMap.has(op.source)
+                ? `连线源节点 "${op.source}"`
+                : `连线目标节点 "${op.target}"`;
+              if (isAtomic) {
+                throw new Error(`${missingEndpoint} 不存在。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
+              }
               warnings.push(`连线端点不存在 (${op.source} -> ${op.target})，跳过`);
               break;
             }
@@ -878,6 +914,7 @@ export class AiCollaborator {
             if (op.edgeId) {
               const edgeMap = edgesMap.get(op.edgeId);
               if (!edgeMap) {
+                if (isAtomic) throw new Error(`未找到连线 "${op.edgeId}"`);
                 warnings.push(`未找到连线 ${op.edgeId}，跳过`);
                 break;
               }
@@ -891,6 +928,9 @@ export class AiCollaborator {
                   matched.push(edgeId);
                 }
               });
+              if (matched.length === 0 && isAtomic) {
+                throw new Error(`未找到从 "${op.source}" 到 "${op.target}" 的连线`);
+              }
               for (const edgeId of matched) {
                 const edgeMap = edgesMap.get(edgeId);
                 if (edgeMap) recordDelete('edge', edgeId, snapshotMap(edgeMap));
@@ -904,10 +944,20 @@ export class AiCollaborator {
           case 'move_to_lane': {
             const nodeMap = nodesMap.get(op.nodeId);
             if (!nodeMap) {
+              if (isAtomic) throw new Error(`未找到节点 "${op.nodeId}"。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
               warnings.push(`未找到节点 ${op.nodeId}，跳过移入泳道`);
               break;
             }
-            if (isBlocked(nodeMap, 'move')) break;
+            if (isBlocked(nodeMap, 'move')) {
+              if (isAtomic) throw new Error(`节点 "${op.nodeId}"(${nodeLabel(nodeMap)}) 坐标已锁定，禁止移动`);
+              break;
+            }
+            const laneMap = nodesMap.get(op.laneId);
+            if (!laneMap || laneMap.get('type') !== 'lane') {
+              if (isAtomic) throw new Error(`目标泳道 "${op.laneId}" 不存在。候选可用泳道: [${getCandidateLaneIds().join(', ')}]`);
+              warnings.push(`目标泳道 ${op.laneId} 不存在，跳过移入泳道`);
+              break;
+            }
             const before = snapshotMap(nodeMap);
             nodeMap.set('parentId', op.laneId);
             nodeMap.set('extent', 'parent');
@@ -919,10 +969,14 @@ export class AiCollaborator {
           case 'move_node': {
             const nodeMap = nodesMap.get(op.id);
             if (!nodeMap) {
+              if (isAtomic) throw new Error(`未找到节点 "${op.id}"。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
               warnings.push(`未找到节点 ${op.id}，跳过移动`);
               break;
             }
-            if (isBlocked(nodeMap, 'move')) break;
+            if (isBlocked(nodeMap, 'move')) {
+              if (isAtomic) throw new Error(`节点 "${op.id}"(${nodeLabel(nodeMap)}) 坐标已锁定，禁止移动`);
+              break;
+            }
             const before = snapshotMap(nodeMap);
             nodeMap.set('position', { x: op.position.x, y: op.position.y });
             recordUpdate('node', op.id, before, snapshotMap(nodeMap));
@@ -933,6 +987,7 @@ export class AiCollaborator {
           case 'update_edge': {
             const edgeMap = edgesMap.get(op.id);
             if (!edgeMap) {
+              if (isAtomic) throw new Error(`未找到连线 "${op.id}"`);
               warnings.push(`未找到连线 ${op.id}，跳过更新`);
               break;
             }
@@ -957,6 +1012,7 @@ export class AiCollaborator {
           case 'add_lane': {
             const laneId = op.id || this.newEntityId('lane');
             if (nodesMap.has(laneId)) {
+              if (isAtomic) throw new Error(`泳道 "${laneId}" 已存在，操作终止`);
               warnings.push(`泳道 ${laneId} 已存在，跳过新增`);
               break;
             }
@@ -970,6 +1026,7 @@ export class AiCollaborator {
             if (op.poolId) {
               const poolMap = nodesMap.get(op.poolId);
               if (!poolMap) {
+                if (isAtomic) throw new Error(`未找到泳道池 "${op.poolId}"`);
                 warnings.push(`未找到泳道池 ${op.poolId}，泳道将作为独立泳道创建`);
               } else {
                 laneMap.set('parentId', op.poolId);
@@ -993,11 +1050,15 @@ export class AiCollaborator {
             const sourceMap = nodesMap.get(op.source);
             const targetMap = nodesMap.get(op.target);
             if (!sourceMap || !targetMap) {
+              if (isAtomic) {
+                throw new Error(`断线串接端点不存在 (${op.source} -> ${op.target})。候选可用节点: [${getCandidateNodeIds().join(', ')}]`);
+              }
               warnings.push(`断线串接端点不存在 (${op.source} -> ${op.target})，跳过`);
               break;
             }
             const nodeId = op.node.id || this.newEntityId('node');
             if (nodesMap.has(nodeId)) {
+              if (isAtomic) throw new Error(`节点 "${nodeId}" 已存在，插入失败`);
               warnings.push(`节点 ${nodeId} 已存在，跳过插入`);
               break;
             }
@@ -1344,6 +1405,21 @@ export class AiCollaborator {
     });
 
     const { diffs, warnings, appliedCount } = outcome.result;
+
+    if (appliedCount === 0 || diffs.length === 0) {
+      return {
+        success: true,
+        batchId: null,
+        appliedCount: 0,
+        totalOps: input.ops.length,
+        warnings: ['未产生任何有效变更，已跳过快照与批次记录', ...warnings],
+        live: outcome.live,
+      };
+    }
+
+    if (preSnapshotState) {
+      this.repo.createSnapshotFromState(input.diagramId, preSnapshotState, 'AI 增量修改前快照', 'ai_batch');
+    }
 
     this.batchManager.recordBatch({
       batchId,
@@ -1830,7 +1906,11 @@ export class AiCollaborator {
     const batches = this.batchManager.getBatches(input.diagramId);
     const target = input.batchId
       ? batches.find((b) => b.batchId === input.batchId)
-      : batches.find((b) => b.status === 'active');
+      : batches.find(
+          (b) =>
+            (b.status === 'active' || b.status === 'partially_reverted')
+            && b.diffs.some((d) => !d.reverted),
+        );
     if (!target) {
       throw new Error(input.batchId ? `AI 批次 ${input.batchId} 不存在` : '当前图表没有可撤回的活跃 AI 批次');
     }

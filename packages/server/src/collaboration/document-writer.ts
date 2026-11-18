@@ -97,6 +97,14 @@ export class DocumentWriter {
   }
 
   /**
+   * 获取当前图表最新 Y.Doc 二进制状态（优先 Live 内存，回底 SQLite）
+   */
+  getSnapshotState(diagramId: string): Uint8Array | null {
+    const live = this.getLiveDocument(diagramId);
+    return live ? Y.encodeStateAsUpdate(live) : this.repo.getYDocState(diagramId);
+  }
+
+  /**
    * 在线优先创建历史快照
    *
    * Live Doc 存在时直接编码内存最新状态，避免被 SQLite 的落库防抖窗口截断；
@@ -109,8 +117,7 @@ export class DocumentWriter {
   ): SnapshotSummary | null {
     if (!this.repo.getDiagramById(diagramId)) return null;
 
-    const live = this.getLiveDocument(diagramId);
-    const state = live ? Y.encodeStateAsUpdate(live) : this.repo.getYDocState(diagramId);
+    const state = this.getSnapshotState(diagramId);
     if (!state) return null;
 
     return this.repo.createSnapshotFromState(diagramId, state, label, triggerType);

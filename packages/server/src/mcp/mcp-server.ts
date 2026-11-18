@@ -84,24 +84,12 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     description:
       '以原子事务批量执行增量编辑操作（add_node / update_node / delete_node / connect / disconnect / ' +
       'move_node / move_to_lane / update_edge / add_lane / insert_between），自动触发前置快照、' +
-      '记录实体级 Diff 账本并遵守节点锚定锁；connect 支持 kind（next/branch/loop/jump/annotate/tree），' +
+      '记录实体级 Diff 账本并遵守节点锚定锁；支持 atomic 模式在失败时整体回滚并给出自纠建议；' +
+      'connect 支持 kind（next/branch/loop/jump/annotate/tree），' +
       'jump 表示主干跨段旁路（跳过中段直达下游主干，不改变节点角色），' +
       'loop 支持分支通过结果回归源主干节点（双重判断回归，横向侧路），' +
       'add_node 支持 role/attachTo 语义字段',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        diagramId: { type: 'string', description: '图表 ID' },
-        agentName: { type: 'string', description: '可选，AI 协作者名称（写入批次账本）' },
-        ops: {
-          type: 'array',
-          description:
-            '增量原子操作列表；insert_between 支持在 source -> target 之间断线串接新节点并顺推下游',
-          items: { type: 'object' },
-        },
-      },
-      required: ['diagramId', 'ops'],
-    },
+    inputSchema: z.toJSONSchema(applyOpsInputSchema) as any,
   },
   {
     name: 'auto_layout',
@@ -251,6 +239,7 @@ export const mcpPlugin: FastifyPluginAsync<McpPluginOptions> = async (fastify, o
             toolResult = await collaborator.applyOps({
               diagramId: validated.diagramId,
               agentName: validated.agentName,
+              atomic: validated.atomic,
               ops: validated.ops as unknown as McpOp[],
             });
             break;

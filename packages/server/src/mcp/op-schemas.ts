@@ -119,9 +119,10 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
 ]);
 
 export const applyOpsInputSchema = z.object({
-  diagramId: z.string().min(1, 'chartId 不能为空'),
+  diagramId: z.string().min(1, 'diagramId 不能为空'),
   agentName: z.string().optional(),
-  ops: z.array(mcpOpSchema).min(1, 'ops 不能为空'),
+  atomic: z.boolean().optional().default(false),
+  ops: z.array(mcpOpSchema).min(1, 'ops 不能为空').max(100, '单次 ops 数量不能超过 100'),
 });
 
 export const scaffoldDiagramInputSchema = z.object({
