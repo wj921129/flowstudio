@@ -6,7 +6,6 @@ import {
 } from './obstacle-avoidance-router';
 import {
   buildWaypointPath,
-  deriveDefaultOrthogonalWaypoints,
   type EdgeAnchorDirection,
   type PathSegment,
 } from './waypoint-path-utils';
@@ -38,9 +37,12 @@ export interface ComputedEdgeRoute {
 
 export class EdgeRoutingManager {
   private static instance: EdgeRoutingManager;
-  private obstacles: ObstacleBox[] = [];
-  private obstaclesVersion = 0;
+  private readonly cellSize = 250;
+  private obstaclesMap = new Map<string, ObstacleBox>();
+  private gridBuckets = new Map<string, Set<string>>();
+  private nodeCellKeys = new Map<string, string[]>();
   private nodePositions = new Map<string, string>();
+  private obstaclesVersion = 0;
   private edgeHorizontalSegments = new Map<string, HorizontalSegment[]>();
   private routeCache = new Map<string, ComputedEdgeRoute>();
   private rafScheduled = false;
@@ -53,31 +55,29 @@ export class EdgeRoutingManager {
     return EdgeRoutingManager.instance;
   }
 
+  private getCellKeysForBox(x: number, y: number, width: number, height: number): string[] {
+    const minCx = Math.floor(x / this.cellSize);
+    const maxCx = Math.floor((x + Math.max(0, width)) / this.cellSize);
+    const minCy = Math.floor(y / this.cellSize);
+    const maxCy = Math.floor((y + Math.max(0, height)) / this.cellSize);
+    const keys: string[] = [];
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        keys.push(`${cx}:${cy}`);
+      }
+    }
+    return keys;
+  }
+
   updateNodes(nodes: FlowNode[]): void {
     const nodeMap = new Map<string, FlowNode>();
     for (const n of nodes) nodeMap.set(n.id, n);
 
+    const currentNodeIds = new Set<string>();
     let changed = false;
-    if (this.nodePositions.size !== nodes.length) {
-      changed = true;
-    } else {
-      for (const n of nodes) {
-        const key = `${n.position.x},${n.position.y},${n.width},${n.height},${n.parentId ?? ''}`;
-        if (this.nodePositions.get(n.id) !== key) {
-          changed = true;
-          break;
-        }
-      }
-    }
-
-    if (!changed) return;
-
-    this.nodePositions.clear();
-    const nextObstacles: ObstacleBox[] = [];
 
     for (const node of nodes) {
-      const posKey = `${node.position.x},${node.position.y},${node.width},${node.height},${node.parentId ?? ''}`;
-      this.nodePositions.set(node.id, posKey);
+      currentNodeIds.add(node.id);
 
       let wx = node.position.x;
       let wy = node.position.y;
@@ -92,25 +92,110 @@ export class EdgeRoutingManager {
 
       const w = node.width ?? 120;
       const h = node.height ?? 60;
-      const isLane = node.type === 'lane' || node.type === 'pool' || node.type === 'group';
+      const posKey = `${wx},${wy},${w},${h},${node.parentId ?? ''}`;
 
-      nextObstacles.push({
+      if (this.nodePositions.get(node.id) === posKey) continue;
+
+      changed = true;
+      const oldKeys = this.nodeCellKeys.get(node.id);
+      if (oldKeys) {
+        for (const k of oldKeys) {
+          const bucket = this.gridBuckets.get(k);
+          if (bucket) {
+            bucket.delete(node.id);
+            if (bucket.size === 0) this.gridBuckets.delete(k);
+          }
+        }
+      }
+
+      const newKeys = this.getCellKeysForBox(wx, wy, w, h);
+      for (const k of newKeys) {
+        let bucket = this.gridBuckets.get(k);
+        if (!bucket) {
+          bucket = new Set<string>();
+          this.gridBuckets.set(k, bucket);
+        }
+        bucket.add(node.id);
+      }
+
+      this.nodeCellKeys.set(node.id, newKeys);
+      this.nodePositions.set(node.id, posKey);
+      this.obstaclesMap.set(node.id, {
         id: node.id,
         x: wx,
         y: wy,
         width: w,
         height: h,
-        isLane,
+        isLane: node.type === 'lane' || node.type === 'pool' || node.type === 'group',
       });
     }
 
-    this.obstacles = nextObstacles;
+    for (const oldId of Array.from(this.nodePositions.keys())) {
+      if (!currentNodeIds.has(oldId)) {
+        changed = true;
+        const oldKeys = this.nodeCellKeys.get(oldId);
+        if (oldKeys) {
+          for (const k of oldKeys) {
+            const bucket = this.gridBuckets.get(k);
+            if (bucket) {
+              bucket.delete(oldId);
+              if (bucket.size === 0) this.gridBuckets.delete(k);
+            }
+          }
+        }
+        this.nodeCellKeys.delete(oldId);
+        this.obstaclesMap.delete(oldId);
+        this.nodePositions.delete(oldId);
+      }
+    }
+
+    if (!changed) return;
     this.obstaclesVersion++;
     this.routeCache.clear();
   }
 
   getObstacles(): ObstacleBox[] {
-    return this.obstacles;
+    return Array.from(this.obstaclesMap.values());
+  }
+
+  getCandidateObstacles(
+    source: XYPosition,
+    target: XYPosition,
+    margin = 150,
+    extraIncludeIds?: Set<string>
+  ): ObstacleBox[] {
+    const minX = Math.min(source.x, target.x) - margin;
+    const maxX = Math.max(source.x, target.x) + margin;
+    const minY = Math.min(source.y, target.y) - margin;
+    const maxY = Math.max(source.y, target.y) + margin;
+
+    const minCx = Math.floor(minX / this.cellSize);
+    const maxCx = Math.floor(maxX / this.cellSize);
+    const minCy = Math.floor(minY / this.cellSize);
+    const maxCy = Math.floor(maxY / this.cellSize);
+
+    const matchedIds = new Set<string>();
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        const bucket = this.gridBuckets.get(`${cx}:${cy}`);
+        if (bucket) {
+          for (const id of bucket) matchedIds.add(id);
+        }
+      }
+    }
+
+    if (extraIncludeIds) {
+      for (const id of extraIncludeIds) {
+        if (this.obstaclesMap.has(id)) matchedIds.add(id);
+      }
+    }
+
+    const result: ObstacleBox[] = [];
+    for (const id of matchedIds) {
+      const box = this.obstaclesMap.get(id);
+      if (box) result.push(box);
+    }
+    return result;
   }
 
   getOtherHorizontalSegments(excludeEdgeId: string): HorizontalSegment[] {
@@ -153,6 +238,11 @@ export class EdgeRoutingManager {
     const cached = this.routeCache.get(cacheKey);
     if (cached) return cached;
 
+    const extraIds = new Set<string>();
+    if (sourceNodeId) extraIds.add(sourceNodeId);
+    if (targetNodeId) extraIds.add(targetNodeId);
+    const candidateObstacles = this.getCandidateObstacles(source, target, 150, extraIds);
+
     let waypoints: XYPosition[];
     if (manualWaypoints && manualWaypoints.length > 0) {
       waypoints = manualWaypoints;
@@ -162,7 +252,7 @@ export class EdgeRoutingManager {
         target,
         sourcePosition,
         targetPosition,
-        this.obstacles,
+        candidateObstacles,
         { sourceNodeId, targetNodeId, padding: 14 }
       );
     }
@@ -176,7 +266,7 @@ export class EdgeRoutingManager {
 
     let finalLabelPos = defaultLabelPos;
     if (label) {
-      finalLabelPos = findSafeLabelPosition(segments, this.obstacles, labelSize);
+      finalLabelPos = findSafeLabelPosition(segments, candidateObstacles, labelSize);
     }
 
     const result: ComputedEdgeRoute = {
@@ -207,13 +297,19 @@ export class EdgeRoutingManager {
     });
   }
 
-  clear(): void {
-    this.obstacles = [];
-    this.obstaclesVersion = 0;
+  reset(): void {
+    this.obstaclesMap.clear();
+    this.gridBuckets.clear();
+    this.nodeCellKeys.clear();
     this.nodePositions.clear();
     this.edgeHorizontalSegments.clear();
     this.routeCache.clear();
     this.pendingCallbacks.clear();
     this.rafScheduled = false;
+    this.obstaclesVersion = 0;
+  }
+
+  clear(): void {
+    this.reset();
   }
 }
