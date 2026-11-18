@@ -115,8 +115,12 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
     e.stopPropagation();
     const nextOrientation = isHorizontal ? 'vertical' : 'horizontal';
     const store = useFlowStore.getState();
+    const prevById = new Map(store.nodes.map((n) => [n.id, n]));
     const nextNodes = reorderPoolOrientation(id, nextOrientation, store.nodes);
-    store.setDiagram(nextNodes, store.edges);
+    const changedNodes = nextNodes.filter((n) => prevById.get(n.id) !== n);
+    if (changedNodes.length > 0) {
+      store.applyIncrementalUpdate({ putNodes: changedNodes });
+    }
   };
 
   return (

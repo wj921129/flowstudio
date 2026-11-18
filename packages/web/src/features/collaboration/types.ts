@@ -7,4 +7,6 @@ export interface DiagramBridgeState {
   edges: FlowEdge[];
   title: string;
   themeId?: string;
+  isLocal?: boolean;
+  metaOnly?: boolean;
 }

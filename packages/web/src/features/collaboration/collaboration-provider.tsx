@@ -104,11 +104,6 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       }
     });
 
-    apiClient.getDiagram(diagramId).then((meta) => {
-      if (isCancelled || !meta?.title) return;
-      useFlowStore.setState({ diagramTitle: meta.title });
-    }).catch(() => {});
-
     const handleSynced = ({ state }: { state: boolean }) => {
       setIsSynced(state);
       if (state) {
@@ -119,7 +114,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
         } else {
           apiClient.getDiagram(diagramId).then((meta) => {
             if (isCancelled || !meta?.title) return;
-            b.setTitle(meta.title);
+            b.setTitle(meta.title, 'system:init');
             useFlowStore.setState({ diagramTitle: meta.title });
           }).catch(() => {});
         }

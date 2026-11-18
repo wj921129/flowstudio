@@ -48,6 +48,12 @@ export class YjsDiagramBridge {
   private metaMap: Y.Map<unknown>;
   private listeners: Set<(state: DiagramBridgeState) => void> = new Set();
   private unobserveCallbacks: Array<() => void> = [];
+  private nodeCache = new Map<string, FlowNode>();
+  private edgeCache = new Map<string, FlowEdge>();
+  private cachedSortedNodes: FlowNode[] = [];
+  private cachedValidEdges: FlowEdge[] = [];
+  private cachedTitle = '未命名流程图';
+  private cachedThemeId: string = DEFAULT_THEME_ID;
 
   constructor(doc: Y.Doc, options: YjsDiagramBridgeOptions) {
     this.doc = doc;
@@ -56,6 +62,7 @@ export class YjsDiagramBridge {
     this.edgesMap = this.doc.getMap<Y.Map<unknown>>('edges');
     this.metaMap = this.doc.getMap<unknown>('meta');
 
+    this.rebuildCaches();
     this.setupObservers();
   }
 
@@ -77,10 +84,10 @@ export class YjsDiagramBridge {
     return typeof title === 'string' && title.trim() ? title.trim() : undefined;
   }
 
-  setTitle(title: string): void {
+  setTitle(title: string, origin: string = this.localClientId): void {
     this.transact(() => {
       this.metaMap.set('title', title.trim());
-    });
+    }, origin);
   }
 
   getThemeId(): string {
@@ -99,7 +106,12 @@ export class YjsDiagramBridge {
   }
 
   getState(): DiagramBridgeState {
-    return this.toReactFlowState();
+    return {
+      nodes: this.cachedSortedNodes,
+      edges: this.cachedValidEdges,
+      title: this.cachedTitle,
+      themeId: this.cachedThemeId,
+    };
   }
 
   transact(fn: () => void, origin: string = this.localClientId): void {
@@ -152,13 +164,13 @@ export class YjsDiagramBridge {
 
       if (patch.position !== undefined) this.setField(itemMap, 'position', { x: patch.position.x, y: patch.position.y });
       if (patch.type !== undefined) this.setField(itemMap, 'type', patch.type);
-      if (patch.parentId !== undefined) this.setField(itemMap, 'parentId', patch.parentId);
-      if (patch.extent !== undefined) this.setField(itemMap, 'extent', patch.extent);
-      if (patch.width !== undefined) this.setField(itemMap, 'width', patch.width);
-      if (patch.height !== undefined) this.setField(itemMap, 'height', patch.height);
-      if (patch.zIndex !== undefined) this.setField(itemMap, 'zIndex', patch.zIndex);
-      if (patch.style !== undefined) this.setField(itemMap, 'style', patch.style);
-      if (patch.className !== undefined) this.setField(itemMap, 'className', patch.className);
+      if ('parentId' in patch) this.setField(itemMap, 'parentId', patch.parentId);
+      if ('extent' in patch) this.setField(itemMap, 'extent', patch.extent);
+      if ('width' in patch) this.setField(itemMap, 'width', patch.width);
+      if ('height' in patch) this.setField(itemMap, 'height', patch.height);
+      if ('zIndex' in patch) this.setField(itemMap, 'zIndex', patch.zIndex);
+      if ('style' in patch) this.setField(itemMap, 'style', patch.style);
+      if ('className' in patch) this.setField(itemMap, 'className', patch.className);
       if (patch.data !== undefined) {
         const existingData = (itemMap.get('data') as Record<string, unknown>) || {};
         this.setJsonField(itemMap, 'data', { ...existingData, ...patch.data });
@@ -226,12 +238,12 @@ export class YjsDiagramBridge {
 
       if (patch.source !== undefined) this.setField(edgeItem, 'source', patch.source);
       if (patch.target !== undefined) this.setField(edgeItem, 'target', patch.target);
-      if (patch.sourceHandle !== undefined) this.setField(edgeItem, 'sourceHandle', patch.sourceHandle);
-      if (patch.targetHandle !== undefined) this.setField(edgeItem, 'targetHandle', patch.targetHandle);
-      if (patch.type !== undefined) this.setField(edgeItem, 'type', patch.type);
-      if (patch.label !== undefined) this.setField(edgeItem, 'label', patch.label);
-      if (patch.animated !== undefined) this.setField(edgeItem, 'animated', patch.animated);
-      if (patch.style !== undefined) this.setField(edgeItem, 'style', patch.style);
+      if ('sourceHandle' in patch) this.setField(edgeItem, 'sourceHandle', patch.sourceHandle);
+      if ('targetHandle' in patch) this.setField(edgeItem, 'targetHandle', patch.targetHandle);
+      if ('type' in patch) this.setField(edgeItem, 'type', patch.type);
+      if ('label' in patch) this.setField(edgeItem, 'label', patch.label);
+      if ('animated' in patch) this.setField(edgeItem, 'animated', patch.animated);
+      if ('style' in patch) this.setField(edgeItem, 'style', patch.style);
       if (patch.data !== undefined) {
         const existingData = (edgeItem.get('data') as Record<string, unknown>) || {};
         this.setJsonField(edgeItem, 'data', { ...existingData, ...patch.data });
@@ -298,29 +310,199 @@ export class YjsDiagramBridge {
     }
     this.unobserveCallbacks = [];
     this.listeners.clear();
+    this.nodeCache.clear();
+    this.edgeCache.clear();
+    this.cachedSortedNodes = [];
+    this.cachedValidEdges = [];
+  }
+
+  private rebuildCaches(): void {
+    this.nodeCache.clear();
+    this.edgeCache.clear();
+    this.nodesMap.forEach((nodeMap, id) => {
+      const node = this.readNodeFromYMap(nodeMap, id);
+      if (node) this.nodeCache.set(id, node);
+    });
+    this.edgesMap.forEach((edgeMap, id) => {
+      const edge = this.readEdgeFromYMap(edgeMap, id);
+      if (edge) this.edgeCache.set(id, edge);
+    });
+    this.cachedSortedNodes = this.sortNodesTopologically(Array.from(this.nodeCache.values()));
+    this.cachedValidEdges = this.filterValidEdges();
+    this.cachedTitle = this.getTitle();
+    this.cachedThemeId = this.getThemeId();
+  }
+
+  private filterValidEdges(): FlowEdge[] {
+    const valid: FlowEdge[] = [];
+    for (const edge of this.edgeCache.values()) {
+      if (this.nodeCache.has(edge.source) && this.nodeCache.has(edge.target)) {
+        valid.push(edge);
+      }
+    }
+    return valid;
+  }
+
+  private applyIncrementalCacheUpdate(
+    nodeIds: string[],
+    edgeIds: string[]
+  ): { nodesChanged: boolean; edgesChanged: boolean } {
+    let topologyDirty = false;
+    let nodePresenceChanged = false;
+    let nodesChanged = false;
+    const updatedNodeIds = new Set<string>();
+
+    for (const id of nodeIds) {
+      const prev = this.nodeCache.get(id);
+      const itemMap = this.nodesMap.get(id);
+      const next = itemMap ? this.readNodeFromYMap(itemMap, id) : null;
+      if (!next) {
+        if (prev) {
+          this.nodeCache.delete(id);
+          topologyDirty = true;
+          nodePresenceChanged = true;
+          nodesChanged = true;
+        }
+      } else {
+        if (!prev) {
+          topologyDirty = true;
+          nodePresenceChanged = true;
+        } else if (prev.parentId !== next.parentId) {
+          topologyDirty = true;
+        }
+        this.nodeCache.set(id, next);
+        updatedNodeIds.add(id);
+        nodesChanged = true;
+      }
+    }
+
+    if (topologyDirty) {
+      this.cachedSortedNodes = this.sortNodesTopologically(Array.from(this.nodeCache.values()));
+    } else if (nodesChanged) {
+      this.cachedSortedNodes = this.cachedSortedNodes.map((n) =>
+        updatedNodeIds.has(n.id) ? this.nodeCache.get(n.id)! : n
+      );
+    }
+
+    let edgeFilterDirty = nodePresenceChanged;
+    let edgesChanged = false;
+    const updatedEdgeIds = new Set<string>();
+
+    for (const id of edgeIds) {
+      const prev = this.edgeCache.get(id);
+      const edgeMap = this.edgesMap.get(id);
+      const next = edgeMap ? this.readEdgeFromYMap(edgeMap, id) : null;
+      if (!next) {
+        if (prev) {
+          this.edgeCache.delete(id);
+          edgeFilterDirty = true;
+          edgesChanged = true;
+        }
+      } else {
+        if (!prev || prev.source !== next.source || prev.target !== next.target) {
+          edgeFilterDirty = true;
+        }
+        this.edgeCache.set(id, next);
+        updatedEdgeIds.add(id);
+        edgesChanged = true;
+      }
+    }
+
+    if (edgeFilterDirty) {
+      this.cachedValidEdges = this.filterValidEdges();
+      edgesChanged = true;
+    } else if (edgesChanged) {
+      this.cachedValidEdges = this.cachedValidEdges.map((e) =>
+        updatedEdgeIds.has(e.id) ? this.edgeCache.get(e.id)! : e
+      );
+    }
+
+    return { nodesChanged, edgesChanged };
   }
 
   private setupObservers(): void {
-    const notify = () => {
+    const touchedNodeIds = new Set<string>();
+    const touchedEdgeIds = new Set<string>();
+    const touchedMetaKeys = new Set<string>();
+
+    const nodeObserver = (events: Y.YEvent<any>[]) => {
+      for (const event of events) {
+        if (event.path.length === 0) {
+          event.changes.keys.forEach((_change, key) => {
+            touchedNodeIds.add(key);
+          });
+        } else {
+          touchedNodeIds.add(String(event.path[0]));
+        }
+      }
+    };
+
+    const edgeObserver = (events: Y.YEvent<any>[]) => {
+      for (const event of events) {
+        if (event.path.length === 0) {
+          event.changes.keys.forEach((_change, key) => {
+            touchedEdgeIds.add(key);
+          });
+        } else {
+          touchedEdgeIds.add(String(event.path[0]));
+        }
+      }
+    };
+
+    const metaObserver = (event: Y.YMapEvent<unknown>) => {
+      event.changes.keys.forEach((_change, key) => {
+        touchedMetaKeys.add(key);
+      });
+    };
+
+    const afterTransaction = (transaction: Y.Transaction) => {
+      if (touchedNodeIds.size === 0 && touchedEdgeIds.size === 0 && touchedMetaKeys.size === 0) {
+        return;
+      }
+
+      const nodeIds = Array.from(touchedNodeIds);
+      const edgeIds = Array.from(touchedEdgeIds);
+      const metaKeys = Array.from(touchedMetaKeys);
+      touchedNodeIds.clear();
+      touchedEdgeIds.clear();
+      touchedMetaKeys.clear();
+
+      const { nodesChanged, edgesChanged } = this.applyIncrementalCacheUpdate(nodeIds, edgeIds);
+      const metaChanged = metaKeys.length > 0;
+      if (metaChanged) {
+        this.cachedTitle = this.getTitle();
+        this.cachedThemeId = this.getThemeId();
+      }
+
       if (this.listeners.size === 0) return;
-      const state = this.toReactFlowState();
+
+      const isLocal = transaction.origin === this.localClientId;
+      if (isLocal && !metaChanged) return;
+      if (!nodesChanged && !edgesChanged && !metaChanged) return;
+
+      const state: DiagramBridgeState = {
+        nodes: this.cachedSortedNodes,
+        edges: this.cachedValidEdges,
+        title: this.cachedTitle,
+        themeId: this.cachedThemeId,
+        isLocal,
+        metaOnly: !nodesChanged && !edgesChanged && metaChanged,
+      };
       for (const listener of this.listeners) {
         listener(state);
       }
     };
 
-    const nodeObserver = () => notify();
-    const edgeObserver = () => notify();
-    const metaObserver = () => notify();
-
     this.nodesMap.observeDeep(nodeObserver);
     this.edgesMap.observeDeep(edgeObserver);
     this.metaMap.observe(metaObserver);
+    this.doc.on('afterTransaction', afterTransaction);
 
     this.unobserveCallbacks.push(() => {
       this.nodesMap.unobserveDeep(nodeObserver);
       this.edgesMap.unobserveDeep(edgeObserver);
       this.metaMap.unobserve(metaObserver);
+      this.doc.off('afterTransaction', afterTransaction);
     });
   }
 
@@ -467,19 +649,29 @@ export class YjsDiagramBridge {
   }
 
   private sortNodesTopologically(nodes: FlowNode[]): FlowNode[] {
-    const parents: FlowNode[] = [];
-    const children: FlowNode[] = [];
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const depthCache = new Map<string, number>();
 
-    for (const node of nodes) {
-      if (node.parentId) {
-        children.push(node);
-      } else {
-        parents.push(node);
+    const getDepth = (node: FlowNode): number => {
+      const cached = depthCache.get(node.id);
+      if (cached !== undefined) return cached;
+
+      let depth = 0;
+      const visited = new Set<string>([node.id]);
+      let curr: FlowNode | undefined = node;
+      while (curr?.parentId) {
+        if (visited.has(curr.parentId)) break;
+        visited.add(curr.parentId);
+        const parent = byId.get(curr.parentId);
+        if (!parent) break;
+        depth++;
+        curr = parent;
       }
-    }
+      depthCache.set(node.id, depth);
+      return depth;
+    };
 
-    // 父容器在前，子节点在后
-    return [...parents, ...children];
+    return [...nodes].sort((a, b) => getDepth(a) - getDepth(b));
   }
 }
 
