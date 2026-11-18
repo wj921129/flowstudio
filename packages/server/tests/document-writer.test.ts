@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -191,6 +191,103 @@ describe('DocumentWriter 与 CRDT 增量合并落库', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('快照不存在');
 
+    db.close();
+  });
+
+  it('同图并发 mutate 通过按 diagramId 串行队列严格排队，不同图并行且重入不死锁', async () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const diagA = repo.createDiagram({ title: '图A' });
+    const diagB = repo.createDiagram({ title: '图B' });
+
+    const events: string[] = [];
+    const docA = new Y.Doc();
+    const docB = new Y.Doc();
+    let inFlightA = 0;
+    let maxInFlightA = 0;
+
+    const fakeHocuspocus = {
+      documents: new Map<string, Y.Doc>(),
+      async openDirectConnection(diagramId: string) {
+        events.push(`open:${diagramId}`);
+        if (diagramId === diagA.id) {
+          inFlightA++;
+          maxInFlightA = Math.max(maxInFlightA, inFlightA);
+        }
+        await new Promise((r) => setTimeout(r, 30));
+        return {
+          document: diagramId === diagA.id ? docA : docB,
+          async disconnect() {
+            await new Promise((r) => setTimeout(r, 20));
+            if (diagramId === diagA.id) inFlightA--;
+            events.push(`close:${diagramId}`);
+          },
+        };
+      },
+    };
+
+    const writer = new DocumentWriter(repo, fakeHocuspocus as any);
+
+    await Promise.all([
+      writer.mutate(diagA.id, 'ai:1', (d) => addNode(d, 'n1', '1')),
+      writer.mutate(diagA.id, 'ai:2', (d) => addNode(d, 'n2', '2')),
+      writer.mutate(diagB.id, 'ai:b1', (d) => addNode(d, 'nb', 'B')),
+    ]);
+
+    expect(maxInFlightA).toBe(1);
+    const aEvents = events.filter((e) => e.endsWith(`:${diagA.id}`));
+    expect(aEvents).toEqual([
+      `open:${diagA.id}`,
+      `close:${diagA.id}`,
+      `open:${diagA.id}`,
+      `close:${diagA.id}`,
+    ]);
+    expect(docA.getMap('nodes').has('n1')).toBe(true);
+    expect(docA.getMap('nodes').has('n2')).toBe(true);
+    expect(docB.getMap('nodes').has('nb')).toBe(true);
+
+    // 同一图表在 runSerialized 内重入 mutate 不自死锁
+    await writer.runSerialized(diagA.id, async () => {
+      await writer.mutate(diagA.id, 'ai:reentrant', (d) => addNode(d, 'n3', '3'));
+    });
+    expect(docA.getMap('nodes').has('n3')).toBe(true);
+
+    docA.destroy();
+    docB.destroy();
+    db.close();
+  });
+
+  it('离线 mutate 与 restoreSnapshot 在正常与异常路径下均确定性销毁临时 Y.Doc', async () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const writer = new DocumentWriter(repo);
+    const diag = repo.createDiagram({ title: '销毁测试图' });
+    const snap = repo.createSnapshot(diag.id, '初始快照', 'manual')!;
+
+    const origDestroy = Y.Doc.prototype.destroy;
+    const destroySpy = vi.spyOn(Y.Doc.prototype, 'destroy').mockImplementation(function (this: Y.Doc) {
+      return origDestroy.call(this);
+    });
+
+    const beforeCalls = destroySpy.mock.calls.length;
+    await writer.mutate(diag.id, 'ai:ok', (d) => addNode(d, 'n1', '1'));
+    expect(destroySpy.mock.calls.length).toBe(beforeCalls + 1);
+
+    const beforeErrCalls = destroySpy.mock.calls.length;
+    await expect(
+      writer.mutate(diag.id, 'ai:fail', () => {
+        throw new Error('回调失败');
+      }),
+    ).rejects.toThrow('回调失败');
+    expect(destroySpy.mock.calls.length).toBe(beforeErrCalls + 1);
+
+    const beforeRestoreCalls = destroySpy.mock.calls.length;
+    const res = await writer.restoreSnapshot(diag.id, snap.id);
+    expect(res.success).toBe(true);
+    // restoreSnapshot 创建 1 个 snapDoc，内部离线 mutate 创建 1 个临时 doc，共销毁 2 个
+    expect(destroySpy.mock.calls.length).toBe(beforeRestoreCalls + 2);
+
+    destroySpy.mockRestore();
     db.close();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -228,6 +228,7 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const suffix of ['', '-wal', '-shm']) {
       try {
         if (fs.existsSync(tmpDbPath + suffix)) fs.unlinkSync(tmpDbPath + suffix);
@@ -806,6 +807,180 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
     expect(overlaps(floating[0], floating[1])).toBe(false);
     expect(nextNodes.get('n-1')!.get('parentId')).toBe('lane-a');
     expect(nextNodes.get('n-2')!.get('parentId')).toBe('lane-a');
+
+    await server.app.close();
+  }, 20000);
+
+  it('并发复核-auto_layout 异步计算间隙删除节点与泳池/泳道，写回不崩溃且不复活已删图元', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '并发删节点排版图' });
+    seedPool(server.repo, diag.id);
+
+    const origMutate = server.writer.mutate.bind(server.writer);
+    let injected = false;
+    vi.spyOn(server.writer, 'mutate').mockImplementation(async (diagramId, origin, fn) => {
+      if (!injected && String(origin).startsWith('ai:ai-layout-')) {
+        injected = true;
+        await origMutate(diagramId, 'system:human-delete', (doc) => {
+          const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+          nodes.delete('node-c');
+          nodes.delete('lane-b');
+        });
+      }
+      return origMutate(diagramId, origin, fn);
+    });
+
+    const result = await callTool(server, 1, 'auto_layout', {
+      diagramId: diag.id,
+      direction: 'RIGHT',
+    });
+    expect(result.success).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.has('node-c')).toBe(false);
+    expect(nodes.has('lane-b')).toBe(false);
+    expect(nodes.has('node-a')).toBe(true);
+
+    await server.app.close();
+  }, 20000);
+
+  it('并发复核-auto_layout 异步计算间隙新加 position 锁与含锁子节点，写回不覆写锁坐标并产出中文告警', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '并发加锁排版图' });
+    seedPool(server.repo, diag.id);
+
+    const origMutate = server.writer.mutate.bind(server.writer);
+    let injected = false;
+    vi.spyOn(server.writer, 'mutate').mockImplementation(async (diagramId, origin, fn) => {
+      if (!injected && String(origin).startsWith('ai:ai-layout-')) {
+        injected = true;
+        await origMutate(diagramId, 'system:human-lock', (doc) => {
+          const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+          const nodeA = nodes.get('node-a')!;
+          nodeA.set('position', { x: 111, y: 222 });
+          nodeA.set('data', {
+            ...(nodeA.get('data') as Record<string, unknown>),
+            lockMode: 'position',
+          });
+          nodes.set(
+            'human-locked-b',
+            makeNode('human-locked-b', '人工锁定节点', { x: 40, y: 40 }, {
+              parentId: 'lane-b',
+              lockMode: 'full',
+            }),
+          );
+        });
+      }
+      return origMutate(diagramId, origin, fn);
+    });
+
+    const result = await callTool(server, 1, 'auto_layout', {
+      diagramId: diag.id,
+      direction: 'RIGHT',
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('已锁定坐标'))).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('含锁定子节点'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('node-a')!.get('position')).toEqual({ x: 111, y: 222 });
+    expect(nodes.get('lane-b')!.get('position')).toEqual({ x: 0, y: 240 });
+    expect(nodes.get('lane-b')!.get('width')).toBe(400);
+    expect(nodes.get('lane-b')!.get('height')).toBe(200);
+    expect(worldOf(nodes, 'human-locked-b')).toEqual({ x: 90, y: 330 });
+
+    await server.app.close();
+  }, 20000);
+
+  it('并发复核-scaffold_diagram 写回前人工新加 position/full 锁，不覆写坐标且不删除锁定节点', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '并发加锁骨架图' });
+
+    const doc = new Y.Doc();
+    const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+    nodes.set('step-1', makeNode('step-1', '步骤一', { x: 10, y: 10 }));
+    nodes.set('extra-old', makeNode('extra-old', '待保留旧节点', { x: 20, y: 200 }));
+    server.repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+
+    const origMutate = server.writer.mutate.bind(server.writer);
+    let injected = false;
+    vi.spyOn(server.writer, 'mutate').mockImplementation(async (diagramId, origin, fn) => {
+      if (!injected && String(origin).startsWith('ai:ai-scaffold-')) {
+        injected = true;
+        await origMutate(diagramId, 'system:human-scaffold-lock', (d) => {
+          const map = d.getMap<Y.Map<unknown>>('nodes');
+          const s1 = map.get('step-1')!;
+          s1.set('position', { x: 555, y: 666 });
+          s1.set('data', { ...(s1.get('data') as Record<string, unknown>), lockMode: 'position' });
+          const old = map.get('extra-old')!;
+          old.set('data', { ...(old.get('data') as Record<string, unknown>), lockMode: 'position' });
+        });
+      }
+      return origMutate(diagramId, origin, fn);
+    });
+
+    const result = await callTool(server, 1, 'scaffold_diagram', {
+      diagramId: diag.id,
+      spec: {
+        paradigm: 'vertical-flow',
+        nodes: [
+          { id: 'step-1', type: 'process', label: '步骤一（AI 更新）' },
+          { id: 'step-2', type: 'process', label: '步骤二' },
+        ],
+        edges: [{ from: 'step-1', to: 'step-2' }],
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('锁定'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nextNodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    const step1 = nextNodes.get('step-1')!;
+    expect(step1.get('position')).toEqual({ x: 555, y: 666 });
+    expect((step1.get('data') as Record<string, unknown>).lockMode).toBe('position');
+    expect(nextNodes.has('extra-old')).toBe(true);
+    expect(nextNodes.has('step-2')).toBe(true);
+
+    await server.app.close();
+  }, 20000);
+
+  it('并发复核-auto_layout 异步间隙新锁泳池与将节点移入锁定容器，写回保持泳池与节点原位', async () => {
+    const server = await buildServer({ dbPath: tmpDbPath });
+    const diag = server.repo.createDiagram({ title: '并发锁泳池与容器图' });
+    seedNested(server.repo, diag.id, 'locked-group');
+
+    const origMutate = server.writer.mutate.bind(server.writer);
+    let injected = false;
+    vi.spyOn(server.writer, 'mutate').mockImplementation(async (diagramId, origin, fn) => {
+      if (!injected && String(origin).startsWith('ai:ai-layout-')) {
+        injected = true;
+        await origMutate(diagramId, 'system:human-pool-and-reparent', (doc) => {
+          const nodes = doc.getMap<Y.Map<unknown>>('nodes');
+          const pool = nodes.get('pool-1')!;
+          pool.set('data', { ...(pool.get('data') as Record<string, unknown>), lockMode: 'position' });
+          const nodeC = nodes.get('node-c')!;
+          nodeC.set('parentId', 'group-1');
+          nodeC.set('position', { x: 77, y: 88 });
+        });
+      }
+      return origMutate(diagramId, origin, fn);
+    });
+
+    const result = await callTool(server, 1, 'auto_layout', {
+      diagramId: diag.id,
+      direction: 'RIGHT',
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('泳池 pool-1 已锁定'))).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('位于锁定容器内'))).toBe(true);
+
+    const reloaded = loadDoc(server.repo, diag.id);
+    const nodes = reloaded.getMap<Y.Map<unknown>>('nodes');
+    expect(nodes.get('pool-1')!.get('width')).toBe(400);
+    expect(nodes.get('pool-1')!.get('height')).toBe(940);
+    expect(nodes.get('node-c')!.get('position')).toEqual({ x: 77, y: 88 });
 
     await server.app.close();
   }, 20000);

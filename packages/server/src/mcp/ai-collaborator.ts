@@ -41,6 +41,43 @@ function getMapDimensions(map: Y.Map<unknown>): { width: number; height: number 
   };
 }
 
+function collectLiveLockState(nodesMap: Y.Map<Y.Map<unknown>>) {
+  const fullProtectedIds = new Set<string>();
+  const containersWithLockedChild = new Set<string>();
+
+  const markChain = (startId: string, target: Set<string>, includeSelf: boolean) => {
+    let cursor: string | undefined = includeSelf
+      ? startId
+      : (nodesMap.get(startId)?.get('parentId') as string | undefined);
+    const seen = new Set<string>(includeSelf ? [] : [startId]);
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      target.add(cursor);
+      cursor = nodesMap.get(cursor)?.get('parentId') as string | undefined;
+    }
+  };
+
+  nodesMap.forEach((nodeMap, id) => {
+    const mode = getNodeLockMode(nodeMap);
+    if (mode === 'full') markChain(id, fullProtectedIds, true);
+    if (mode !== 'none') markChain(id, containersWithLockedChild, false);
+  });
+
+  const hasLockedAncestor = (id: string, extraBlocked?: Set<string>): boolean => {
+    let cursor = nodesMap.get(id)?.get('parentId') as string | undefined;
+    const seen = new Set<string>([id]);
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      if (extraBlocked?.has(cursor)) return true;
+      if (getNodeLockMode(nodesMap.get(cursor)) !== 'none') return true;
+      cursor = nodesMap.get(cursor)?.get('parentId') as string | undefined;
+    }
+    return false;
+  };
+
+  return { fullProtectedIds, containersWithLockedChild, hasLockedAncestor };
+}
+
 interface SwimlaneChild {
   id: string;
   laneId: string;
@@ -429,24 +466,41 @@ export class AiCollaborator {
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
       const metaMap = doc.getMap<unknown>('meta');
       const diffs: AiBatchEntityDiff[] = [];
+      const warnings: string[] = [];
+      const { fullProtectedIds, hasLockedAncestor } = collectLiveLockState(nodesMap);
       const recordDelete = (entityType: 'node' | 'edge', id: string, map: Y.Map<unknown>) => {
         diffs.push({ entityId: id, entityType, opType: 'delete', beforeState: snapshotMap(map), afterState: null });
       };
       for (const id of diff.deleteEdgeIds) {
         const m = edgesMap.get(id);
-        if (m) {
-          recordDelete('edge', id, m);
-          edgesMap.delete(id);
+        if (!m) continue;
+        const source = m.get('source') as string | undefined;
+        const target = m.get('target') as string | undefined;
+        if (source && target && fullProtectedIds.has(source) && fullProtectedIds.has(target)) {
+          warnings.push(`连线 ${id} 连接人工锁定节点，跳过删除`);
+          continue;
         }
+        recordDelete('edge', id, m);
+        edgesMap.delete(id);
       }
       for (const id of diff.deleteNodeIds) {
         const m = nodesMap.get(id);
-        if (m) {
-          recordDelete('node', id, m);
-          nodesMap.delete(id);
+        if (!m) continue;
+        if (getNodeLockMode(m) !== 'none' || fullProtectedIds.has(id) || hasLockedAncestor(id)) {
+          warnings.push(`节点 ${id} 已被人工锁定或含锁定子节点，跳过删除`);
+          continue;
         }
+        recordDelete('node', id, m);
+        nodesMap.delete(id);
       }
       const writeNode = (n: FlowNode) => {
+        const existingMap = nodesMap.get(n.id);
+        if (existingMap) {
+          if (getNodeLockMode(existingMap) !== 'none' || fullProtectedIds.has(n.id) || hasLockedAncestor(n.id)) {
+            warnings.push(`节点 ${n.id} 已被人工锁定，跳过写入覆盖`);
+            return;
+          }
+        }
         const m = new Y.Map<unknown>();
         m.set('id', n.id);
         m.set('type', n.type);
@@ -478,16 +532,47 @@ export class AiCollaborator {
       for (const { id, patch } of diff.updateNodes) {
         const m = nodesMap.get(id);
         if (!m) continue;
+        const lockMode = getNodeLockMode(m);
+        if (lockMode === 'full' || fullProtectedIds.has(id) || hasLockedAncestor(id)) {
+          warnings.push(`节点 ${id} 已被人工完全锁定，跳过修改`);
+          continue;
+        }
+        const entries = Object.entries(patch).filter(([k]) => {
+          if (lockMode === 'position' && k === 'position') {
+            warnings.push(`节点 ${id} 已被人工锁定坐标，跳过坐标覆写`);
+            return false;
+          }
+          return true;
+        });
+        if (entries.length === 0) continue;
         const before = snapshotMap(m);
-        for (const [k, v] of Object.entries(patch)) m.set(k, v);
-        diffs.push({ entityId: id, entityType: 'node', opType: 'update', beforeState: before, afterState: snapshotMap(m) });
+        for (const [k, v] of entries) {
+          if (k === 'data' && lockMode !== 'none' && v && typeof v === 'object') {
+            m.set('data', { ...(v as Record<string, unknown>), lockMode });
+          } else {
+            m.set(k, v);
+          }
+        }
+        const after = snapshotMap(m);
+        if (!deepEqual(before, after)) {
+          diffs.push({ entityId: id, entityType: 'node', opType: 'update', beforeState: before, afterState: after });
+        }
       }
       for (const { id, patch } of diff.updateEdges) {
         const m = edgesMap.get(id);
         if (!m) continue;
+        const source = m.get('source') as string | undefined;
+        const target = m.get('target') as string | undefined;
+        if ((source && fullProtectedIds.has(source)) || (target && fullProtectedIds.has(target))) {
+          warnings.push(`连线 ${id} 连接人工锁定节点，跳过修改`);
+          continue;
+        }
         const before = snapshotMap(m);
         for (const [k, v] of Object.entries(patch)) m.set(k, v);
-        diffs.push({ entityId: id, entityType: 'edge', opType: 'update', beforeState: before, afterState: snapshotMap(m) });
+        const after = snapshotMap(m);
+        if (!deepEqual(before, after)) {
+          diffs.push({ entityId: id, entityType: 'edge', opType: 'update', beforeState: before, afterState: after });
+        }
       }
       metaMap.set('paradigm', input.spec.paradigm);
       metaMap.set('mainOrder', mainOrder);
@@ -495,7 +580,7 @@ export class AiCollaborator {
       const semanticWarnings = this.inspectDiagramSemantics(nodesMap, edgesMap);
       return {
         diffs,
-        warnings: Array.from(new Set([...rendered.warnings, ...diff.warnings, ...ancestorWarnings, ...semanticWarnings])),
+        warnings: Array.from(new Set([...rendered.warnings, ...diff.warnings, ...ancestorWarnings, ...warnings, ...semanticWarnings])),
       };
     });
 
@@ -1565,12 +1650,14 @@ export class AiCollaborator {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
       const diffs: AiBatchEntityDiff[] = [];
       const warnings: string[] = [...planWarnings];
+      const { containersWithLockedChild, hasLockedAncestor } = collectLiveLockState(nodesMap);
+      const frozenLaneIds = new Set<string>(laneHasLockedChild);
 
-      const recordPositionPatch = (entityId: string, patch: () => void) => {
+      const recordPositionPatch = (entityId: string, patch: (nodeMap: Y.Map<unknown>) => void) => {
         const nodeMap = nodesMap.get(entityId);
         if (!nodeMap) return;
         const before = snapshotMap(nodeMap);
-        patch();
+        patch(nodeMap);
         const after = snapshotMap(nodeMap);
         if (!deepEqual(before, after)) {
           diffs.push({
@@ -1593,20 +1680,37 @@ export class AiCollaborator {
       };
 
       for (const [poolId, size] of poolUpdates) {
-        recordPositionPatch(poolId, () => {
-          patchSize(nodesMap.get(poolId)!, size.width, size.height);
-        });
+        const poolMap = nodesMap.get(poolId);
+        if (!poolMap) continue;
+        if (getNodeLockMode(poolMap) !== 'none') {
+          warnings.push(`泳池 ${poolId} 已锁定，排版保持原位`);
+          continue;
+        }
+        recordPositionPatch(poolId, (map) => patchSize(map, size.width, size.height));
       }
 
       for (const [laneId, frame] of laneUpdates) {
-        recordPositionPatch(laneId, () => {
-          const laneMap = nodesMap.get(laneId)!;
-          laneMap.set('position', { x: frame.x, y: frame.y });
-          patchSize(laneMap, frame.width, frame.height);
+        const laneMap = nodesMap.get(laneId);
+        if (!laneMap) continue;
+        if (getNodeLockMode(laneMap) !== 'none' || hasLockedAncestor(laneId)) {
+          warnings.push(`泳道 ${laneId} 已锁定，排版保持原位`);
+          frozenLaneIds.add(laneId);
+          continue;
+        }
+        if (containersWithLockedChild.has(laneId)) {
+          warnings.push(`泳道 ${laneId} 含锁定子节点，排版保持原位`);
+          frozenLaneIds.add(laneId);
+          continue;
+        }
+        recordPositionPatch(laneId, (map) => {
+          map.set('position', { x: frame.x, y: frame.y });
+          patchSize(map, frame.width, frame.height);
         });
       }
 
       for (const child of graph.children) {
+        const childMap = nodesMap.get(child.id);
+        if (!childMap) continue;
         if (lockedIds.has(child.id) || frozenIds.has(child.id)) {
           warnings.push(
             lockedIds.has(child.id)
@@ -1615,14 +1719,22 @@ export class AiCollaborator {
           );
           continue;
         }
+        if (getNodeLockMode(childMap) !== 'none') {
+          warnings.push(`节点 ${child.id} 已锁定坐标，排版保持原位`);
+          continue;
+        }
+        if (hasLockedAncestor(child.id, frozenLaneIds)) {
+          warnings.push(`节点 ${child.id} 位于锁定容器内，排版保持原位`);
+          continue;
+        }
         const pos = childPositions.get(child.id);
         if (!pos) continue;
-        recordPositionPatch(child.id, () => {
-          nodesMap.get(child.id)!.set('position', { x: pos.x, y: pos.y });
+        recordPositionPatch(child.id, (map) => {
+          map.set('position', { x: pos.x, y: pos.y });
         });
       }
 
-      return { diffs, warnings };
+      return { diffs, warnings: Array.from(new Set(warnings)) };
     });
 
     if (outcome.result.diffs.length > 0) {

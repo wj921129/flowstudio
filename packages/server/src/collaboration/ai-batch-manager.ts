@@ -394,51 +394,50 @@ export class AiBatchManager {
     // 因此不适用于在线优先场景；待旧调用方全部迁移后可整体删除。
     const diffs: AiBatchEntityDiff[] = [];
     const state = this.repo.getYDocState(input.diagramId);
-    const doc = state ? (() => {
-      const d = new Y.Doc();
-      Y.applyUpdate(d, state);
-      return d;
-    })() : null;
-    const nodesMap = doc?.getMap<Y.Map<unknown>>('nodes');
-    const edgesMap = doc?.getMap<Y.Map<unknown>>('edges');
+    const doc = state ? new Y.Doc() : null;
+    try {
+      if (doc && state) Y.applyUpdate(doc, state);
+      const nodesMap = doc?.getMap<Y.Map<unknown>>('nodes');
+      const edgesMap = doc?.getMap<Y.Map<unknown>>('edges');
 
-    for (const nodeId of input.createdNodeIds ?? []) {
-      const node = nodesMap?.get(nodeId);
-      diffs.push({
-        entityId: nodeId,
-        entityType: 'node',
-        opType: 'add',
-        beforeState: null,
-        afterState: node ? snapshotMap(node) : null,
-      });
+      for (const nodeId of input.createdNodeIds ?? []) {
+        const node = nodesMap?.get(nodeId);
+        diffs.push({
+          entityId: nodeId,
+          entityType: 'node',
+          opType: 'add',
+          beforeState: null,
+          afterState: node ? snapshotMap(node) : null,
+        });
+      }
+
+      for (const edgeId of input.createdEdgeIds ?? []) {
+        const edge = edgesMap?.get(edgeId);
+        diffs.push({
+          entityId: edgeId,
+          entityType: 'edge',
+          opType: 'add',
+          beforeState: null,
+          afterState: edge ? snapshotMap(edge) : null,
+        });
+      }
+
+      for (const backup of input.updatedNodeBackups ?? []) {
+        const node = nodesMap?.get(backup.id);
+        const currentState = node ? snapshotMap(node) : null;
+        diffs.push({
+          entityId: backup.id,
+          entityType: 'node',
+          opType: 'update',
+          beforeState: currentState
+            ? { ...currentState, data: backup.oldData }
+            : { data: backup.oldData },
+          afterState: currentState,
+        });
+      }
+    } finally {
+      doc?.destroy();
     }
-
-    for (const edgeId of input.createdEdgeIds ?? []) {
-      const edge = edgesMap?.get(edgeId);
-      diffs.push({
-        entityId: edgeId,
-        entityType: 'edge',
-        opType: 'add',
-        beforeState: null,
-        afterState: edge ? snapshotMap(edge) : null,
-      });
-    }
-
-    for (const backup of input.updatedNodeBackups ?? []) {
-      const node = nodesMap?.get(backup.id);
-      const currentState = node ? snapshotMap(node) : null;
-      diffs.push({
-        entityId: backup.id,
-        entityType: 'node',
-        opType: 'update',
-        beforeState: currentState
-          ? { ...currentState, data: backup.oldData }
-          : { data: backup.oldData },
-        afterState: currentState,
-      });
-    }
-
-    if (doc) doc.destroy();
 
     return {
       batchId: input.batchId,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -218,5 +218,33 @@ describe('AI Batch Management & Safe Rollback', () => {
     expect(revertRes.json().success).toBe(true);
 
     await server.app.close();
+  });
+
+  it('recordBatch 旧版冷加载路径在异常情况下仍确定性销毁临时 Y.Doc', () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const diag = repo.createDiagram({ title: '销毁测试图' });
+    const batchManager = new AiBatchManager(repo);
+
+    const origDestroy = Y.Doc.prototype.destroy;
+    const destroySpy = vi.spyOn(Y.Doc.prototype, 'destroy').mockImplementation(function (this: Y.Doc) {
+      return origDestroy.call(this);
+    });
+    vi.spyOn(repo, 'getYDocState').mockReturnValueOnce(new Uint8Array([255, 255, 255, 255]));
+
+    const beforeCalls = destroySpy.mock.calls.length;
+    expect(() =>
+      batchManager.recordBatch({
+        batchId: 'batch-corrupt',
+        diagramId: diag.id,
+        summary: '坏数据测试',
+        createdAt: new Date().toISOString(),
+        createdNodeIds: ['n1'],
+      }),
+    ).toThrow();
+    expect(destroySpy.mock.calls.length).toBe(beforeCalls + 1);
+
+    vi.restoreAllMocks();
+    db.close();
   });
 });
