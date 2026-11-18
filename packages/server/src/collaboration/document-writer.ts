@@ -295,16 +295,42 @@ export class DocumentWriter {
   }
 }
 
+function syncNestedMapDelta(
+  currMap: Y.Map<Y.Map<unknown>>,
+  snapMap: Y.Map<Y.Map<unknown>>,
+): void {
+  const targetIds = new Set<string>();
+  snapMap.forEach((snapItemMap, id) => {
+    targetIds.add(id);
+    let currItemMap = currMap.get(id);
+    if (!currItemMap) {
+      currItemMap = new Y.Map<unknown>();
+      currMap.set(id, currItemMap);
+    }
+    snapItemMap.forEach((val, key) => {
+      if (!deepEqual(currItemMap!.get(key), val)) {
+        currItemMap!.set(key, val);
+      }
+    });
+    for (const key of Array.from(currItemMap.keys())) {
+      if (!snapItemMap.has(key)) {
+        currItemMap.delete(key);
+      }
+    }
+  });
+
+  for (const id of Array.from(currMap.keys())) {
+    if (!targetIds.has(id)) {
+      currMap.delete(id);
+    }
+  }
+}
+
 /**
  * 将快照文档的差量应用至目标文档（仅构建差量，不整包替换）
  */
 export function applySnapshotDelta(targetDoc: Y.Doc, snapDoc: Y.Doc): void {
-  const snapNodesMap = snapDoc.getMap<Y.Map<unknown>>('nodes');
-  const snapEdgesMap = snapDoc.getMap<Y.Map<unknown>>('edges');
   const snapMetaMap = snapDoc.getMap<unknown>('meta');
-
-  const currNodesMap = targetDoc.getMap<Y.Map<unknown>>('nodes');
-  const currEdgesMap = targetDoc.getMap<Y.Map<unknown>>('edges');
   const currMetaMap = targetDoc.getMap<unknown>('meta');
 
   // meta 目前以 title 为唯一权威键；为向前兼容，快照中的所有 meta 键均做差量还原，
@@ -315,69 +341,10 @@ export function applySnapshotDelta(targetDoc: Y.Doc, snapDoc: Y.Doc): void {
     }
   });
 
-  const targetNodeIds = new Set<string>();
-  snapNodesMap.forEach((nodeMap, id) => {
-    targetNodeIds.add(id);
-    let currNodeMap = currNodesMap.get(id);
-    if (!currNodeMap) {
-      currNodeMap = new Y.Map<unknown>();
-      currNodesMap.set(id, currNodeMap);
-    }
-    nodeMap.forEach((val, key) => {
-      currNodeMap!.set(key, val);
-    });
-  });
-
-  for (const id of Array.from(currNodesMap.keys())) {
-    if (!targetNodeIds.has(id)) {
-      currNodesMap.delete(id);
-    }
-  }
-
-  const targetEdgeIds = new Set<string>();
-  snapEdgesMap.forEach((edgeMap, id) => {
-    targetEdgeIds.add(id);
-    let currEdgeMap = currEdgesMap.get(id);
-    if (!currEdgeMap) {
-      currEdgeMap = new Y.Map<unknown>();
-      currEdgesMap.set(id, currEdgeMap);
-    }
-    edgeMap.forEach((val, key) => {
-      currEdgeMap!.set(key, val);
-    });
-  });
-
-  for (const id of Array.from(currEdgesMap.keys())) {
-    if (!targetEdgeIds.has(id)) {
-      currEdgesMap.delete(id);
-    }
-  }
-
-  const snapCommentsMap = snapDoc.getMap<Y.Map<unknown>>('comments');
-  const currCommentsMap = targetDoc.getMap<Y.Map<unknown>>('comments');
-  const targetCommentIds = new Set<string>();
-  snapCommentsMap.forEach((commentMap, id) => {
-    targetCommentIds.add(id);
-    let currCommentMap = currCommentsMap.get(id);
-    if (!currCommentMap) {
-      currCommentMap = new Y.Map<unknown>();
-      currCommentsMap.set(id, currCommentMap);
-    }
-    commentMap.forEach((val, key) => {
-      if (!deepEqual(currCommentMap!.get(key), val)) {
-        currCommentMap!.set(key, val);
-      }
-    });
-    for (const key of Array.from(currCommentMap.keys())) {
-      if (!commentMap.has(key)) {
-        currCommentMap.delete(key);
-      }
-    }
-  });
-
-  for (const id of Array.from(currCommentsMap.keys())) {
-    if (!targetCommentIds.has(id)) {
-      currCommentsMap.delete(id);
-    }
+  for (const mapName of ['nodes', 'edges', 'comments'] as const) {
+    syncNestedMapDelta(
+      targetDoc.getMap<Y.Map<unknown>>(mapName),
+      snapDoc.getMap<Y.Map<unknown>>(mapName),
+    );
   }
 }
