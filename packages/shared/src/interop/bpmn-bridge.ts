@@ -1,6 +1,7 @@
 import type { FlowNode, FlowEdge, XYPosition, FlowNodeType } from '../types.js';
 import { getNodeRegistryEntry } from '../node-registry.js';
 import { flowNodeSchema, flowEdgeSchema } from '../schemas/diagram-schema.js';
+import { assertInteropCounts, assertInteropTextSize } from './limits.js';
 import { parseXml, walkTags, findChildren, findChild, escXml, type XmlNode } from './xml-parser.js';
 
 export interface BpmnImportResult {
@@ -77,6 +78,7 @@ const readDiWaypoints = (doc: XmlNode): Map<string, XYPosition[]> => {
 };
 
 export function parseBpmnXml(xml: string): BpmnImportResult {
+  assertInteropTextSize(xml, 'BPMN');
   const warnings: string[] = [];
   if (!/<[a-zA-Z0-9_:]*definitions/i.test(xml) || !/<[a-zA-Z0-9_:]*process/i.test(xml)) {
     throw new Error('不是有效的 BPMN 2.0 文件（缺少 definitions/process）');
@@ -97,6 +99,7 @@ export function parseBpmnXml(xml: string): BpmnImportResult {
   const addNode = (el: XmlNode, tag: string, parentId?: string) => {
     const bpmnId = el.attrs.id || `${tag}-${nodes.length}`;
     if (idMap.has(bpmnId)) return;
+    assertInteropCounts(nodes.length + 1, edges.length, 'BPMN');
     const mappedId = `bp-${bpmnId}`;
     idMap.set(bpmnId, mappedId);
     const type = mapBpmnType(tag);
@@ -132,6 +135,7 @@ export function parseBpmnXml(xml: string): BpmnImportResult {
       warnings.push(`连线「${labelOf(el) || bpmnId}」端点未解析已跳过`);
       return;
     }
+    assertInteropCounts(nodes.length, edges.length + 1, 'BPMN');
     idMap.set(bpmnId, mappedEdgeId(bpmnId));
     const waypoints = diWaypoints.get(bpmnId);
     const edge: FlowEdge = {
@@ -179,8 +183,10 @@ export function parseBpmnXml(xml: string): BpmnImportResult {
         height: poolH,
       };
       const poolParsed = flowNodeSchema.safeParse(poolNode);
-      if (poolParsed.success) nodes.push(poolParsed.data as FlowNode);
-      else warnings.push('泳道池解析失败');
+      if (poolParsed.success) {
+        assertInteropCounts(nodes.length + 1, edges.length, 'BPMN');
+        nodes.push(poolParsed.data as FlowNode);
+      } else warnings.push('泳道池解析失败');
 
       lanes.forEach((lane, i) => {
         const laneId = `bp-lane-${lane.attrs.id || i}`;
@@ -197,7 +203,10 @@ export function parseBpmnXml(xml: string): BpmnImportResult {
           extent: 'parent',
         };
         const laneParsed = flowNodeSchema.safeParse(laneNode);
-        if (laneParsed.success) nodes.push(laneParsed.data as FlowNode);
+        if (laneParsed.success) {
+          assertInteropCounts(nodes.length + 1, edges.length, 'BPMN');
+          nodes.push(laneParsed.data as FlowNode);
+        }
         laneChildMap.set(
           lane.attrs.id || `lane-${i}`,
           lane.children.filter((c) => c.tag === 'flowNodeRef').map((c) => c.text.trim()).filter(Boolean)

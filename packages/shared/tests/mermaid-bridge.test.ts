@@ -279,4 +279,15 @@ describe('Mermaid 双向语义桥', () => {
       laneId: 'lane-new',
     });
   });
+
+  it('Mermaid 文本体积或节点/连线数量超限时快速熔断', () => {
+    const hugeText = `flowchart LR\n${'a'.repeat(5 * 1024 * 1024 + 10)}`;
+    expect(() => parseMermaid(hugeText)).toThrow(/上限/);
+
+    const manyNodes = ['flowchart LR', ...Array.from({ length: 5001 }, (_, i) => `  n${i}["节点${i}"]`)].join('\n');
+    expect(() => parseMermaid(manyNodes)).toThrow(/上限/);
+
+    const manyEdges = ['flowchart LR', '  a["A"]', '  b["B"]', ...Array.from({ length: 10001 }, () => '  a --> b')].join('\n');
+    expect(() => diffMermaidToOps(manyEdges, [], [])).toThrow(/上限/);
+  });
 });

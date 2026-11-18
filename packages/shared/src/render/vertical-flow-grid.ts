@@ -15,7 +15,8 @@ export function renderVerticalFlowGrid(n: NormalizedSpec, ctx: RenderContext): R
   const warnings = [...n.warnings];
   const pos = new Map<string, Box>();
   const eid = (id: string) => ctx.idPrefix + id;
-  const nodeOf = (id: string) => n.nodes.find((x) => x.id === id)!;
+  const nodeById = new Map(n.nodes.map((x) => [x.id, x]));
+  const nodeOf = (id: string) => nodeById.get(id)!;
   const fixedBox = (id: string): Box | undefined => {
     const f = ctx.fixed.get(id);
     return f ? { x: f.position.x, y: f.position.y, width: f.width, height: f.height } : undefined;

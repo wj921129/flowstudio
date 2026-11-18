@@ -6,6 +6,7 @@
  */
 
 import type { FlowEdge, FlowNode, FlowNodeType } from './types.js';
+import { assertInteropCounts, assertInteropTextSize } from './interop/limits.js';
 
 /** Mermaid 节点形状语法映射（9 种流程节点） */
 const NODE_SHAPE_SYNTAX: Record<FlowNodeType, string> = {
@@ -289,6 +290,7 @@ function parseNodeToken(token: string): ParsedNode | null {
  * 解析 Mermaid 源码（支持 flowchart/graph 的常用子集）
  */
 export function parseMermaid(mermaidText: string): ParsedMermaid {
+  assertInteropTextSize(mermaidText, 'Mermaid');
   const nodes = new Map<string, ParsedNode>();
   const edges: ParsedEdge[] = [];
   const rawSubgraphs: Array<{
@@ -319,6 +321,7 @@ export function parseMermaid(mermaidText: string): ParsedMermaid {
       }
       return existing;
     }
+    assertInteropCounts(nodes.size + rawSubgraphs.length + 1, edges.length, 'Mermaid');
     const next: ParsedNode = {
       ...parsed,
       laneId: parsed.laneId ?? activeSubId,
@@ -354,6 +357,7 @@ export function parseMermaid(mermaidText: string): ParsedMermaid {
       if (parentId) {
         subgraphMap.get(parentId)?.children.push(subId);
       }
+      assertInteropCounts(nodes.size + rawSubgraphs.length + 1, edges.length, 'Mermaid');
       subgraphMap.set(subId, entry);
       rawSubgraphs.push(entry);
       subgraphStack.push(subId);
@@ -403,6 +407,7 @@ export function parseMermaid(mermaidText: string): ParsedMermaid {
         const targetNode = registerNode(parseNodeToken(targetToken));
         if (!sourceNode || !targetNode) break;
 
+        assertInteropCounts(nodes.size + rawSubgraphs.length, edges.length + 1, 'Mermaid');
         edges.push({ sourceId: sourceNode.id, targetId: targetNode.id, label });
         previousToken = targetToken;
       }

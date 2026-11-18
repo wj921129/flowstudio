@@ -8,7 +8,8 @@ export function renderTree(n: NormalizedSpec, ctx: RenderContext): RenderResult 
   const warnings = [...n.warnings];
   if (ctx.fixed.size > 0) warnings.push('tree 暂不支持 fixed 让位，锁节点保持原坐标');
   const eid = (id: string) => ctx.idPrefix + id;
-  const nodeOf = (id: string) => n.nodes.find((x) => x.id === id)!;
+  const nodeById = new Map(n.nodes.map((x) => [x.id, x]));
+  const nodeOf = (id: string) => nodeById.get(id)!;
   const sizeOf = (id: string) => getDefaultNodeSize(nodeOf(id).type ?? 'process');
   const children = new Map<string, string[]>();
   const hasParent = new Set<string>();
@@ -57,7 +58,8 @@ export function renderTree(n: NormalizedSpec, ctx: RenderContext): RenderResult 
   for (const [id, p] of pos) {
     const src = nodeOf(id);
     const type: FlowNodeType = src.type ?? 'process';
-    nodes.push({ id: eid(id), type, position: { x: p.x, y: rowY.get(depthOf.get(id)!)! }, width: p.width, height: p.height, data: { label: src.label, type, role: src.role } });
+    const y = ctx.fixed.has(id) ? p.y : rowY.get(depthOf.get(id)!)!;
+    nodes.push({ id: eid(id), type, position: { x: p.x, y }, width: p.width, height: p.height, data: { label: src.label, type, role: src.role } });
   }
   const edges: FlowEdge[] = n.edges.map((e) => ({
     id: `${ctx.idPrefix}e-${e.from}-${e.to}-${e.kind}`,

@@ -1,6 +1,7 @@
 import type { FlowNode, FlowEdge, XYPosition, FlowNodeType } from '../types.js';
 import { getNodeRegistryEntry } from '../node-registry.js';
 import { flowNodeSchema, flowEdgeSchema } from '../schemas/diagram-schema.js';
+import { INTEROP_LIMITS, assertInteropCounts, assertInteropTextSize } from './limits.js';
 import { parseXml, walkTags, type XmlNode } from './xml-parser.js';
 
 export interface DrawioImportResult {
@@ -32,6 +33,7 @@ const bytesToBinaryString = (bytes: Uint8Array): string => {
 };
 
 export async function inflateDrawioContent(base64: string): Promise<string> {
+  assertInteropTextSize(base64, 'Draw.io');
   const bin = atob(base64.replace(/\s+/g, ''));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -39,12 +41,34 @@ export async function inflateDrawioContent(base64: string): Promise<string> {
     throw new Error('当前运行环境不支持 Deflate 解压，请使用现代浏览器');
   }
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  const buf = await new Response(stream).arrayBuffer();
-  const inflated = bytesToBinaryString(new Uint8Array(buf));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > INTEROP_LIMITS.MAX_INFLATED_BYTES) {
+        await reader.cancel();
+        throw new Error(`Draw.io 解压内容超过安全上限（最大 ${INTEROP_LIMITS.MAX_INFLATED_BYTES} 字节）`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const inflated = bytesToBinaryString(out);
   try {
     return decodeURIComponent(inflated);
   } catch {
-    return new TextDecoder('utf-8').decode(buf);
+    return new TextDecoder('utf-8').decode(out);
   }
 }
 
@@ -104,9 +128,13 @@ const readEdgeWaypoints = (cell: XmlNode): XYPosition[] => {
 
 const collectCells = (model: XmlNode): XmlNode[] => {
   const out: XmlNode[] = [];
+  const maxCells = INTEROP_LIMITS.MAX_NODES + INTEROP_LIMITS.MAX_EDGES + 100;
   const visit = (n: XmlNode) => {
     for (const c of n.children) {
-      if (c.tag === 'mxCell') out.push(c);
+      if (c.tag === 'mxCell') {
+        out.push(c);
+        if (out.length > maxCells) throw new Error(`Draw.io 图元数量超过安全上限（最大 ${maxCells}）`);
+      }
       visit(c);
     }
   };
@@ -117,6 +145,7 @@ const collectCells = (model: XmlNode): XmlNode[] => {
 const registrySize = (type: FlowNodeType) => getNodeRegistryEntry(type)?.defaultSize ?? { width: 160, height: 80 };
 
 export async function parseDrawioXml(xml: string): Promise<DrawioImportResult> {
+  assertInteropTextSize(xml, 'Draw.io');
   const warnings: string[] = [];
   let raw = xml.trim();
   if (!/<mxGraphModel|<mxfile/i.test(raw)) {
@@ -151,13 +180,17 @@ export async function parseDrawioXml(xml: string): Promise<DrawioImportResult> {
   const edges: FlowEdge[] = [];
   const idMap = new Map<string, string>();
   const vertexCells: CellRecord[] = [];
+  let vertexCount = 0;
+  let edgeCount = 0;
 
-  for (const cell of cellNodes) {
+  for (let idx = 0; idx < cellNodes.length; idx++) {
+    const cell = cellNodes[idx];
     const isEdge = cell.attrs.edge === '1';
     const isVertex = cell.attrs.vertex === '1';
-    const cellId = cell.attrs.id || `c${cellNodes.indexOf(cell)}`;
+    const cellId = cell.attrs.id || `c${idx}`;
     idMap.set(cellId, `dw-${cellId}`);
     if (isVertex) {
+      assertInteropCounts(++vertexCount, edgeCount, 'Draw.io');
       const parentId = cell.attrs.parent;
       const parentCell = parentId ? byId.get(parentId) : undefined;
       const parentIsSwimlane = parentCell ? parseStyle(parentCell.attrs.style || '').swimlane !== undefined : false;
@@ -180,6 +213,7 @@ export async function parseDrawioXml(xml: string): Promise<DrawioImportResult> {
       vertexCells.push(rec);
       if (!geo) warnings.push(`图元「${label || cellId}」缺少几何信息，已使用默认尺寸`);
     } else if (isEdge) {
+      assertInteropCounts(vertexCount, ++edgeCount, 'Draw.io');
       vertexCells.push({
         id: cellId,
         value: stripHtml(cell.attrs.value || ''),
@@ -193,19 +227,26 @@ export async function parseDrawioXml(xml: string): Promise<DrawioImportResult> {
     }
   }
 
+  const cellById = new Map<string, CellRecord>(vertexCells.filter((v) => v.vertex).map((v) => [v.id, v]));
   const absPosCache = new Map<string, XYPosition>();
-  const absolutePos = (rec: CellRecord): XYPosition => {
+  const absolutePos = (rec: CellRecord, visiting = new Set<string>()): XYPosition => {
     if (absPosCache.has(rec.id)) return absPosCache.get(rec.id)!;
+    if (visiting.has(rec.id)) {
+      warnings.push(`图元「${rec.value || rec.id}」存在循环父级引用，已降级使用局部坐标`);
+      return { x: Math.round(rec.geo?.x ?? 0), y: Math.round(rec.geo?.y ?? 0) };
+    }
+    visiting.add(rec.id);
     let x = rec.geo?.x ?? 0;
     let y = rec.geo?.y ?? 0;
     if (rec.parentId) {
-      const parentRec = vertexCells.find((v) => v.id === rec.parentId);
+      const parentRec = cellById.get(rec.parentId);
       if (parentRec) {
-        const pp = absolutePos(parentRec);
+        const pp = absolutePos(parentRec, visiting);
         x += pp.x;
         y += pp.y;
       }
     }
+    visiting.delete(rec.id);
     const pos = { x: Math.round(x), y: Math.round(y) };
     absPosCache.set(rec.id, pos);
     return pos;

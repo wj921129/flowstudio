@@ -5,6 +5,7 @@ import {
   findChildren,
   findChild,
   escXml,
+  inflateDrawioContent,
   parseDrawioXml,
   parseBpmnXml,
   diagramToBpmnXml,
@@ -49,6 +50,20 @@ describe('XML 零依赖流式解析器', () => {
     expect(group).toBeDefined();
     expect(findChildren(group, 'item').length).toBe(2);
     expect(escXml('<div class="a">&</div>')).toBe('&lt;div class=&quot;a&quot;&gt;&amp;&lt;/div&gt;');
+  });
+
+  it('拒绝包含 <!DOCTYPE 或 <!ENTITY 声明的 XML', () => {
+    expect(() => parseXml('<!DOCTYPE foo><root />')).toThrow(/DOCTYPE|ENTITY/);
+    expect(() => parseXml('<!ENTITY xxe SYSTEM "file:///etc/passwd"><root />')).toThrow(/DOCTYPE|ENTITY/);
+    expect(() => parseXml('<?xml version="1.0"?><!doctype mxfile [<!entity a "1">]><mxfile />')).toThrow(/DOCTYPE|ENTITY/);
+  });
+
+  it('越界或代理区字符实体保留原文不抛 RangeError，合法码点正常解码', () => {
+    const xml = `<root label="&#65;-&#x4E2D;-&#x1F600;">&#9999999; &#x110000; &#xD800; &#xDFFF;</root>`;
+    const doc = parseXml(xml);
+    const rootEl = doc.children[0];
+    expect(rootEl.attrs.label).toBe('A-中-😀');
+    expect(rootEl.text).toBe('&#9999999; &#x110000; &#xD800; &#xDFFF;');
   });
 });
 
@@ -109,6 +124,37 @@ describe('Draw.io XML 导入桥接器', () => {
 
   it('无效 Drawio XML 抛出异常', async () => {
     await expect(parseDrawioXml('<xml>invalid</xml>')).rejects.toThrow('不是有效的 Draw.io / mxGraph XML 文件');
+  });
+
+  it('高压缩比膨胀载荷超过解压上限时流式中止并抛错', async () => {
+    const rawBomb = new Uint8Array(17 * 1024 * 1024).fill(65);
+    const compressed = await new Response(
+      new Blob([rawBomb]).stream().pipeThrough(new CompressionStream('deflate-raw')),
+    ).arrayBuffer();
+    const base64 = Buffer.from(compressed).toString('base64');
+    await expect(inflateDrawioContent(base64)).rejects.toThrow(/解压.*上限/);
+  });
+
+  it('自环或互环 parentId 不栈溢出，降级并给出警告', async () => {
+    const cyclicXml = `<mxfile><diagram name="P1"><mxGraphModel><root>
+      <mxCell id="0" /><mxCell id="1" parent="0" />
+      <mxCell id="a" value="A" vertex="1" parent="b" style="swimlane;"><mxGeometry x="10" y="20" width="200" height="120" as="geometry" /></mxCell>
+      <mxCell id="b" value="B" vertex="1" parent="a" style="swimlane;"><mxGeometry x="30" y="40" width="200" height="120" as="geometry" /></mxCell>
+      <mxCell id="self" value="Self" vertex="1" parent="self" style="swimlane;"><mxGeometry x="50" y="60" width="120" height="60" as="geometry" /></mxCell>
+    </root></mxGraphModel></diagram></mxfile>`;
+    const res = await parseDrawioXml(cyclicXml);
+    expect(res.nodes.length).toBe(3);
+    expect(res.warnings.some((w) => w.includes('循环'))).toBe(true);
+  });
+
+  it('Draw.io 文本体积或图元数量超限时快速熔断', async () => {
+    const hugeText = `<mxGraphModel>${'a'.repeat(5 * 1024 * 1024 + 10)}</mxGraphModel>`;
+    await expect(parseDrawioXml(hugeText)).rejects.toThrow(/上限/);
+
+    const manyCells = Array.from({ length: 5001 }, (_, i) =>
+      `<mxCell id="n${i}" value="N${i}" vertex="1" parent="1"><mxGeometry x="0" y="0" width="100" height="40" as="geometry" /></mxCell>`,
+    ).join('');
+    await expect(parseDrawioXml(`<mxGraphModel><root><mxCell id="0" /><mxCell id="1" parent="0" />${manyCells}</root></mxGraphModel>`)).rejects.toThrow(/上限/);
   });
 });
 
@@ -238,5 +284,24 @@ describe('BPMN 2.0 互通桥接器', () => {
     expect(xml).toContain('<task id="n-task" name="合规核验"');
     expect(xml).toContain('<sequenceFlow id="e-1" name="提交" sourceRef="n-start" targetRef="n-task" />');
     expect(xml).toContain('<bpmndi:BPMNDiagram');
+  });
+
+  it('BPMN 文本体积或节点/连线数量超限时快速熔断', () => {
+    const hugeBpmn = `<bpmn:definitions><bpmn:process id="p">${'a'.repeat(5 * 1024 * 1024 + 10)}</bpmn:process></bpmn:definitions>`;
+    expect(() => parseBpmnXml(hugeBpmn)).toThrow(/上限/);
+
+    const manyTasks = Array.from({ length: 5001 }, (_, i) => `<bpmn:task id="t${i}" name="T${i}" />`).join('');
+    expect(() =>
+      parseBpmnXml(`<bpmn:definitions><bpmn:process id="p">${manyTasks}</bpmn:process></bpmn:definitions>`),
+    ).toThrow(/上限/);
+
+    const manyFlows = Array.from({ length: 10001 }, (_, i) =>
+      `<bpmn:sequenceFlow id="f${i}" sourceRef="t0" targetRef="t1" />`,
+    ).join('');
+    expect(() =>
+      parseBpmnXml(
+        `<bpmn:definitions><bpmn:process id="p"><bpmn:task id="t0" /><bpmn:task id="t1" />${manyFlows}</bpmn:process></bpmn:definitions>`,
+      ),
+    ).toThrow(/上限/);
   });
 });
