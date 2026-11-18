@@ -10,6 +10,7 @@
     "dev:web": "pnpm -C packages/web dev",
     "dev:server": "pnpm -C packages/server dev",
     "build": "pnpm -r build",
+    "gate": "pnpm --filter @flowstudio/shared build && pnpm --filter @flowstudio/server exec tsc --noEmit && pnpm --filter @flowstudio/web exec tsc -b && pnpm test",
     "test": "vitest run"
   },
   "devDependencies": {
