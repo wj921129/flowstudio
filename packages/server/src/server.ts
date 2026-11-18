@@ -5,7 +5,7 @@ import fastifyStatic from '@fastify/static';
 import * as fs from 'node:fs';
 import { initDatabase } from './db/database.js';
 import { DiagramRepository } from './db/diagram-repository.js';
-import { createCollaborationServer } from './collaboration/hocuspocus.js';
+import { createCollaborationServer, closeCollaborationServer } from './collaboration/hocuspocus.js';
 import { DocumentWriter } from './collaboration/document-writer.js';
 import { AutoSnapshotScheduler } from './collaboration/auto-snapshot.js';
 import { SaveStatusTracker } from './collaboration/save-status.js';
@@ -144,9 +144,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Ser
   // 关闭钩子
   app.addHook('onClose', async () => {
     autoSnapshot.stop();
-    if (typeof (hocuspocus as any).destroy === 'function') {
-      await (hocuspocus as any).destroy();
-    }
+    await closeCollaborationServer(hocuspocus);
     db.close();
   });
 

@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -35,6 +36,45 @@ export function getLocalNetworkIp(): string {
   return candidates[0] || '127.0.0.1';
 }
 
+export interface ShutdownSignalOptions {
+  target?: Pick<NodeJS.EventEmitter, 'on' | 'off'>;
+  exit?: (code: number) => void;
+}
+
+export function registerShutdownSignals(
+  app: FastifyInstance,
+  options: ShutdownSignalOptions = {},
+): () => void {
+  const target = options.target ?? process;
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  let closing: Promise<void> | null = null;
+
+  const cleanup = () => {
+    target.off('SIGINT', onSignal);
+    target.off('SIGTERM', onSignal);
+  };
+
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (closing) return;
+    console.log(`[FlowStudio] 收到退出信号 ${signal}，正在优雅停机...`);
+    closing = (async () => {
+      try {
+        await app.close();
+        cleanup();
+        exit(0);
+      } catch (err) {
+        console.error('[FlowStudio] 优雅停机失败:', err);
+        cleanup();
+        exit(1);
+      }
+    })();
+  };
+
+  target.on('SIGINT', onSignal);
+  target.on('SIGTERM', onSignal);
+  return cleanup;
+}
+
 async function main() {
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '0.0.0.0';
@@ -43,6 +83,7 @@ async function main() {
   const autoSnapshotIntervalMs = Number(process.env.AUTO_SNAPSHOT_INTERVAL_MS) || undefined;
 
   const { app } = await buildServer({ dbPath, webDistPath, autoSnapshotIntervalMs });
+  const unregisterSignals = registerShutdownSignals(app);
 
   try {
     await app.listen({ port, host });
@@ -57,6 +98,8 @@ async function main() {
     console.log(`  📁 SQLite 数据: ${dbPath}`);
     console.log(`========================================================\n`);
   } catch (err) {
+    unregisterSignals();
+    await app.close().catch(() => {});
     console.error(`[FlowStudio] 启动失败:`, err);
     process.exit(1);
   }
