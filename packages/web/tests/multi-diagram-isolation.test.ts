@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as Y from 'yjs';
+import fs from 'node:fs';
+import path from 'node:path';
 import { YjsDiagramBridge } from '../src/features/collaboration/yjs-doc-bridge';
 import { CollaborativeUndoManager } from '../src/features/collaboration/undo-manager';
 import { useFlowStore } from '../src/stores/flow-store';
+import { useRemoteUsersStore } from '../src/features/collaboration/remote-users-store';
 
 describe('Multi-Diagram Lifecycle Isolation & Spotlight State', () => {
   let doc1: Y.Doc;
@@ -98,5 +101,58 @@ describe('Multi-Diagram Lifecycle Isolation & Spotlight State', () => {
     unbind2();
     bridge2.destroy();
     doc2.destroy();
+  });
+
+  it('isolates high-frequency cursor updates in remoteUsersStore without invalidating selectedByNodeId or CollaborationContext', () => {
+    useRemoteUsersStore.getState().reset();
+    let nodeSelNotifies = 0;
+    let prevSel = useRemoteUsersStore.getState().selectedByNodeId.get('n1');
+    const unsub = useRemoteUsersStore.subscribe((s) => {
+      const nextSel = s.selectedByNodeId.get('n1');
+      if (nextSel !== prevSel) {
+        prevSel = nextSel;
+        nodeSelNotifies++;
+      }
+    });
+
+    useRemoteUsersStore.getState().setRemoteUsers([
+      {
+        clientId: 'u1',
+        nickname: '协作者',
+        color: '#2563eb',
+        cursor: { x: 10, y: 20 },
+        selectedNodeIds: ['n1'],
+      },
+    ]);
+    expect(nodeSelNotifies).toBe(1);
+    const selMapBefore = useRemoteUsersStore.getState().selectedByNodeId;
+
+    // 高频移动远端光标坐标，n1 选中态稳定不重推
+    useRemoteUsersStore.getState().setRemoteUsers([
+      {
+        clientId: 'u1',
+        nickname: '协作者',
+        color: '#2563eb',
+        cursor: { x: 250, y: 400 },
+        selectedNodeIds: ['n1'],
+      },
+    ]);
+    expect(nodeSelNotifies).toBe(1);
+    expect(useRemoteUsersStore.getState().selectedByNodeId).toBe(selMapBefore);
+
+    useRemoteUsersStore.getState().reset();
+    expect(useRemoteUsersStore.getState().remoteUsers).toEqual([]);
+    expect(useRemoteUsersStore.getState().selectedByNodeId.size).toBe(0);
+    unsub();
+
+    const providerSource = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/collaboration/collaboration-provider.tsx'),
+      'utf-8'
+    );
+    expect(providerSource).not.toMatch(/contextValue\s*=\s*useMemo[\s\S]*remoteUsers/);
+    expect(providerSource).toContain('EdgeRoutingManager.getInstance().clear()');
+    expect(providerSource).toContain('useRemoteUsersStore.getState().reset()');
+    const destroyOrder = /u\.destroy\(\);\s*b\.destroy\(\);\s*p\.destroy\(\);\s*ws\.destroy\(\);\s*d\.destroy\(\);/;
+    expect(providerSource).toMatch(destroyOrder);
   });
 });

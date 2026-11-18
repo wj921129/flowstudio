@@ -6,12 +6,14 @@ import type { CollaborationConnectionStatus } from './types.js';
 import { YjsDiagramBridge } from './yjs-doc-bridge.js';
 import { CollaborativeUndoManager } from './undo-manager.js';
 import { getOrCreateUserIdentity, saveUserNickname } from './user-identity.js';
-import { useAwareness, type AwarenessUserState } from './use-awareness.js';
+import { useAwareness } from './use-awareness.js';
+import { useRemoteUsersStore } from './remote-users-store.js';
 import { createDocEpochGuard } from './doc-epoch-guard.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
 import { bindCommentsYjs, useCommentsStore } from '../comments/index.js';
+import { EdgeRoutingManager } from '../canvas/custom-edges/edge-routing-manager.js';
 import { apiClient } from '../../lib/api-client.js';
 
 export interface CollaborationContextValue {
@@ -22,7 +24,6 @@ export interface CollaborationContextValue {
   undoManager: CollaborativeUndoManager;
   connectionStatus: CollaborationConnectionStatus;
   isSynced: boolean;
-  remoteUsers: AwarenessUserState[];
   currentUser: UserIdentity;
   updateNickname: (name: string) => void;
   broadcastCursor: (cursor: { x: number; y: number } | null) => void;
@@ -64,6 +65,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   // 初始化协同会话：在统一的 useEffect 中创建与销毁，彻底杜绝 React 19 StrictMode 下 useMemo 持有已销毁 dead 实例的回归问题
   useEffect(() => {
     useSidebarStore.getState().reset();
+    useRemoteUsersStore.getState().reset();
     setIsSynced(false);
     setConnectionStatus('connecting');
 
@@ -146,11 +148,13 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       unbindStore();
       unbindComments();
       unbindTheme();
+      u.destroy();
+      b.destroy();
       p.destroy();
       ws.destroy();
-      b.destroy();
       d.destroy();
-      u.destroy();
+      EdgeRoutingManager.getInstance().clear();
+      useRemoteUsersStore.getState().reset();
       useFlowStore.getState().resetDiagramState();
       useCommentsStore.getState().reset();
       useSidebarStore.getState().reset();
@@ -166,7 +170,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   }, [currentUser.isFirstVisit]);
 
   // 协同感知 Hook
-  const { remoteUsers, broadcastCursor, broadcastViewport, broadcastAiPlanning } = useAwareness({
+  const { broadcastCursor, broadcastViewport, broadcastAiPlanning } = useAwareness({
     provider: session?.provider ?? null,
     currentUser,
     selectedNodeIds,
@@ -188,7 +192,6 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       undoManager: session.undoManager,
       connectionStatus,
       isSynced,
-      remoteUsers,
       currentUser,
       updateNickname: handleUpdateNickname,
       broadcastCursor,
@@ -200,7 +203,6 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     diagramId,
     connectionStatus,
     isSynced,
-    remoteUsers,
     currentUser,
     handleUpdateNickname,
     broadcastCursor,

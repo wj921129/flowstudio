@@ -34,10 +34,11 @@ export class CollaborativeUndoManager {
   ) {
     const nodesMap = doc.getMap('nodes');
     const edgesMap = doc.getMap('edges');
+    const metaMap = doc.getMap('meta');
 
     const trackedOrigins = new TrackedOriginsSet([localClientId]);
 
-    this.undoManager = new Y.UndoManager([nodesMap, edgesMap], {
+    this.undoManager = new Y.UndoManager([nodesMap, edgesMap, metaMap], {
       trackedOrigins,
       captureTimeout,
     });

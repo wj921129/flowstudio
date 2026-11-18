@@ -1,11 +1,9 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import type { AwarenessUserState as SharedAwarenessUserState, UserIdentity } from '@flowstudio/shared';
+import type { UserIdentity } from '@flowstudio/shared';
+import { useRemoteUsersStore, type AwarenessUserState } from './remote-users-store.js';
 
-export type AwarenessUserState = SharedAwarenessUserState & {
-  spotlightTargetId?: string | null;
-  spotlightNodeIds?: string[];
-};
+export type { AwarenessUserState };
 
 export interface UseAwarenessOptions {
   provider: HocuspocusProvider | null;
@@ -15,38 +13,6 @@ export interface UseAwarenessOptions {
   spotlightNodeIds?: string[];
 }
 
-/**
- * 逐字段比对远端用户状态：本地 setLocalStateField 同样会触发 awareness change，
- * 若无条件写入新数组，CollaborationContext 的全部消费者都会随之重渲染
- */
-function isSameRemoteUsers(a: AwarenessUserState[], b: AwarenessUserState[]): boolean {
-  if (a.length !== b.length) return false;
-
-  // 远端 awareness 载荷来自其他客户端，字段可能缺失，比对时统一按空集合处理
-  const joinIds = (ids: string[] | undefined) => (ids ?? []).join(',');
-
-  return a.every((item, index) => {
-    const other = b[index];
-    return (
-      item.clientId === other.clientId &&
-      item.nickname === other.nickname &&
-      item.color === other.color &&
-      item.cursor?.x === other.cursor?.x &&
-      item.cursor?.y === other.cursor?.y &&
-      item.viewport?.x === other.viewport?.x &&
-      item.viewport?.y === other.viewport?.y &&
-      item.viewport?.zoom === other.viewport?.zoom &&
-      joinIds(item.selectedNodeIds) === joinIds(other.selectedNodeIds) &&
-      item.spotlightTargetId === other.spotlightTargetId &&
-      joinIds(item.spotlightNodeIds) === joinIds(other.spotlightNodeIds) &&
-      item.isAi === other.isAi &&
-      item.agentName === other.agentName &&
-      item.aiPlanning?.isPlanning === other.aiPlanning?.isPlanning &&
-      item.aiPlanning?.prompt === other.aiPlanning?.prompt
-    );
-  });
-}
-
 export function useAwareness({
   provider,
   currentUser,
@@ -54,7 +20,6 @@ export function useAwareness({
   spotlightTargetId,
   spotlightNodeIds,
 }: UseAwarenessOptions) {
-  const [remoteUsers, setRemoteUsers] = useState<AwarenessUserState[]>([]);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
   const lastViewportBroadcastRef = useRef<number>(0);
@@ -138,7 +103,10 @@ export function useAwareness({
 
   // 监听远端 awareness 变更
   useEffect(() => {
-    if (!provider || !provider.awareness) return;
+    if (!provider || !provider.awareness) {
+      useRemoteUsersStore.getState().reset();
+      return;
+    }
 
     const handleAwarenessChange = () => {
       const states = provider.awareness?.getStates();
@@ -158,8 +126,7 @@ export function useAwareness({
         }
       });
 
-      const remotes = Array.from(userMap.values());
-      setRemoteUsers((prev) => (isSameRemoteUsers(prev, remotes) ? prev : remotes));
+      useRemoteUsersStore.getState().setRemoteUsers(Array.from(userMap.values()));
     };
 
     provider.awareness.on('change', handleAwarenessChange);
@@ -167,11 +134,11 @@ export function useAwareness({
 
     return () => {
       provider.awareness?.off('change', handleAwarenessChange);
+      useRemoteUsersStore.getState().reset();
     };
   }, [provider]);
 
   return {
-    remoteUsers,
     broadcastCursor,
     broadcastViewport,
     broadcastAiPlanning,

@@ -12,8 +12,13 @@ import {
   formatBorderAnchorHandle,
   projectPointToNodeBorder,
 } from '@flowstudio/shared';
-import { useFlowStore } from '../../../stores/flow-store';
-import { useCollaboration } from '../../collaboration/collaboration-provider';
+import {
+  useFlowStore,
+  selectIncomingHandleKeys,
+  selectCustomAttachedHandleKeys,
+  selectNodeSemanticRole,
+} from '../../../stores/flow-store';
+import { useRemoteNodeSelector } from '../../collaboration/remote-users-store';
 import { InlineTextEditor } from './inline-text-editor';
 
 
@@ -82,9 +87,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '');
-  const collab = useCollaboration();
-
-  const remoteSelector = collab?.remoteUsers.find((u) => (u.selectedNodeIds ?? []).includes(id));
+  const remoteSelector = useRemoteNodeSelector(id);
 
   let isConnecting = false;
   try {
@@ -108,36 +111,11 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   } | null>(null);
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
-  const semanticRole = useFlowStore((s) => resolveNodeSemanticRole(id, data.type, data.label, s.edges));
+  const semanticRole = useFlowStore((s) => selectNodeSemanticRole(s.edges, id, data.type, data.label));
   const showHandles = isConnecting || activeTool === 'connect' || selected;
   const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
 
-  const incomingHandleKeys = useFlowStore((s) => {
-    const set = new Set<string>();
-    const thisNode = s.nodes.find((n) => n.id === id);
-    for (const edge of s.edges) {
-      if (edge.target === id) {
-        if (edge.targetHandle) {
-          set.add(edge.targetHandle);
-        } else {
-          const srcNode = s.nodes.find((n) => n.id === edge.source);
-          if (thisNode && srcNode) {
-            const dx = thisNode.position.x - srcNode.position.x;
-            const dy = thisNode.position.y - srcNode.position.y;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-              set.add(dx >= 0 ? 'left' : 'right');
-            } else {
-              set.add(dy >= 0 ? 'top' : 'bottom');
-            }
-          } else {
-            set.add('left');
-            set.add('top');
-          }
-        }
-      }
-    }
-    return Array.from(set).sort().join(',');
-  });
+  const incomingHandleKeys = useFlowStore((s) => selectIncomingHandleKeys(s.nodes, s.edges, id));
   const incomingHandles = React.useMemo(
     () => new Set(incomingHandleKeys ? incomingHandleKeys.split(',') : []),
     [incomingHandleKeys]
@@ -185,18 +163,9 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   );
   const baseHandleIdSet = React.useMemo(() => new Set(baseHandles.map((h) => h.id)), [baseHandles]);
 
-  const customAttachedHandleKeys = useFlowStore((s) => {
-    const set = new Set<string>();
-    for (const edge of s.edges) {
-      if (edge.source === id && edge.sourceHandle && !baseHandleIdSet.has(edge.sourceHandle) && parseBorderAnchorHandle(edge.sourceHandle)) {
-        set.add(edge.sourceHandle);
-      }
-      if (edge.target === id && edge.targetHandle && !baseHandleIdSet.has(edge.targetHandle) && parseBorderAnchorHandle(edge.targetHandle)) {
-        set.add(edge.targetHandle);
-      }
-    }
-    return Array.from(set).sort().join(',');
-  });
+  const customAttachedHandleKeys = useFlowStore((s) =>
+    selectCustomAttachedHandleKeys(s.edges, id, baseHandleIdSet)
+  );
 
   const customAttachedHandles = React.useMemo(() => {
     if (!customAttachedHandleKeys) return [];
