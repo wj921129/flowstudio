@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as Y from 'yjs';
 import { initDatabase } from '../src/db/database.js';
 import { DiagramRepository } from '../src/db/diagram-repository.js';
-import { DocumentWriter } from '../src/collaboration/document-writer.js';
+import { DocumentWriter, applySnapshotDelta } from '../src/collaboration/document-writer.js';
 import { buildServer } from '../src/server.js';
 
 describe('Server Snapshots & Lossless Delta Rollback', () => {
@@ -212,4 +212,178 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
 
     await server.app.close();
   }, 20000);
+
+  it('恢复快照时彻底清理快照后附加到节点和连线上的多余子字段', async () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const writer = new DocumentWriter(repo);
+    const diag = repo.createDiagram({ title: '子字段清理测试' });
+
+    const doc = new Y.Doc();
+    const n1 = new Y.Map();
+    n1.set('id', 'node-1');
+    n1.set('type', 'process');
+    n1.set('position', { x: 100, y: 100 });
+    n1.set('data', { label: '步骤一' });
+    doc.getMap('nodes').set('node-1', n1);
+
+    const e1 = new Y.Map();
+    e1.set('id', 'edge-1');
+    e1.set('source', 'node-1');
+    e1.set('target', 'node-1');
+    doc.getMap('edges').set('edge-1', e1);
+
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(doc));
+    const snap = repo.createSnapshot(diag.id, '基线快照', 'manual')!;
+
+    // 模拟快照后把节点拖入泳道并修改连线附加字段
+    const mutated = new Y.Doc();
+    Y.applyUpdate(mutated, repo.getYDocState(diag.id)!);
+    const mn1 = mutated.getMap<Y.Map<unknown>>('nodes').get('node-1')!;
+    mn1.set('parentId', 'lane-1');
+    mn1.set('extent', 'parent');
+    mn1.set('style', { backgroundColor: '#fff' });
+    const me1 = mutated.getMap<Y.Map<unknown>>('edges').get('edge-1')!;
+    me1.set('style', { stroke: '#f00' });
+    me1.set('animated', true);
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(mutated));
+
+    const restoreRes = await writer.restoreSnapshot(diag.id, snap.id);
+    expect(restoreRes.success).toBe(true);
+
+    const recovered = new Y.Doc();
+    Y.applyUpdate(recovered, repo.getYDocState(diag.id)!);
+    const rn1 = recovered.getMap<Y.Map<unknown>>('nodes').get('node-1')!;
+    expect(rn1.has('parentId')).toBe(false);
+    expect(rn1.has('extent')).toBe(false);
+    expect(rn1.has('style')).toBe(false);
+    expect(rn1.get('data')).toEqual({ label: '步骤一' });
+
+    const re1 = recovered.getMap<Y.Map<unknown>>('edges').get('edge-1')!;
+    expect(re1.has('style')).toBe(false);
+    expect(re1.has('animated')).toBe(false);
+
+    db.close();
+  });
+
+  it('仅修改单节点时未变节点和连线不产生冗余写事件，完全一致时零 update', () => {
+    const snapDoc = new Y.Doc();
+    const s1 = new Y.Map();
+    s1.set('id', 'node-1');
+    s1.set('position', { x: 10, y: 20 });
+    s1.set('data', { label: '不变节点', style: { bg: '#fff', border: '#000' } });
+    snapDoc.getMap('nodes').set('node-1', s1);
+
+    const s2 = new Y.Map();
+    s2.set('id', 'node-2');
+    s2.set('type', 'process');
+    s2.set('data', { label: '旧标签' });
+    snapDoc.getMap('nodes').set('node-2', s2);
+
+    const se1 = new Y.Map();
+    se1.set('id', 'edge-1');
+    se1.set('source', 'node-1');
+    se1.set('target', 'node-2');
+    snapDoc.getMap('edges').set('edge-1', se1);
+
+    const targetDoc = new Y.Doc();
+    const t1 = new Y.Map();
+    t1.set('id', 'node-1');
+    // 故意改变对象键序，验证 deepEqual 忽略键序不产生冗余写入
+    t1.set('position', { y: 20, x: 10 });
+    t1.set('data', { style: { border: '#000', bg: '#fff' }, label: '不变节点' });
+    targetDoc.getMap('nodes').set('node-1', t1);
+
+    const t2 = new Y.Map();
+    t2.set('id', 'node-2');
+    t2.set('type', 'process');
+    t2.set('data', { label: '新标签' });
+    targetDoc.getMap('nodes').set('node-2', t2);
+
+    const te1 = new Y.Map();
+    te1.set('id', 'edge-1');
+    te1.set('source', 'node-1');
+    te1.set('target', 'node-2');
+    targetDoc.getMap('edges').set('edge-1', te1);
+
+    let unchangedNodeEvents = 0;
+    let unchangedEdgeEvents = 0;
+    const changedNodeKeys: string[] = [];
+    t1.observe(() => {
+      unchangedNodeEvents += 1;
+    });
+    te1.observe(() => {
+      unchangedEdgeEvents += 1;
+    });
+    t2.observe((event) => {
+      changedNodeKeys.push(...Array.from(event.keysChanged));
+    });
+
+    targetDoc.transact(() => {
+      applySnapshotDelta(targetDoc, snapDoc);
+    });
+
+    expect(unchangedNodeEvents).toBe(0);
+    expect(unchangedEdgeEvents).toBe(0);
+    expect(changedNodeKeys).toEqual(['data']);
+    expect(t2.get('data')).toEqual({ label: '旧标签' });
+
+    // 再次恢复完全等价的状态时不应发出任何 Yjs update
+    let updateCount = 0;
+    targetDoc.on('update', () => {
+      updateCount += 1;
+    });
+    targetDoc.transact(() => {
+      applySnapshotDelta(targetDoc, snapDoc);
+    });
+    expect(updateCount).toBe(0);
+
+    snapDoc.destroy();
+    targetDoc.destroy();
+  });
+
+  it('恢复快照时精确还原批注并保留当前文档独有的 meta 扩展键', async () => {
+    const db = initDatabase(tmpDbPath);
+    const repo = new DiagramRepository(db);
+    const writer = new DocumentWriter(repo);
+    const diag = repo.createDiagram({ title: '初始标题' });
+
+    const v1 = new Y.Doc();
+    Y.applyUpdate(v1, repo.getYDocState(diag.id)!);
+    const c1 = new Y.Map();
+    c1.set('id', 'comment-1');
+    c1.set('content', '基线批注');
+    v1.getMap('comments').set('comment-1', c1);
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(v1));
+    const snap = repo.createSnapshot(diag.id, '含批注快照', 'manual')!;
+
+    const v2 = new Y.Doc();
+    Y.applyUpdate(v2, repo.getYDocState(diag.id)!);
+    v2.getMap('meta').set('title', '被修改的标题');
+    v2.getMap('meta').set('customExt', 'keep-me');
+    const vc1 = v2.getMap<Y.Map<unknown>>('comments').get('comment-1')!;
+    vc1.set('content', '改后批注');
+    vc1.set('resolved', true);
+    const c2 = new Y.Map();
+    c2.set('id', 'comment-2');
+    c2.set('content', '快照后新增批注');
+    v2.getMap('comments').set('comment-2', c2);
+    repo.saveYDocState(diag.id, Y.encodeStateAsUpdate(v2));
+
+    const res = await writer.restoreSnapshot(diag.id, snap.id);
+    expect(res.success).toBe(true);
+
+    const recovered = new Y.Doc();
+    Y.applyUpdate(recovered, repo.getYDocState(diag.id)!);
+    expect(recovered.getMap('meta').get('title')).toBe('初始标题');
+    expect(recovered.getMap('meta').get('customExt')).toBe('keep-me');
+
+    const comments = recovered.getMap<Y.Map<unknown>>('comments');
+    expect(comments.size).toBe(1);
+    expect(comments.has('comment-2')).toBe(false);
+    expect(comments.get('comment-1')!.get('content')).toBe('基线批注');
+    expect(comments.get('comment-1')!.has('resolved')).toBe(false);
+
+    db.close();
+  });
 });
