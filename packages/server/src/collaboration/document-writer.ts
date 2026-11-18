@@ -10,7 +10,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import type { SnapshotSummary } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { SaveStatusTracker } from './save-status.js';
-import { compactYDocState } from './yjs-compaction.js';
+import { getTopLevelMaps } from './shared-maps.js';
 import { deepEqual } from './entity-state.js';
 
 export type DocumentOrigin =
@@ -96,11 +96,10 @@ export class DocumentWriter {
     if (!live) return false;
 
     const update = Y.encodeStateAsUpdate(live);
-    const compacted = await compactYDocState(update);
     const metaTitle = live.getMap('meta').get('title');
     const saved = this.repo.saveYDocState(
       diagramId,
-      compacted ?? update,
+      update,
       typeof metaTitle === 'string' ? metaTitle : undefined,
     );
     if (saved) this.saveStatus?.markSaved(diagramId);
@@ -201,13 +200,10 @@ export class DocumentWriter {
     origin: DocumentOrigin,
     fn: (doc: Y.Doc) => T,
   ): T {
-    // 注意：UndoManager 作用域必须显式覆盖所有会被服务端写入的顶层共享类型。
-    // 新增顶层 Y.Map/Y.Array（如 comments、attachments）时务必同步加入此数组，
-    // 否则该类型的写入在事务失败时不会被补偿回滚。
-    const undoManager = new Y.UndoManager(
-      [doc.getMap('nodes'), doc.getMap('edges'), doc.getMap('meta')],
-      { trackedOrigins: new Set([origin]), captureTimeout: 0 },
-    );
+    const undoManager = new Y.UndoManager(getTopLevelMaps(doc), {
+      trackedOrigins: new Set([origin]),
+      captureTimeout: 0,
+    });
 
     try {
       let result!: T;
@@ -354,6 +350,34 @@ export function applySnapshotDelta(targetDoc: Y.Doc, snapDoc: Y.Doc): void {
   for (const id of Array.from(currEdgesMap.keys())) {
     if (!targetEdgeIds.has(id)) {
       currEdgesMap.delete(id);
+    }
+  }
+
+  const snapCommentsMap = snapDoc.getMap<Y.Map<unknown>>('comments');
+  const currCommentsMap = targetDoc.getMap<Y.Map<unknown>>('comments');
+  const targetCommentIds = new Set<string>();
+  snapCommentsMap.forEach((commentMap, id) => {
+    targetCommentIds.add(id);
+    let currCommentMap = currCommentsMap.get(id);
+    if (!currCommentMap) {
+      currCommentMap = new Y.Map<unknown>();
+      currCommentsMap.set(id, currCommentMap);
+    }
+    commentMap.forEach((val, key) => {
+      if (!deepEqual(currCommentMap!.get(key), val)) {
+        currCommentMap!.set(key, val);
+      }
+    });
+    for (const key of Array.from(currCommentMap.keys())) {
+      if (!commentMap.has(key)) {
+        currCommentMap.delete(key);
+      }
+    }
+  });
+
+  for (const id of Array.from(currCommentsMap.keys())) {
+    if (!targetCommentIds.has(id)) {
+      currCommentsMap.delete(id);
     }
   }
 }
