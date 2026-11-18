@@ -17,10 +17,13 @@ import type { DiagramRepository } from '../db/diagram-repository.js';
 import { DocumentWriter } from './document-writer.js';
 import {
   applyMapState,
+  isEntityModifiedByHuman,
   mapMatchesState,
   revertMapFields,
   snapshotMap,
 } from './entity-state.js';
+
+export { isEntityModifiedByHuman };
 
 export interface LegacyBatchInput {
   batchId: string;
@@ -141,6 +144,11 @@ export class AiBatchManager {
     const skipped: AiBatchSkippedDetail[] = [];
     const revertedEntityIds = new Set<string>();
     const processedDiffs = new Set<AiBatchEntityDiff>();
+    const batchAddedNodeIds = new Set(
+      batch.diffs
+        .filter((diff) => diff.entityType === 'node' && diff.opType === 'add')
+        .map((diff) => diff.entityId),
+    );
     const batchAddedEdgeIds = new Set(
       batch.diffs
         .filter((diff) => diff.entityType === 'edge' && diff.opType === 'add')
@@ -231,6 +239,27 @@ export class AiBatchManager {
             continue;
           }
 
+          if (diff.entityType === 'node') {
+            let hasHumanChild = false;
+            nodesMap.forEach((childMap, childId) => {
+              if (hasHumanChild) return;
+              if (childMap.get('parentId') === diff.entityId) {
+                if (!batchAddedNodeIds.has(childId)) {
+                  hasHumanChild = true;
+                }
+              }
+            });
+
+            if (hasHumanChild) {
+              skipped.push({
+                entityId: diff.entityId,
+                entityType: 'node',
+                reason: '该容器挂载了人工子节点，安全跳过删除',
+              });
+              continue;
+            }
+          }
+
           if (diff.entityType === 'node' && hasHumanAttachedEdge(diff.entityId)) {
             skipped.push({
               entityId: diff.entityId,
@@ -319,9 +348,33 @@ export class AiBatchManager {
         }
 
         if (diff.beforeState) {
+          if (diff.entityType === 'edge') {
+            const source = (diff.beforeState.source as string) ?? '';
+            const target = (diff.beforeState.target as string) ?? '';
+            if (!source || !target || !nodesMap.has(source) || !nodesMap.has(target)) {
+              skipped.push({
+                entityId: diff.entityId,
+                entityType: 'edge',
+                reason: `连线端点节点不存在（source: ${source}, target: ${target}），为防悬挂边跳过恢复`,
+              });
+              continue;
+            }
+          }
+
+          let stateToApply = diff.beforeState;
+          if (diff.entityType === 'node') {
+            const parentId = diff.beforeState.parentId as string | undefined;
+            if (parentId && !nodesMap.has(parentId)) {
+              const stripped = { ...diff.beforeState };
+              delete stripped.parentId;
+              delete stripped.extent;
+              stateToApply = stripped;
+            }
+          }
+
           const restored = new Y.Map<unknown>();
-          applyMapState(restored, diff.beforeState);
           map.set(diff.entityId, restored);
+          applyMapState(restored, stateToApply);
           if (diff.entityType === 'edge') {
             indexEdge(diff.entityId, restored.get('source'), restored.get('target'));
           }

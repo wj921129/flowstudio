@@ -59,12 +59,18 @@ export function snapshotMap(map: Y.Map<unknown>): EntityState {
   return state;
 }
 
+export function isPlainObject(val: unknown): val is Record<string, unknown> {
+  return typeof val === 'object' && val !== null && !Array.isArray(val);
+}
+
 /**
  * 用完整状态重建 Y.Map（用于恢复被删除的实体）
  */
 export function applyMapState(map: Y.Map<unknown>, state: EntityState): void {
-  for (const key of Array.from(map.keys())) {
-    if (!(key in state)) map.delete(key);
+  if (map.doc) {
+    for (const key of Array.from(map.keys())) {
+      if (!(key in state)) map.delete(key);
+    }
   }
   for (const [key, value] of Object.entries(state)) {
     map.set(key, cloneValue(value));
@@ -101,6 +107,131 @@ export interface FieldRevertOutcome {
   skippedFields: string[];
 }
 
+export interface StyleRevertResult {
+  nextStyle: Record<string, unknown>;
+  changed: boolean;
+  skippedKeys: string[];
+}
+
+/**
+ * 细粒度样式子键比对与还原
+ */
+export function revertStyleObject(
+  currentStyle: unknown,
+  beforeStyle: unknown,
+  afterStyle: unknown,
+): StyleRevertResult {
+  const current = isPlainObject(currentStyle) ? currentStyle : {};
+  const before = isPlainObject(beforeStyle) ? beforeStyle : {};
+  const after = isPlainObject(afterStyle) ? afterStyle : {};
+
+  const nextStyle: Record<string, unknown> = cloneValue(current);
+  const skippedKeys: string[] = [];
+  let changed = false;
+
+  const allAiKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of allAiKeys) {
+    const beforeVal = before[key];
+    const afterVal = after[key];
+    const currentVal = current[key];
+
+    // AI 没改动该子键：保留人类修改或默认值，不冲突
+    if (deepEqual(beforeVal, afterVal)) continue;
+
+    // AI 改动过该子键：检查人类是否也二次修改了
+    if (deepEqual(currentVal, afterVal)) {
+      if (beforeVal === undefined) {
+        if (key in nextStyle) {
+          delete nextStyle[key];
+          changed = true;
+        }
+      } else if (!deepEqual(currentVal, beforeVal)) {
+        nextStyle[key] = cloneValue(beforeVal);
+        changed = true;
+      }
+    } else if (!deepEqual(currentVal, beforeVal)) {
+      skippedKeys.push(key);
+    }
+  }
+
+  return { nextStyle, changed, skippedKeys };
+}
+
+/**
+ * 样式子键比对：人类是否冲突修改了 AI 碰过的样式
+ */
+export function isStyleModifiedByHuman(
+  currentStyle: unknown,
+  afterStyle: unknown,
+  beforeStyle?: unknown,
+): boolean {
+  if (deepEqual(currentStyle, afterStyle)) return false;
+  if (!isPlainObject(beforeStyle) || !isPlainObject(afterStyle)) {
+    return !deepEqual(currentStyle, afterStyle);
+  }
+  const current = isPlainObject(currentStyle) ? currentStyle : {};
+  const before = beforeStyle;
+  const after = afterStyle;
+
+  const aiKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of aiKeys) {
+    if (!deepEqual(before[k], after[k])) {
+      if (!deepEqual(current[k], after[k])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 判断实体是否被人类修改（支持细粒度样式比对）
+ */
+export function isEntityModifiedByHuman(
+  current: Y.Map<unknown> | Record<string, unknown>,
+  afterState: EntityState,
+  beforeState?: EntityState | null,
+): boolean {
+  const currentSnapshot = current instanceof Y.Map ? snapshotMap(current) : current;
+  if (!currentSnapshot || !afterState) return true;
+
+  const topKeys = new Set([...Object.keys(currentSnapshot), ...Object.keys(afterState)]);
+  for (const key of topKeys) {
+    if (key === 'data') {
+      const currentData = isPlainObject(currentSnapshot.data) ? currentSnapshot.data : {};
+      const afterData = isPlainObject(afterState.data) ? afterState.data : {};
+      const beforeData = isPlainObject(beforeState?.data) ? beforeState.data : {};
+
+      const dataKeys = new Set([...Object.keys(currentData), ...Object.keys(afterData)]);
+      for (const dataKey of dataKeys) {
+        if (dataKey === 'style') {
+          if (isStyleModifiedByHuman(currentData.style, afterData.style, beforeData.style)) {
+            return true;
+          }
+          continue;
+        }
+        if (!deepEqual(currentData[dataKey], afterData[dataKey])) {
+          return true;
+        }
+      }
+      continue;
+    }
+
+    if (key === 'style') {
+      if (isStyleModifiedByHuman(currentSnapshot.style, afterState.style, beforeState?.style)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (!deepEqual(currentSnapshot[key], afterState[key])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * 字段级乐观并发还原
  *
@@ -122,6 +253,22 @@ export function revertMapFields(
 
   for (const key of topKeys) {
     if (key === 'data') continue;
+
+    if (key === 'style') {
+      const styleRes = revertStyleObject(
+        map.get('style'),
+        beforeState.style,
+        afterState.style,
+      );
+      if (styleRes.skippedKeys.length > 0) {
+        skippedFields.push('style');
+      }
+      if (styleRes.changed) {
+        map.set('style', styleRes.nextStyle);
+        changed = true;
+      }
+      continue;
+    }
 
     const beforeValue = beforeState[key];
     const afterValue = afterState[key];
@@ -151,6 +298,22 @@ export function revertMapFields(
 
     const dataKeys = new Set([...Object.keys(beforeData), ...Object.keys(afterData)]);
     for (const dataKey of dataKeys) {
+      if (dataKey === 'style') {
+        const styleRes = revertStyleObject(
+          currentData.style,
+          beforeData.style,
+          afterData.style,
+        );
+        if (styleRes.skippedKeys.length > 0) {
+          skippedFields.push('data.style');
+        }
+        if (styleRes.changed) {
+          nextData.style = styleRes.nextStyle;
+          dataChanged = true;
+        }
+        continue;
+      }
+
       const beforeValue = beforeData[dataKey];
       const afterValue = afterData[dataKey];
       const currentValue = currentData[dataKey];
