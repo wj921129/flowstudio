@@ -12,7 +12,7 @@ import type { SnapshotSummary } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { SaveStatusTracker } from './save-status.js';
 import { getTopLevelMaps } from './shared-maps.js';
-import { deepEqual } from './entity-state.js';
+import { deepEqual, cloneValue } from './entity-state.js';
 
 export type DocumentOrigin =
   | `ai:${string}`
@@ -341,6 +341,32 @@ export class DocumentWriter {
   }
 }
 
+function syncMapDeep(curr: Y.Map<unknown>, snap: Y.Map<unknown>): void {
+  const snapKeys = new Set<string>();
+  snap.forEach((snapVal, k) => {
+    snapKeys.add(k);
+    const currVal = curr.get(k);
+    if (snapVal instanceof Y.Map) {
+      let targetSubMap = currVal instanceof Y.Map ? currVal : null;
+      if (!targetSubMap) {
+        targetSubMap = new Y.Map<unknown>();
+        curr.set(k, targetSubMap);
+      }
+      syncMapDeep(targetSubMap, snapVal);
+    } else {
+      if (!deepEqual(currVal, snapVal)) {
+        curr.set(k, cloneValue(snapVal));
+      }
+    }
+  });
+
+  for (const k of Array.from(curr.keys())) {
+    if (!snapKeys.has(k)) {
+      curr.delete(k);
+    }
+  }
+}
+
 function syncNestedMapDelta(
   currMap: Y.Map<Y.Map<unknown>>,
   snapMap: Y.Map<Y.Map<unknown>>,
@@ -353,16 +379,7 @@ function syncNestedMapDelta(
       currItemMap = new Y.Map<unknown>();
       currMap.set(id, currItemMap);
     }
-    snapItemMap.forEach((val, key) => {
-      if (!deepEqual(currItemMap!.get(key), val)) {
-        currItemMap!.set(key, val);
-      }
-    });
-    for (const key of Array.from(currItemMap.keys())) {
-      if (!snapItemMap.has(key)) {
-        currItemMap.delete(key);
-      }
-    }
+    syncMapDeep(currItemMap, snapItemMap);
   });
 
   for (const id of Array.from(currMap.keys())) {

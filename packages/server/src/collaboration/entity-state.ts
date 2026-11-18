@@ -4,16 +4,24 @@
  */
 
 import * as Y from 'yjs';
+import { setNestedNodeData } from './shared-maps.js';
 
 export type EntityState = Record<string, unknown>;
 
 export type NodeLockMode = 'none' | 'position' | 'full';
 
 /**
- * 深拷贝普通 JSON 数据，切断 Yjs 共享引用，避免快照被后续修改污染
+ * 深拷贝普通 JSON 数据与 Y.Map 嵌套结构，切断 Yjs 共享引用，避免快照被后续修改污染
  */
 export function cloneValue<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Y.Map) {
+    const output: Record<string, unknown> = {};
+    value.forEach((v, k) => {
+      output[k] = cloneValue(v);
+    });
+    return output as T;
+  }
   if (Array.isArray(value)) return value.map((item) => cloneValue(item)) as unknown as T;
 
   const source = value as Record<string, unknown>;
@@ -95,8 +103,13 @@ export function mapMatchesState(map: Y.Map<unknown>, state: EntityState): boolea
  */
 export function getNodeLockMode(map: Y.Map<unknown> | undefined | null): NodeLockMode {
   if (!map) return 'none';
-  const data = map.get('data') as Record<string, unknown> | undefined;
-  const raw = data?.lockMode ?? map.get('lockMode');
+  const data = map.get('data');
+  const lockMode = data instanceof Y.Map
+    ? data.get('lockMode')
+    : isPlainObject(data)
+      ? data.lockMode
+      : undefined;
+  const raw = lockMode ?? map.get('lockMode');
   return raw === 'position' || raw === 'full' ? raw : 'none';
 }
 
@@ -290,7 +303,10 @@ export function revertMapFields(
   }
 
   if ('data' in beforeState || 'data' in afterState) {
-    const currentData = (map.get('data') as Record<string, unknown> | undefined) ?? {};
+    const rawData = map.get('data');
+    const currentData = (rawData instanceof Y.Map
+      ? cloneValue(rawData)
+      : rawData) as Record<string, unknown> | undefined ?? {};
     const beforeData = (beforeState.data as Record<string, unknown> | undefined) ?? {};
     const afterData = (afterState.data as Record<string, unknown> | undefined) ?? {};
     const nextData: Record<string, unknown> = cloneValue(currentData);
@@ -334,7 +350,11 @@ export function revertMapFields(
     }
 
     if (dataChanged) {
-      map.set('data', nextData);
+      if (rawData instanceof Y.Map) {
+        setNestedNodeData(map, nextData);
+      } else {
+        map.set('data', nextData);
+      }
       changed = true;
     }
   }

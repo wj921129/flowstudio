@@ -2,6 +2,7 @@ import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@
 import * as Y from 'yjs';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { SaveStatusTracker } from './save-status.js';
+import { CURRENT_SCHEMA_VERSION, migrateYDocSchema } from './shared-maps.js';
 
 export class SqlitePersistenceExtension implements Extension {
   constructor(
@@ -19,10 +20,12 @@ export class SqlitePersistenceExtension implements Extension {
     const existingState = this.repo.getYDocState(documentName);
     if (!existingState || existingState.byteLength === 0) {
       document.getMap('meta').set('title', diagram.title);
+      document.getMap('meta').set('schemaVersion', CURRENT_SCHEMA_VERSION);
       return;
     }
 
     Y.applyUpdate(document, existingState);
+    migrateYDocSchema(document);
   }
 
   async onStoreDocument(data: onStoreDocumentPayload): Promise<void> {
