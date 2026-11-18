@@ -5,6 +5,7 @@
  *              所有落库统一走 `saveYDocState` 的 CRDT 增量合并，杜绝整包覆盖。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type { SnapshotSummary } from '@flowstudio/shared';
@@ -27,11 +28,38 @@ export interface MutateOutcome<T> {
 }
 
 export class DocumentWriter {
+  private writeQueues = new Map<string, Promise<unknown>>();
+  private queueScope = new AsyncLocalStorage<Set<string>>();
+
   constructor(
     private repo: DiagramRepository,
     private hocuspocus?: Hocuspocus,
     private saveStatus?: SaveStatusTracker,
   ) {}
+
+  runSerialized<T>(diagramId: string, task: () => Promise<T>): Promise<T> {
+    const active = this.queueScope.getStore();
+    if (active?.has(diagramId)) return task();
+
+    const previous = this.writeQueues.get(diagramId) ?? Promise.resolve();
+    const execute = () => {
+      const nextActive = new Set(active);
+      nextActive.add(diagramId);
+      return this.queueScope.run(nextActive, task);
+    };
+    const next = previous.then(execute, execute);
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeQueues.set(diagramId, tail);
+    void tail.then(() => {
+      if (this.writeQueues.get(diagramId) === tail) {
+        this.writeQueues.delete(diagramId);
+      }
+    });
+    return next;
+  }
 
   /**
    * 绑定协同服务实例（服务装配阶段的依赖倒置）
@@ -124,66 +152,73 @@ export class DocumentWriter {
     origin: DocumentOrigin,
     fn: (doc: Y.Doc) => T,
   ): Promise<MutateOutcome<T>> {
-    if (!this.repo.getDiagramById(diagramId)) {
-      throw new Error(`图表 ${diagramId} 不存在`);
-    }
+    return this.runSerialized(diagramId, async () => {
+      if (!this.repo.getDiagramById(diagramId)) {
+        throw new Error(`图表 ${diagramId} 不存在`);
+      }
 
-    const live = this.getLiveDocument(diagramId);
-    if (live) {
-      const result = this.applyTransaction(live, origin, fn);
-      this.clearThumbnailIfEmpty(diagramId, live);
-      return { result, live: true };
-    }
+      const live = this.getLiveDocument(diagramId);
+      if (live) {
+        const result = this.applyTransaction(live, origin, fn);
+        this.clearThumbnailIfEmpty(diagramId, live);
+        return { result, live: true };
+      }
 
-    if (this.hocuspocus) {
-      const direct = await this.hocuspocus.openDirectConnection(diagramId);
+      if (this.hocuspocus) {
+        const direct = await this.hocuspocus.openDirectConnection(diagramId);
+        try {
+          const doc = direct.document as unknown as Y.Doc;
+          const result = this.applyTransaction(doc, origin, fn);
+          this.clearThumbnailIfEmpty(diagramId, doc);
+          return { result, live: false };
+        } finally {
+          await direct.disconnect();
+        }
+      }
+
+      const state = this.repo.getYDocState(diagramId);
+      if (!state) throw new Error(`图表 ${diagramId} 不存在`);
+
+      const doc = new Y.Doc();
       try {
-        const doc = direct.document as unknown as Y.Doc;
-        const result = this.applyTransaction(doc, origin, fn);
-        this.clearThumbnailIfEmpty(diagramId, doc);
+        Y.applyUpdate(doc, state);
+
+        const increments: Uint8Array[] = [];
+        const collectUpdate = (update: Uint8Array) => {
+          increments.push(update);
+        };
+        doc.on('update', collectUpdate);
+
+        let result!: T;
+        try {
+          doc.transact(() => {
+            result = fn(doc);
+          }, origin);
+        } finally {
+          doc.off('update', collectUpdate);
+        }
+
+        if (result && typeof (result as { then?: unknown }).then === 'function') {
+          throw new Error('DocumentWriter.mutate 回调必须同步执行，严禁返回 Promise');
+        }
+
+        if (increments.length > 0) {
+          const increment =
+            increments.length === 1 ? increments[0] : Y.mergeUpdates(increments);
+          const metaTitle = doc.getMap('meta').get('title');
+          this.repo.saveYDocState(
+            diagramId,
+            increment,
+            typeof metaTitle === 'string' ? metaTitle : undefined,
+          );
+          this.clearThumbnailIfEmpty(diagramId, doc);
+        }
+
         return { result, live: false };
       } finally {
-        // 立即落库并卸载，确保冷写入具备持久性
-        await direct.disconnect();
+        doc.destroy();
       }
-    }
-
-    // 无协同实例的纯离线路径
-    const state = this.repo.getYDocState(diagramId);
-    if (!state) throw new Error(`图表 ${diagramId} 不存在`);
-
-    const doc = new Y.Doc();
-    Y.applyUpdate(doc, state);
-
-    // 只捕获本次事务产生的增量，避免全量 encodeStateAsUpdate 的重编码开销
-    const increments: Uint8Array[] = [];
-    const collectUpdate = (update: Uint8Array) => {
-      increments.push(update);
-    };
-    doc.on('update', collectUpdate);
-
-    let result!: T;
-    try {
-      doc.transact(() => {
-        result = fn(doc);
-      }, origin);
-    } finally {
-      doc.off('update', collectUpdate);
-    }
-
-    if (increments.length > 0) {
-      const increment =
-        increments.length === 1 ? increments[0] : Y.mergeUpdates(increments);
-      const metaTitle = doc.getMap('meta').get('title');
-      this.repo.saveYDocState(
-        diagramId,
-        increment,
-        typeof metaTitle === 'string' ? metaTitle : undefined,
-      );
-      this.clearThumbnailIfEmpty(diagramId, doc);
-    }
-
-    return { result, live: false };
+    });
   }
 
   private clearThumbnailIfEmpty(diagramId: string, doc: Y.Doc): void {
@@ -252,10 +287,10 @@ export class DocumentWriter {
     if (!currentState) return { success: false, error: '当前图表状态不存在' };
 
     const snapDoc = new Y.Doc();
-    Y.applyUpdate(snapDoc, targetState);
     const clone = new Y.Doc();
-    Y.applyUpdate(clone, currentState);
     try {
+      Y.applyUpdate(snapDoc, targetState);
+      Y.applyUpdate(clone, currentState);
       const stateVector = Y.encodeStateVector(clone);
       applySnapshotDelta(clone, snapDoc);
       return { success: true, update: Y.encodeStateAsUpdate(clone, stateVector) };
@@ -272,26 +307,30 @@ export class DocumentWriter {
     diagramId: string,
     snapshotId: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const targetState = this.repo.getSnapshotState(snapshotId);
-    if (!targetState) {
-      return { success: false, error: '目标快照不存在' };
-    }
-    if (!this.repo.getDiagramById(diagramId)) {
-      return { success: false, error: '目标图表不存在' };
-    }
-    // 快照与图表强绑定：禁止把 A 图快照恢复进 B 图，否则会静默清空 B 图内容
-    if (this.repo.getSnapshotDiagramId(snapshotId) !== diagramId) {
-      return { success: false, error: '该快照不属于当前图表，禁止跨图恢复' };
-    }
+    return this.runSerialized(diagramId, async () => {
+      const targetState = this.repo.getSnapshotState(snapshotId);
+      if (!targetState) {
+        return { success: false, error: '目标快照不存在' };
+      }
+      if (!this.repo.getDiagramById(diagramId)) {
+        return { success: false, error: '目标图表不存在' };
+      }
+      if (this.repo.getSnapshotDiagramId(snapshotId) !== diagramId) {
+        return { success: false, error: '该快照不属于当前图表，禁止跨图恢复' };
+      }
 
-    const snapDoc = new Y.Doc();
-    Y.applyUpdate(snapDoc, targetState);
+      const snapDoc = new Y.Doc();
+      try {
+        Y.applyUpdate(snapDoc, targetState);
+        await this.mutate(diagramId, `snapshot-restore:${snapshotId}`, (doc) => {
+          applySnapshotDelta(doc, snapDoc);
+        });
+      } finally {
+        snapDoc.destroy();
+      }
 
-    await this.mutate(diagramId, `snapshot-restore:${snapshotId}`, (doc) => {
-      applySnapshotDelta(doc, snapDoc);
+      return { success: true };
     });
-
-    return { success: true };
   }
 }
 
