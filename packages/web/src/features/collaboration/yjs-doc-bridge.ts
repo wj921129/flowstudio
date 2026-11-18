@@ -2,7 +2,10 @@ import * as Y from 'yjs';
 import type { FlowNode, FlowEdge } from '@flowstudio/shared';
 import type { DiagramBridgeState } from './types.js';
 import { DEFAULT_THEME_ID, type ThemePreset } from '../sidebar/styles/theme-presets';
-import { resolveNodeStyle } from '../sidebar/styles/style-resolver';
+import {
+  resolveNodeSemanticRole,
+  resolveNodeStyle,
+} from '../sidebar/styles/style-resolver';
 
 export interface YjsDiagramBridgeOptions {
   localClientId: string;
@@ -496,7 +499,14 @@ export function applyThemeToYDoc(
   doc.transact(() => {
     metaMap.set('themeId', theme.id);
 
-    nodesMap.forEach((itemMap) => {
+    const edgesList: Array<{ source: string; target: string }> = [];
+    edgesMap.forEach((edgeItem) => {
+      const source = edgeItem.get('source') as string | undefined;
+      const target = edgeItem.get('target') as string | undefined;
+      if (source && target) edgesList.push({ source, target });
+    });
+
+    nodesMap.forEach((itemMap, nodeId) => {
       const type = itemMap.get('type') as string;
       if (!type || type === 'group' || type === 'lane' || type === 'comment') return;
 
@@ -508,7 +518,13 @@ export function applyThemeToYDoc(
         return;
       }
 
-      const computed = resolveNodeStyle(type, theme);
+      const semanticRole = resolveNodeSemanticRole(
+        nodeId,
+        type,
+        data.label as string | undefined,
+        edgesList
+      );
+      const computed = resolveNodeStyle(type, theme, semanticRole);
       const nextStyle = {
         ...style,
         ...computed,

@@ -23,7 +23,7 @@ import type {
   MermaidBridgeOp,
 } from '@flowstudio/shared';
 import { DEFAULT_EDGE_TYPE } from '@flowstudio/shared';
-import { createNodeFromType, generateEdgeId, generateUniqueId } from '../lib/node-utils';
+import { createNodeFromType, generateEdgeId, generateUniqueId, type CreateNodeOptions } from '../lib/node-utils';
 import {
   computeBoundingBox,
   toLocalPosition,
@@ -71,6 +71,7 @@ export interface FlowStoreState {
   isShiftPressed: boolean;
   isSpacePanning: boolean;
   editingEdgeLabelId: string | null;
+  selectedEdgeLabelId: string | null;
   /** 是否可撤销 */
   canUndo: boolean;
   /** 是否可重做 */
@@ -125,8 +126,10 @@ export interface FlowStoreActions {
   onEdgesChange: (changes: EdgeChange[]) => void;
   /** 节点连线建立处理器 */
   onConnect: (connection: Connection) => void;
+  /** 已有连线端点重连处理器 */
+  reconnectEdge: (oldEdge: FlowEdge, newConnection: Connection) => void;
   /** 添加指定类型的节点 */
-  addNode: (type: FlowNodeType, position: { x: number; y: number }) => FlowNode;
+  addNode: (type: FlowNodeType, position: { x: number; y: number }, options?: CreateNodeOptions) => FlowNode;
   /** 批量添加节点至画布 */
   addNodes: (newNodes: FlowNode[]) => void;
   /** 删除所有选中的节点及其相连的连线 */
@@ -154,6 +157,8 @@ export interface FlowStoreActions {
   setShiftPressed: (pressed: boolean) => void;
   setSpacePanning: (panning: boolean) => void;
   setEditingEdgeLabelId: (id: string | null) => void;
+  setSelectedEdgeLabelId: (id: string | null) => void;
+  deleteEdgeLabel: (id: string) => void;
   /** 记录视口缩放比例，供拖拽对齐感应半径换算 */
   setViewportZoom: (zoom: number) => void;
   /** 临时启停拖拽智能对齐吸附 */
@@ -287,6 +292,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   isShiftPressed: false,
   isSpacePanning: false,
   editingEdgeLabelId: null,
+  selectedEdgeLabelId: null,
   canUndo: false,
   canRedo: false,
   diagramTitle: '未命名流程图',
@@ -543,7 +549,36 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     commitGraph(nodes, nextEdges);
   },
 
-  addNode: (type: FlowNodeType, position: { x: number; y: number }): FlowNode => {
+  reconnectEdge: (oldEdge: FlowEdge, newConnection: Connection) => {
+    if (!newConnection.source || !newConnection.target || newConnection.source === newConnection.target) {
+      return;
+    }
+    const { nodes, edges, historyPast } = get();
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+
+    const nextEdges = edges.map((e) => {
+      if (e.id !== oldEdge.id) return e;
+      const nextData = { ...(e.data || {}) };
+      delete nextData.waypoints;
+      return {
+        ...e,
+        source: newConnection.source!,
+        target: newConnection.target!,
+        sourceHandle: newConnection.sourceHandle ?? undefined,
+        targetHandle: newConnection.targetHandle ?? undefined,
+        data: nextData,
+      };
+    });
+
+    set({
+      edges: nextEdges,
+      ...historyUpdate,
+    });
+
+    commitGraph(nodes, nextEdges);
+  },
+
+  addNode: (type: FlowNodeType, position: { x: number; y: number }, options?: CreateNodeOptions): FlowNode => {
     const { nodes, edges, historyPast } = get();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -702,7 +737,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    const newNode = createNodeFromType(type, position);
+    const newNode = createNodeFromType(type, position, options);
     const nextNodes = [...nodes, newNode];
 
     set({
@@ -793,7 +828,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   deleteSelected: () => {
-    const { nodes, edges, selectedNodeIds, selectedEdgeId, historyPast } = get();
+    const { nodes, edges, selectedNodeIds, selectedEdgeId, selectedEdgeLabelId, historyPast } = get();
 
     const nodeIdsToDelete = new Set(selectedNodeIds);
     for (const n of nodes) {
@@ -864,7 +899,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
-    if (nodeIdsToDelete.size === 0 && edgeIdsToDelete.size === 0) return;
+    if (nodeIdsToDelete.size === 0 && edgeIdsToDelete.size === 0) {
+      if (selectedEdgeLabelId) {
+        get().deleteEdgeLabel(selectedEdgeLabelId);
+      }
+      return;
+    }
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const nextNodes = nodes.filter((n) => !nodeIdsToDelete.has(n.id));
@@ -1015,7 +1055,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       if (e.id === id) {
         const nextAnimated =
           data.style?.animated !== undefined ? data.style.animated : e.animated;
-        const nextLabel = data.label !== undefined ? data.label : e.label;
+        const nextLabel = 'label' in data ? (data.label || undefined) : e.label;
         return {
           ...e,
           label: nextLabel,
@@ -1047,10 +1087,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...n,
       selected: idSet.has(n.id),
     }));
-    set({
+    set((s) => ({
       nodes: nextNodes,
       selectedNodeIds: ids,
-    });
+      selectedEdgeLabelId: ids.length > 0 ? null : s.selectedEdgeLabelId,
+    }));
   },
 
   setSelectedEdge: (id: string | null) => {
@@ -1058,10 +1099,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...e,
       selected: id !== null && e.id === id,
     }));
-    set({
+    set((s) => ({
       edges: nextEdges,
       selectedEdgeId: id,
-    });
+      selectedEdgeLabelId: id !== null ? null : s.selectedEdgeLabelId,
+    }));
   },
 
   setActiveTool: (tool: ActiveTool) => {
@@ -1088,6 +1130,45 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setEditingEdgeLabelId: (id: string | null) => {
     set({ editingEdgeLabelId: id });
+  },
+
+  setSelectedEdgeLabelId: (id: string | null) => {
+    if (id === null) {
+      set({ selectedEdgeLabelId: null });
+      return;
+    }
+    set((s) => ({
+      selectedEdgeLabelId: id,
+      selectedNodeIds: [],
+      selectedEdgeId: null,
+      nodes: s.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
+      edges: s.edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
+    }));
+  },
+
+  deleteEdgeLabel: (id: string) => {
+    const { nodes, edges, historyPast } = get();
+    const target = edges.find((e) => e.id === id);
+    if (!target || (!target.data?.label && !target.label)) {
+      set({ selectedEdgeLabelId: null });
+      return;
+    }
+    const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
+    const nextEdges = edges.map((e) => {
+      if (e.id !== id) return e;
+      const nextData = { ...(e.data || {}) };
+      delete nextData.label;
+      delete nextData.labelRatio;
+      const { label: _removed, ...rest } = e;
+      return { ...rest, data: nextData };
+    });
+    set({
+      edges: nextEdges,
+      selectedEdgeLabelId: null,
+      editingEdgeLabelId: get().editingEdgeLabelId === id ? null : get().editingEdgeLabelId,
+      ...historyUpdate,
+    });
+    commitGraph(nodes, nextEdges);
   },
 
   setViewportZoom: (zoom: number) => {

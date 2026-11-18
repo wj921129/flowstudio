@@ -37,6 +37,8 @@ const flowNodeTypeSchema = z.enum([
   'rich-card',
 ]);
 
+const borderHandleSchema = z.string().regex(/^(top|right|bottom|left)(@\d+(\.\d+)?)?$/);
+
 export const mcpOpSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add_node'),
@@ -62,6 +64,8 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     op: z.literal('connect'),
     source: z.string().min(1),
     target: z.string().min(1),
+    sourceHandle: borderHandleSchema.optional(),
+    targetHandle: borderHandleSchema.optional(),
     label: z.string().optional(),
     kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
     style: styleSchema.optional(),
@@ -92,6 +96,8 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     op: z.literal('update_edge'),
     id: z.string().min(1),
     label: z.string().optional(),
+    sourceHandle: borderHandleSchema.optional(),
+    targetHandle: borderHandleSchema.optional(),
     style: styleSchema.optional(),
   }),
   z.object({

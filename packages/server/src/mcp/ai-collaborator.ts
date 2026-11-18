@@ -290,10 +290,20 @@ export class AiCollaborator {
     edgesMap.forEach((edgeMap, id) => {
       const source = edgeMap.get('source') as string;
       const target = edgeMap.get('target') as string;
+      const sourceHandle = (edgeMap.get('sourceHandle') as string | undefined) || undefined;
+      const targetHandle = (edgeMap.get('targetHandle') as string | undefined) || undefined;
       const data = (edgeMap.get('data') as Record<string, unknown>) || {};
       const label = (data.label as string) || undefined;
       if (source && target) {
-        edges.push({ id, source, target, label, kind: data.kind as CompactDiagram['edges'][number]['kind'] });
+        edges.push({
+          id,
+          source,
+          target,
+          ...(sourceHandle ? { sourceHandle } : {}),
+          ...(targetHandle ? { targetHandle } : {}),
+          label,
+          kind: data.kind as CompactDiagram['edges'][number]['kind'],
+        });
       }
     });
 
@@ -635,12 +645,16 @@ export class AiCollaborator {
         label?: string,
         style?: Record<string, unknown>,
         kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree',
+        sourceHandle?: string,
+        targetHandle?: string,
       ) => {
         const edgeId = this.newEntityId('edge');
         const edgeMap = new Y.Map<unknown>();
         edgeMap.set('id', edgeId);
         edgeMap.set('source', source);
         edgeMap.set('target', target);
+        if (sourceHandle) edgeMap.set('sourceHandle', sourceHandle);
+        if (targetHandle) edgeMap.set('targetHandle', targetHandle);
         edgeMap.set('type', 'orthogonal');
         edgeMap.set('data', { label, ...(kind ? { kind } : {}), ...(style ? { style } : {}) });
         edgesMap.set(edgeId, edgeMap);
@@ -770,7 +784,7 @@ export class AiCollaborator {
               warnings.push(`连线端点不存在 (${op.source} -> ${op.target})，跳过`);
               break;
             }
-            createEdgeMap(op.source, op.target, op.label, op.style, op.kind);
+            createEdgeMap(op.source, op.target, op.label, op.style, op.kind, op.sourceHandle, op.targetHandle);
             appliedCount++;
             break;
           }
@@ -841,6 +855,8 @@ export class AiCollaborator {
             const data = (edgeMap.get('data') as Record<string, unknown>) || {};
             const nextData = { ...data };
             if (op.label !== undefined) nextData.label = op.label;
+            if (op.sourceHandle !== undefined) edgeMap.set('sourceHandle', op.sourceHandle);
+            if (op.targetHandle !== undefined) edgeMap.set('targetHandle', op.targetHandle);
             if (op.style) {
               nextData.style = {
                 ...((nextData.style as Record<string, unknown>) || {}),

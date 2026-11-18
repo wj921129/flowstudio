@@ -1,6 +1,6 @@
 import { DIAGRAM_PRESETS, renderSpec, type FlowEdge, type FlowNode } from '@flowstudio/shared';
 import type { ThemePreset } from '../styles/types';
-import { resolveNodeStyle } from '../styles/style-resolver';
+import { resolveNodeSemanticRole, resolveNodeStyle } from '../styles/style-resolver';
 import type { DiagramTemplate, TemplateCategory } from './types';
 import { FLOWCHART_TEMPLATES } from './flowchart-templates';
 import { SWIMLANE_TEMPLATES } from './swimlane-templates';
@@ -28,7 +28,8 @@ export function instantiateTemplate(
   const rendered = renderSpec(template.spec, { idPrefix: `${prefix}_`, origin: offset });
 
   const nodes: FlowNode[] = rendered.nodes.map((node) => {
-    const computedStyle = resolveNodeStyle(node.type, theme);
+    const semanticRole = resolveNodeSemanticRole(node.id, node.type, node.data?.label, rendered.edges);
+    const computedStyle = resolveNodeStyle(node.type, theme, semanticRole);
     const nodeStyle: Record<string, unknown> = { ...computedStyle, isManualCustom: false };
     return {
       ...node,

@@ -26,6 +26,7 @@ export interface FloatingToolbarProps {
 
 export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = '' }) => {
   const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const edgeConnectMode = useFlowStore((s) => s.edgeConnectMode);
   const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
@@ -43,6 +44,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
   const selectedEdgeId = useFlowStore((s) => s.selectedEdgeId);
+  const selectedEdgeLabelId = useFlowStore((s) => s.selectedEdgeLabelId);
   const addNode = useFlowStore((s) => s.addNode);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
   const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
@@ -50,7 +52,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   const { screenToFlowPosition } = useReactFlow();
 
   // 是否有图元被选中（用于判断删除按钮状态）
-  const hasSelection = selectedNodeIds.length > 0 || Boolean(selectedEdgeId);
+  const hasSelection = selectedNodeIds.length > 0 || Boolean(selectedEdgeId) || Boolean(selectedEdgeLabelId);
 
   /**
    * 快速在当前视口中心添加便签节点 (comment)
@@ -143,14 +145,14 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           icon={MousePointer2}
           label="选择与移动"
           shortcut="V"
-          active={activeTool === 'select'}
+          active={activeTool === 'select' && !isSpacePanning}
           onClick={() => setActiveTool('select')}
         />
         <ToolbarButton
           icon={Hand}
           label="画布平移"
           shortcut="H"
-          active={activeTool === 'pan'}
+          active={activeTool === 'pan' || isSpacePanning}
           onClick={() => setActiveTool('pan')}
         />
         <ToolbarButton
@@ -161,7 +163,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
               : '折线连线 (点击切直线 / Shift 临时切换)'
           }
           shortcut="C"
-          active={activeTool === 'connect'}
+          active={activeTool === 'connect' && !isSpacePanning}
           onClick={handleConnectToolToggle}
         />
         <ToolbarButton

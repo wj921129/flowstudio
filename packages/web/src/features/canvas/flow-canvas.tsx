@@ -395,6 +395,11 @@ export const FlowCanvas: React.FC = () => {
         setHoveredEdgeForInsert(null);
         return;
       }
+      const rawRole = e.dataTransfer.getData('application/flowstudio-node-role');
+      const nodeOptions =
+        rawRole === 'start' || rawRole === 'end'
+          ? { label: rawRole === 'start' ? '开始' : '结束', role: rawRole as 'start' | 'end' }
+          : undefined;
 
       // 将光标所在屏幕物理视口坐标换算为 React Flow 画布世界绝对坐标
       const flowPosition = screenToFlowPosition({
@@ -416,7 +421,7 @@ export const FlowCanvas: React.FC = () => {
         rawType !== 'pool' ? findEdgeAtPosition(currentEdges, currentNodes, flowPosition, 24) : null;
 
       if (hitResult) {
-        const newNode = createNodeFromType(rawType, centeredPosition);
+        const newNode = createNodeFromType(rawType, centeredPosition, nodeOptions);
         const { nextNodes, nextEdges } = splitEdgeAndInsertNode({
           nodes: currentNodes,
           edges: currentEdges,
@@ -483,7 +488,7 @@ export const FlowCanvas: React.FC = () => {
       }
 
       // 添加常规节点至全局 Store 并自动设为唯一激活选中节点
-      const newNode = addNode(rawType, centeredPosition);
+      const newNode = addNode(rawType, centeredPosition, nodeOptions);
       if (newNode?.id) {
         setSelectedNodes([newNode.id]);
         setSelectedEdge(null);
@@ -537,6 +542,13 @@ export const FlowCanvas: React.FC = () => {
       onConnect(connection);
     },
     [onConnect]
+  );
+
+  const handleReconnect = useCallback(
+    (oldEdge: FlowEdge, newConnection: any) => {
+      useFlowStore.getState().reconnectEdge(oldEdge, newConnection);
+    },
+    []
   );
 
   const handleConnectStart = useCallback(() => {
@@ -643,6 +655,7 @@ export const FlowCanvas: React.FC = () => {
   const handlePaneClick = useCallback(() => {
     setSelectedNodes([]);
     setSelectedEdge(null);
+    useFlowStore.getState().setSelectedEdgeLabelId(null);
     setConnectSourceNodeId(null);
     setHoveredEdgeForInsert(null);
     if (spotlightTargetId) {
@@ -884,6 +897,7 @@ export const FlowCanvas: React.FC = () => {
       // 取消连线模式、退出聚光灯或清空选中 (Escape)
       if (e.key === 'Escape') {
         e.preventDefault();
+        useFlowStore.getState().setSelectedEdgeLabelId(null);
         if (spotlightActive) {
           toggleSpotlightMode(false);
           setSpotlightTarget(null);
@@ -1090,6 +1104,8 @@ export const FlowCanvas: React.FC = () => {
         onSelectionChange={handleSelectionChange}
         onConnect={handleConnect}
         onConnectStart={handleConnectStart}
+        onReconnect={handleReconnect}
+        edgesReconnectable={!isSpacePanning && !isReadOnly && activeTool !== 'pan'}
         onEdgeClick={handleEdgeClick}
         onEdgeDoubleClick={(_e, edge) => {
           if (isReadOnly) return;

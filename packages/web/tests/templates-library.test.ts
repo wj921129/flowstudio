@@ -24,7 +24,9 @@ describe('Templates Library', () => {
     expect(instance.edges.length).toBe(template.spec.edges.length);
     expect(instance.nodes[0].id).not.toBe(template.spec.nodes[0].id);
     expect(instance.nodes[0].position.y).toBe(100);
-    expect((instance.nodes[0].data.style as any)?.borderColor).toBe(theme.tokens.nodeBorder);
+    expect((instance.nodes[0].data.style as any)?.borderColor).toBe(
+      instance.nodes[0].type === 'start-end' ? theme.tokens.startBorder : theme.tokens.nodeBorder
+    );
   });
 
   it('correctly maps edges source and target to the newly generated node IDs', () => {

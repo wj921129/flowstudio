@@ -107,7 +107,10 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const labelDragEndRef = useRef<() => void>(() => {});
   const editingEdgeLabelId = useFlowStore((s) => s.editingEdgeLabelId);
   const setEditingEdgeLabelId = useFlowStore((s) => s.setEditingEdgeLabelId);
+  const selectedEdgeLabelId = useFlowStore((s) => s.selectedEdgeLabelId);
+  const setSelectedEdgeLabelId = useFlowStore((s) => s.setSelectedEdgeLabelId);
   const isEditingLabel = editingEdgeLabelId === id;
+  const isLabelSelected = selectedEdgeLabelId === id;
   const [labelDraft, setLabelDraft] = useState(data?.label || '');
 
   useEffect(() => {
@@ -261,6 +264,8 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         setDragLabelRatio(null);
         if (moved && latestRatio !== null) {
           useFlowStore.getState().updateEdgeData(id, { labelRatio: latestRatio });
+        } else if (!moved) {
+          setSelectedEdgeLabelId(id);
         }
       };
 
@@ -278,7 +283,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', finish);
     },
-    [isEditingLabel, screenToFlowPosition, polylinePoints, id]
+    [isEditingLabel, screenToFlowPosition, polylinePoints, id, setSelectedEdgeLabelId]
   );
 
   const handleAddDefaultWaypoint = useCallback(
@@ -417,8 +422,12 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className={`nodrag nopan whitespace-pre-wrap text-center px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] text-[var(--fs-text)] shadow-xs select-none touch-none ${
-              dragLabelRatio !== null ? 'cursor-grabbing ring-2 ring-[var(--fs-selection-ring)]' : 'cursor-grab hover:border-[var(--fs-selection-ring)]'
+            className={`nodrag nopan whitespace-pre-wrap text-center px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border text-[var(--fs-text)] shadow-xs select-none touch-none ${
+              dragLabelRatio !== null
+                ? 'cursor-grabbing border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)]'
+                : isLabelSelected
+                  ? 'cursor-grab border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)] shadow-md'
+                  : 'cursor-grab border-[var(--fs-border)] hover:border-[var(--fs-selection-ring)]'
             }`}
           >
             {data.label}

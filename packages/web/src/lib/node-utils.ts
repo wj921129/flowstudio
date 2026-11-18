@@ -5,6 +5,9 @@
 
 import type { FlowNode, FlowNodeType } from '@flowstudio/shared';
 import { getNodeRegistryEntry } from '@flowstudio/shared';
+import { useSidebarStore } from '../features/sidebar/sidebar-store';
+import { getThemePreset } from '../features/sidebar/styles/theme-presets';
+import { resolveNodeStyle } from '../features/sidebar/styles/style-resolver';
 
 /**
  * 生成全局唯一 ID
@@ -37,14 +40,22 @@ export function generateEdgeId(source: string, target: string): string {
  * @param position 画布落点坐标 { x, y }
  * @returns 完整的 FlowNode 节点对象
  */
+export interface CreateNodeOptions {
+  label?: string;
+  role?: 'start' | 'end';
+}
+
 export function createNodeFromType(
   type: FlowNodeType,
-  position: { x: number; y: number }
+  position: { x: number; y: number },
+  options?: CreateNodeOptions
 ): FlowNode {
   const entry = getNodeRegistryEntry(type);
   const width = entry ? entry.defaultSize.width : 160;
   const height = entry ? entry.defaultSize.height : 80;
-  const label = entry ? entry.label : type;
+  const label = options?.label ?? (entry ? entry.label : type);
+  const theme = getThemePreset(useSidebarStore.getState().activeThemeId);
+  const computed = resolveNodeStyle(type, theme, options?.role);
 
   return {
     id: generateUniqueId(type),
@@ -56,6 +67,9 @@ export function createNodeFromType(
     data: {
       label,
       type,
+      ...(type !== 'group' && type !== 'lane'
+        ? { style: { ...computed, isManualCustom: false } }
+        : {}),
     },
     width,
     height,

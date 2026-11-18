@@ -101,11 +101,11 @@ export const StylesPanel: React.FC<StylesPanelProps> = ({ onApplyThemeToCanvas }
               {/* 视觉示意微缩流程图 */}
               <div className="w-full h-11 rounded border border-fs-border/60 bg-white/60 dark:bg-black/20 p-1 flex items-center justify-around">
                 <div
-                  className="px-2 py-0.5 rounded text-[9px] font-medium border"
+                  className="px-2 py-0.5 rounded-full text-[9px] font-medium border"
                   style={{
-                    backgroundColor: tokens.nodeBg,
-                    borderColor: tokens.nodeBorder,
-                    color: tokens.nodeText,
+                    backgroundColor: tokens.startBg,
+                    borderColor: tokens.startBorder,
+                    color: tokens.startText,
                   }}
                 >
                   开始
@@ -123,11 +123,11 @@ export const StylesPanel: React.FC<StylesPanelProps> = ({ onApplyThemeToCanvas }
                 </div>
                 <div className="w-4 h-0.5" style={{ backgroundColor: tokens.edgeStroke }} />
                 <div
-                  className="px-2 py-0.5 rounded text-[9px] font-medium border"
+                  className="px-2 py-0.5 rounded-full text-[9px] font-medium border"
                   style={{
-                    backgroundColor: tokens.poolHeaderBg,
-                    borderColor: tokens.nodeBorder,
-                    color: tokens.nodeText,
+                    backgroundColor: tokens.endBg,
+                    borderColor: tokens.endBorder,
+                    color: tokens.endText,
                   }}
                 >
                   结束

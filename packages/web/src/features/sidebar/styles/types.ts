@@ -3,6 +3,12 @@ export interface ThemeTokens {
   nodeBg: string;
   nodeBorder: string;
   nodeText: string;
+  startBg: string;
+  startBorder: string;
+  startText: string;
+  endBg: string;
+  endBorder: string;
+  endText: string;
   accent: string;
   edgeStroke: string;
   poolHeaderBg: string;

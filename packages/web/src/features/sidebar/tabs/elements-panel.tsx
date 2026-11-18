@@ -174,17 +174,24 @@ export const ElementsPanel: React.FC = () => {
   const currentTheme = useMemo(() => getThemePreset(activeThemeId), [activeThemeId]);
   const addNode = useFlowStore((s) => s.addNode);
 
-  const handleItemClick = (type: FlowNodeType) => {
+  const handleItemClick = (type: FlowNodeType, role?: 'start' | 'end') => {
     const existingCount = useFlowStore.getState().nodes.length;
     const offset = (existingCount % 10) * 25;
-    const newNode = addNode(type, { x: 350 + offset, y: 220 + offset });
+    const newNode = addNode(
+      type,
+      { x: 350 + offset, y: 220 + offset },
+      role ? { label: role === 'start' ? '开始' : '结束', role } : undefined
+    );
     if (newNode?.id) {
       useFlowStore.getState().setSelectedNodes([newNode.id]);
     }
   };
 
-  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, type: FlowNodeType) => {
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, type: FlowNodeType, role?: 'start' | 'end') => {
     e.dataTransfer.setData('application/flowstudio-node-type', type);
+    if (role) {
+      e.dataTransfer.setData('application/flowstudio-node-role', role);
+    }
     e.dataTransfer.effectAllowed = 'move';
   };
 
@@ -198,26 +205,39 @@ export const ElementsPanel: React.FC = () => {
 
   const renderGrid = (cat: NodeCategory) => (
     <div className="px-2 pb-1.5 grid grid-cols-4 gap-1">
-      {categorized[cat].map((entry) => (
-        <div
-          key={entry.type}
-          draggable
-          onDragStart={(e) => handleDragStart(e, entry.type)}
-          onClick={() => handleItemClick(entry.type)}
-          className="group relative flex items-center justify-center h-10 rounded-md border border-fs-border/70 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer select-none"
-          title={`${entry.label}${entry.mcpDescription ? `：${entry.mcpDescription}` : ''}`}
-          aria-label={entry.label}
-        >
-          <div className="flex items-center justify-center scale-90 group-hover:scale-100 transition-transform">
-            {renderShapeThumbnail(
-              entry.type,
-              resolveNodeStyle(entry.type, currentTheme).fillColor,
-              resolveNodeStyle(entry.type, currentTheme).borderColor,
-              currentTheme.tokens.poolHeaderBg
-            )}
-          </div>
-        </div>
-      ))}
+      {categorized[cat].flatMap((entry) => {
+        const items: Array<{ key: string; label: string; role?: 'start' | 'end' }> =
+          entry.type === 'start-end'
+            ? [
+                { key: 'start-end-start', label: '开始', role: 'start' },
+                { key: 'start-end-end', label: '结束', role: 'end' },
+              ]
+            : [{ key: entry.type, label: entry.label }];
+
+        return items.map((item) => {
+          const resolved = resolveNodeStyle(entry.type, currentTheme, item.role);
+          return (
+            <div
+              key={item.key}
+              draggable
+              onDragStart={(e) => handleDragStart(e, entry.type, item.role)}
+              onClick={() => handleItemClick(entry.type, item.role)}
+              className="group relative flex items-center justify-center h-10 rounded-md border border-fs-border/70 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer select-none"
+              title={`${item.label}${entry.mcpDescription ? `：${entry.mcpDescription}` : ''}`}
+              aria-label={item.label}
+            >
+              <div className="flex items-center justify-center scale-90 group-hover:scale-100 transition-transform">
+                {renderShapeThumbnail(
+                  entry.type,
+                  resolved.fillColor,
+                  resolved.borderColor,
+                  currentTheme.tokens.poolHeaderBg
+                )}
+              </div>
+            </div>
+          );
+        });
+      })}
     </div>
   );
 

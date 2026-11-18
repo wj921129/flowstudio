@@ -4,6 +4,7 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
+import { getBorderAnchorWorldPoint } from '@flowstudio/shared';
 import { getNodeDimensions } from './group-calculator.js';
 import { generateEdgeId } from '../../../lib/node-utils.js';
 import { isNodeLocked } from './node-lock-manager.js';
@@ -38,20 +39,12 @@ export function getHandlePoint(
 ): XYPosition {
   const worldPos = getNodeWorldPosition(node, byId);
   const { width, height } = getNodeDimensions(node);
-
-  const side = handleId || (fallbackSide === 'source' ? 'right' : 'left');
-
-  switch (side) {
-    case 'top':
-      return { x: worldPos.x + width / 2, y: worldPos.y };
-    case 'bottom':
-      return { x: worldPos.x + width / 2, y: worldPos.y + height };
-    case 'left':
-      return { x: worldPos.x, y: worldPos.y + height / 2 };
-    case 'right':
-    default:
-      return { x: worldPos.x + width, y: worldPos.y + height / 2 };
-  }
+  const { x, y } = getBorderAnchorWorldPoint(
+    { x: worldPos.x, y: worldPos.y, width, height },
+    handleId,
+    fallbackSide === 'source' ? 'right' : 'left'
+  );
+  return { x, y };
 }
 
 /**

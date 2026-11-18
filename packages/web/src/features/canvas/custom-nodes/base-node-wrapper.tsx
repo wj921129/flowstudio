@@ -3,10 +3,15 @@
  * @description 统一封装 Handles 锚点生成、选中焦点环、双击内联文本编辑与设计令牌样式映射
  */
 
-import React, { useState, useEffect } from 'react';
-import { Handle, Position, NodeResizer, useConnection } from '@xyflow/react';
-import type { FlowNodeData, FlowNodeType, HandlePosition } from '@flowstudio/shared';
-import { getNodeRegistryEntry } from '@flowstudio/shared';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Handle, Position, NodeResizer, useConnection, useUpdateNodeInternals } from '@xyflow/react';
+import type { FlowNodeData, FlowNodeType, HandlePosition, BorderSide } from '@flowstudio/shared';
+import {
+  getNodeRegistryEntry,
+  parseBorderAnchorHandle,
+  formatBorderAnchorHandle,
+  projectPointToNodeBorder,
+} from '@flowstudio/shared';
 import { useFlowStore } from '../../../stores/flow-store';
 import { useCollaboration } from '../../collaboration/collaboration-provider';
 import { InlineTextEditor } from './inline-text-editor';
@@ -27,36 +32,12 @@ const POSITION_MAP: Record<HandlePosition, Position> = {
   left: Position.Left,
 };
 
-export type NodeSemanticRole = 'start' | 'process' | 'end' | 'neutral';
+import {
+  resolveNodeSemanticRole,
+  type NodeSemanticRole,
+} from '../../sidebar/styles/style-resolver';
 
-export function resolveNodeSemanticRole(
-  id: string,
-  type: FlowNodeType,
-  label: string | undefined,
-  edges: ReadonlyArray<{ source: string; target: string }>
-): NodeSemanticRole {
-  if (type === 'comment' || type === 'pool' || type === 'lane' || type === 'group') {
-    return 'neutral';
-  }
-  if (type === 'start-end') {
-    let inCount = 0;
-    let outCount = 0;
-    for (const e of edges) {
-      if (e.target === id) inCount += 1;
-      if (e.source === id) outCount += 1;
-    }
-    if (inCount === 0 && outCount > 0) return 'start';
-    if (outCount === 0 && inCount > 0) return 'end';
-    if (label && /结束|完成|归档|终止|失败|关闭|end|finish|done|complete/i.test(label)) {
-      return 'end';
-    }
-    return 'start';
-  }
-  if (type === 'process' || type === 'subprocess') {
-    return 'process';
-  }
-  return 'neutral';
-}
+export { resolveNodeSemanticRole, type NodeSemanticRole };
 
 const ROLE_TOKENS: Record<Exclude<NodeSemanticRole, 'neutral'>, { bg: string; border: string; text: string }> = {
   start: {
@@ -112,7 +93,21 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   } catch {
     // 兼容可能无 ReactFlowProvider 包装的单测上下文
   }
+  let updateNodeInternals: ((nodeId: string) => void) | null = null;
+  try {
+    updateNodeInternals = useUpdateNodeInternals();
+  } catch {
+    // 兼容可能无 ReactFlowProvider 包装的单测上下文
+  }
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [hoverAnchor, setHoverAnchor] = useState<{
+    id: string;
+    side: BorderSide;
+    offset: number;
+    snappedLabel?: string;
+  } | null>(null);
   const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const semanticRole = useFlowStore((s) => resolveNodeSemanticRole(id, data.type, data.label, s.edges));
   const showHandles = isConnecting || activeTool === 'connect' || selected;
   const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
@@ -184,6 +179,101 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   // 获取该节点类型预定义的 handles
   const registryEntry = getNodeRegistryEntry(data.type);
   const definedHandles = registryEntry?.handles ?? [];
+  const baseHandles = React.useMemo(
+    () => (customHandles ? customHandles.map((pos) => ({ id: pos, position: pos })) : definedHandles),
+    [customHandles, definedHandles]
+  );
+  const baseHandleIdSet = React.useMemo(() => new Set(baseHandles.map((h) => h.id)), [baseHandles]);
+
+  const customAttachedHandleKeys = useFlowStore((s) => {
+    const set = new Set<string>();
+    for (const edge of s.edges) {
+      if (edge.source === id && edge.sourceHandle && !baseHandleIdSet.has(edge.sourceHandle) && parseBorderAnchorHandle(edge.sourceHandle)) {
+        set.add(edge.sourceHandle);
+      }
+      if (edge.target === id && edge.targetHandle && !baseHandleIdSet.has(edge.targetHandle) && parseBorderAnchorHandle(edge.targetHandle)) {
+        set.add(edge.targetHandle);
+      }
+    }
+    return Array.from(set).sort().join(',');
+  });
+
+  const customAttachedHandles = React.useMemo(() => {
+    if (!customAttachedHandleKeys) return [];
+    return customAttachedHandleKeys
+      .split(',')
+      .map((hid) => {
+        const parsed = parseBorderAnchorHandle(hid);
+        return parsed ? { id: hid, side: parsed.side, offset: parsed.offset } : null;
+      })
+      .filter((x): x is { id: string; side: BorderSide; offset: number } => x !== null);
+  }, [customAttachedHandleKeys]);
+
+  const computeHoverAnchor = useCallback(
+    (clientX: number, clientY: number, disableSnap: boolean) => {
+      const el = wrapperRef.current;
+      if (!el || baseHandles.length === 0 || isSpacePanning) {
+        setHoverAnchor(null);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const margin = 16;
+      if (
+        clientX < rect.left - margin ||
+        clientX > rect.right + margin ||
+        clientY < rect.top - margin ||
+        clientY > rect.bottom + margin
+      ) {
+        setHoverAnchor(null);
+        return;
+      }
+
+      const distTop = Math.abs(clientY - rect.top);
+      const distBottom = Math.abs(clientY - rect.bottom);
+      const distLeft = Math.abs(clientX - rect.left);
+      const distRight = Math.abs(clientX - rect.right);
+      const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+
+      if (minDist > margin) {
+        setHoverAnchor(null);
+        return;
+      }
+
+      const nodeWidth = el.offsetWidth || rect.width;
+      const nodeHeight = el.offsetHeight || rect.height;
+      const localX = ((clientX - rect.left) / rect.width) * nodeWidth;
+      const localY = ((clientY - rect.top) / rect.height) * nodeHeight;
+      const proj = projectPointToNodeBorder(localX, localY, nodeWidth, nodeHeight, {
+        snapThresholdPx: 5,
+        disableSnap,
+      });
+      const hid = formatBorderAnchorHandle(proj.side, proj.offset);
+      setHoverAnchor((prev) =>
+        prev && prev.id === hid && prev.snappedLabel === proj.snappedLabel
+          ? prev
+          : { id: hid, side: proj.side, offset: proj.offset, snappedLabel: proj.snappedLabel }
+      );
+    },
+    [baseHandles.length, isSpacePanning]
+  );
+
+  useEffect(() => {
+    if (!isConnecting) return;
+    const onMove = (e: PointerEvent) => computeHoverAnchor(e.clientX, e.clientY, e.altKey);
+    window.addEventListener('pointermove', onMove);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      setHoverAnchor(null);
+    };
+  }, [isConnecting, computeHoverAnchor]);
+
+  useEffect(() => {
+    if (updateNodeInternals) {
+      updateNodeInternals(id);
+    }
+  }, [id, customAttachedHandleKeys, hoverAnchor?.id, updateNodeInternals]);
 
   // 合并节点样式
   const nodeStyle = data.style || {};
@@ -215,9 +305,16 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
 
   return (
     <div
+      ref={wrapperRef}
       className={`group relative flex items-center justify-center select-none w-full h-full transition-shadow duration-150 ${className}`}
       style={mergedStyle}
       onDoubleClick={handleDoubleClick}
+      onPointerMove={(e) => {
+        if (!isConnecting) computeHoverAnchor(e.clientX, e.clientY, e.altKey);
+      }}
+      onPointerLeave={() => {
+        if (!isConnecting) setHoverAnchor(null);
+      }}
     >
       {/* 他人选中高亮标识 */}
       {remoteSelector && (
@@ -259,10 +356,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         渲染连接桩 (Handles)：桩体保持 6px 默认尺寸，因为 React Flow 以桩矩形外沿作为连线端点，
         放大桩体会把端点推出形状边界；24px 感应热区改由 before 伪元素扩出，不影响端点计算
       */}
-      {(customHandles
-        ? customHandles.map((pos) => ({ id: pos, position: pos }))
-        : definedHandles
-      ).map((handle) => {
+      {baseHandles.map((handle) => {
         const pos = POSITION_MAP[handle.position];
         const hasIncomingEdge = incomingHandles.has(handle.id);
         const isForceShowHandles = isConnecting || activeTool === 'connect';
@@ -303,6 +397,93 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
           </React.Fragment>
         );
       })}
+
+      {customAttachedHandles.map((ch) => {
+        const pos = POSITION_MAP[ch.side];
+        const anchorStyle: React.CSSProperties =
+          ch.side === 'top' || ch.side === 'bottom'
+            ? { left: `${ch.offset * 100}%`, right: 'auto' }
+            : { top: `${ch.offset * 100}%`, bottom: 'auto' };
+        return (
+          <React.Fragment key={`custom-${ch.id}`}>
+            <Handle
+              type="target"
+              position={pos}
+              id={ch.id}
+              isConnectable={true}
+              style={anchorStyle}
+              className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-0"
+            />
+            <Handle
+              type="source"
+              position={pos}
+              id={ch.id}
+              isConnectable={true}
+              style={anchorStyle}
+              className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] cursor-crosshair group/handle !pointer-events-auto z-10"
+            >
+              {showHandles && (
+                <span className="fs-handle-dot w-2.5 h-2.5 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.45)] pointer-events-none" />
+              )}
+            </Handle>
+          </React.Fragment>
+        );
+      })}
+
+      {hoverAnchor && (
+        (() => {
+          const isNewHandle =
+            !baseHandleIdSet.has(hoverAnchor.id) &&
+            !customAttachedHandles.some((c) => c.id === hoverAnchor.id);
+          const pos = POSITION_MAP[hoverAnchor.side];
+          const anchorStyle: React.CSSProperties =
+            hoverAnchor.side === 'top' || hoverAnchor.side === 'bottom'
+              ? { left: `${hoverAnchor.offset * 100}%`, right: 'auto' }
+              : { top: `${hoverAnchor.offset * 100}%`, bottom: 'auto' };
+          return (
+            <>
+              {isNewHandle && (
+                <>
+                  <Handle
+                    type="target"
+                    position={pos}
+                    id={hoverAnchor.id}
+                    isConnectable={true}
+                    style={anchorStyle}
+                    className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] pointer-events-auto z-20"
+                  />
+                  <Handle
+                    type="source"
+                    position={pos}
+                    id={hoverAnchor.id}
+                    isConnectable={true}
+                    style={anchorStyle}
+                    className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] cursor-crosshair !pointer-events-auto z-30"
+                  >
+                    <span className="fs-handle-dot w-3 h-3 bg-blue-600 border-2 border-white shadow-[0_0_0_3px_rgba(37,99,235,0.35)] pointer-events-none" />
+                  </Handle>
+                </>
+              )}
+              {hoverAnchor.snappedLabel && (
+                <div
+                  style={
+                    hoverAnchor.side === 'top'
+                      ? { left: `${hoverAnchor.offset * 100}%`, top: '-22px', transform: 'translateX(-50%)' }
+                      : hoverAnchor.side === 'bottom'
+                        ? { left: `${hoverAnchor.offset * 100}%`, bottom: '-22px', transform: 'translateX(-50%)' }
+                        : hoverAnchor.side === 'left'
+                          ? { left: '-28px', top: `${hoverAnchor.offset * 100}%`, transform: 'translateY(-50%)' }
+                          : { right: '-28px', top: `${hoverAnchor.offset * 100}%`, transform: 'translateY(-50%)' }
+                  }
+                  className="absolute z-40 px-1 py-0.5 rounded bg-slate-900/90 text-white text-[9px] font-mono leading-none pointer-events-none shadow-sm whitespace-nowrap"
+                >
+                  {hoverAnchor.snappedLabel}
+                </div>
+              )}
+            </>
+          );
+        })()
+      )}
 
       {/* 自定义几何轮廓或子元素插槽 */}
       {children}
