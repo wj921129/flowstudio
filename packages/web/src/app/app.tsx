@@ -19,6 +19,7 @@ import { instantiateTemplate, type DiagramTemplate } from '../features/sidebar/t
 import { TemplateConfirmModal } from '../features/sidebar/components/template-confirm-modal';
 import { CopilotPanel } from '../features/copilot/copilot-panel';
 import { usePresentationStore, parseReadOnlyFromLocation } from '../features/presentation';
+import { ErrorBoundary, exportEmergencyDiagramJson } from '../components/error-boundary';
 
 /**
  * 协同编辑器内容工作区
@@ -117,15 +118,43 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
       {!isPresenting && <TopBar diagramId={diagramId} />}
       <div className="relative flex flex-1 overflow-hidden">
         {!isPresenting && !isReadOnly && (
-          <SidebarDock
-            onApplyTemplate={handleApplyTemplate}
-            onApplyThemeToCanvas={handleApplyThemeToCanvas}
-          />
+          <ErrorBoundary
+            title="侧边栏渲染异常"
+            description="图形模板与元素面板遇到意外错误，画布与顶栏仍可正常使用。"
+            variant="panel"
+            className="border-r border-fs-border"
+            resetKey={diagramId}
+            onEmergencyExport={exportEmergencyDiagramJson}
+          >
+            <SidebarDock
+              onApplyTemplate={handleApplyTemplate}
+              onApplyThemeToCanvas={handleApplyThemeToCanvas}
+            />
+          </ErrorBoundary>
         )}
         <main className="relative flex-1 overflow-hidden">
-          <FlowCanvas />
+          <ErrorBoundary
+            title="画布渲染异常"
+            description="当前部分图元或连线渲染失败，您可以点击重试，或先紧急导出当前画布数据。"
+            variant="canvas"
+            resetKey={diagramId}
+            onEmergencyExport={exportEmergencyDiagramJson}
+          >
+            <FlowCanvas />
+          </ErrorBoundary>
         </main>
-        {!isPresenting && <PropertyPanel />}
+        {!isPresenting && (
+          <ErrorBoundary
+            title="属性面板渲染异常"
+            description="右侧属性检查器遇到意外错误，不影响画布编辑与数据保存。"
+            variant="panel"
+            className="border-l border-fs-border"
+            resetKey={diagramId}
+            onEmergencyExport={exportEmergencyDiagramJson}
+          >
+            <PropertyPanel />
+          </ErrorBoundary>
+        )}
         {!isPresenting && !isReadOnly && <CopilotPanel />}
       </div>
 
@@ -161,14 +190,21 @@ export const App: React.FC = () => {
   const diagramId = isDiagramRoute ? currentHash.replace('#/diagram/', '').split('?')[0] : null;
 
   return (
-    <Providers>
-      {isDiagramRoute && diagramId ? (
-        <CollaborationProvider diagramId={diagramId}>
-          <EditorWorkspace diagramId={diagramId} />
-        </CollaborationProvider>
-      ) : (
-        <DashboardPage />
-      )}
-    </Providers>
+    <ErrorBoundary
+      title="应用发生意外错误"
+      description="页面渲染遇到未知异常，您可以点击重试恢复，或先紧急导出当前图表 JSON 备份。"
+      variant="fullscreen"
+      onEmergencyExport={exportEmergencyDiagramJson}
+    >
+      <Providers>
+        {isDiagramRoute && diagramId ? (
+          <CollaborationProvider diagramId={diagramId}>
+            <EditorWorkspace diagramId={diagramId} />
+          </CollaborationProvider>
+        ) : (
+          <DashboardPage />
+        )}
+      </Providers>
+    </ErrorBoundary>
   );
 };
