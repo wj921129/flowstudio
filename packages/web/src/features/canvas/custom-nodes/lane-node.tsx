@@ -11,14 +11,16 @@ import type { FlowNodeData } from '@flowstudio/shared';
 import { Trash2, AlertTriangle } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { InlineTextEditor } from './inline-text-editor';
-import { useFlowStore } from '../../../stores/flow-store';
+import { useFlowStore, selectNodeById } from '../../../stores/flow-store';
 import { isNodeLocked } from '../utils/node-lock-manager';
 
 export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected, parentId } = props;
-  const store = useFlowStore();
-  const parentPool = parentId ? store.nodes.find((n) => n.id === parentId) : null;
-  const isHorizontal = (parentPool?.data?.orientation ?? 'horizontal') === 'horizontal';
+  const isHorizontal = useFlowStore((s) => {
+    if (!parentId) return true;
+    const parentPool = selectNodeById(s.nodes, parentId);
+    return (parentPool?.data?.orientation ?? 'horizontal') === 'horizontal';
+  });
 
   const [isEditing, setIsEditing] = useState(false);
   const [titleValue, setTitleValue] = useState(data.laneTitle || data.label || '泳道');

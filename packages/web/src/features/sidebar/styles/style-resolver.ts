@@ -3,22 +3,16 @@ import type { ThemePreset } from './types';
 
 export type NodeSemanticRole = 'start' | 'process' | 'end' | 'neutral';
 
-export function resolveNodeSemanticRole(
-  id: string,
+export function resolveNodeSemanticRoleFromCounts(
   type: FlowNodeType | string,
   label: string | undefined,
-  edges: ReadonlyArray<{ source: string; target: string }>
+  inCount: number,
+  outCount: number
 ): NodeSemanticRole {
   if (type === 'comment' || type === 'pool' || type === 'lane' || type === 'group') {
     return 'neutral';
   }
   if (type === 'start-end') {
-    let inCount = 0;
-    let outCount = 0;
-    for (const e of edges) {
-      if (e.target === id) inCount += 1;
-      if (e.source === id) outCount += 1;
-    }
     if (inCount === 0 && outCount > 0) return 'start';
     if (outCount === 0 && inCount > 0) return 'end';
     if (label && /结束|完成|归档|终止|失败|关闭|end|finish|done|complete/i.test(label)) {
@@ -30,6 +24,24 @@ export function resolveNodeSemanticRole(
     return 'process';
   }
   return 'neutral';
+}
+
+export function resolveNodeSemanticRole(
+  id: string,
+  type: FlowNodeType | string,
+  label: string | undefined,
+  edges: ReadonlyArray<{ source: string; target: string }>
+): NodeSemanticRole {
+  if (type !== 'start-end') {
+    return resolveNodeSemanticRoleFromCounts(type, label, 0, 0);
+  }
+  let inCount = 0;
+  let outCount = 0;
+  for (const e of edges) {
+    if (e.target === id) inCount += 1;
+    if (e.source === id) outCount += 1;
+  }
+  return resolveNodeSemanticRoleFromCounts(type, label, inCount, outCount);
 }
 
 export interface ResolvedNodeStyle {

@@ -1,16 +1,18 @@
 import React, { useMemo } from 'react';
 import { useViewport } from '@xyflow/react';
 import { useCollaboration } from './collaboration-provider.js';
+import { useRemoteUsers } from './remote-users-store.js';
 import { worldToViewportPixel } from './user-identity.js';
 
 export const CollaborativeCursors: React.FC = () => {
   const collab = useCollaboration();
+  const remoteUsers = useRemoteUsers();
   const viewport = useViewport();
 
   const uniqueRemoteUsers = useMemo(() => {
-    if (!collab?.remoteUsers) return [];
-    const map = new Map<string, typeof collab.remoteUsers[0]>();
-    for (const user of collab.remoteUsers) {
+    if (remoteUsers.length === 0) return [];
+    const map = new Map<string, typeof remoteUsers[0]>();
+    for (const user of remoteUsers) {
       if (!user?.clientId) continue;
       const existing = map.get(user.clientId);
       if (!existing || (!existing.cursor && user.cursor)) {
@@ -18,7 +20,7 @@ export const CollaborativeCursors: React.FC = () => {
       }
     }
     return Array.from(map.values());
-  }, [collab?.remoteUsers]);
+  }, [remoteUsers]);
 
   if (!collab || uniqueRemoteUsers.length === 0) return null;
 

@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { useFlowStore } from '../src/stores/flow-store';
+import {
+  useFlowStore,
+  selectNodeById,
+  selectIncomingHandleKeys,
+  selectCustomAttachedHandleKeys,
+  selectNodeSemanticRole,
+} from '../src/stores/flow-store';
+import {
+  deriveDisplayNodes,
+  type DisplayNodeCacheEntry,
+} from '../src/features/canvas/utils/display-nodes';
 import { resolveNodeSemanticRole } from '../src/features/canvas/custom-nodes/base-node-wrapper';
 import {
   getPointAtPolylineRatio,
@@ -167,5 +177,66 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(formatBorderAnchorHandle('right', 0.25)).toBe('right@0.25');
     expect(parseBorderAnchorHandle('right@0.25')).toEqual({ side: 'right', offset: 0.25 });
     expect(parseBorderAnchorHandle('left')).toEqual({ side: 'left', offset: 0.5 });
+  });
+
+  it('邻接摘要选择器与泳道/节点组件消除全图扫描及无参 store 订阅', () => {
+    const nodes = [
+      { id: 'n1', type: 'start-end' as const, position: { x: 0, y: 0 }, data: { label: '起', type: 'start-end' as const } },
+      { id: 'n2', type: 'process' as const, position: { x: 200, y: 0 }, data: { label: '中', type: 'process' as const } },
+      { id: 'n3', type: 'start-end' as const, position: { x: 400, y: 0 }, data: { label: '终', type: 'start-end' as const } },
+    ];
+    const edges = [
+      { id: 'e1', source: 'n1', target: 'n2', sourceHandle: 'right@0.25' },
+      { id: 'e2', source: 'n2', target: 'n3', targetHandle: 'left' },
+    ];
+
+    expect(selectNodeById(nodes, 'n2')?.id).toBe('n2');
+    expect(selectNodeSemanticRole(edges, 'n1', 'start-end', '起')).toBe('start');
+    expect(selectNodeSemanticRole(edges, 'n3', 'start-end', '终')).toBe('end');
+    expect(selectIncomingHandleKeys(nodes, edges, 'n2')).toBe('left');
+    expect(selectIncomingHandleKeys(nodes, edges, 'n3')).toBe('left');
+    expect(selectCustomAttachedHandleKeys(edges, 'n1', new Set(['top', 'right', 'bottom', 'left']))).toBe('right@0.25');
+
+    const laneCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/lane-node.tsx'),
+      'utf-8'
+    );
+    expect(laneCode).not.toMatch(/useFlowStore\(\s*\)/);
+
+    const wrapperCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/base-node-wrapper.tsx'),
+      'utf-8'
+    );
+    expect(wrapperCode).not.toContain('useCollaboration');
+    expect(wrapperCode).not.toMatch(/for\s*\(\s*const\s+edge\s+of\s+s\.edges\s*\)/);
+  });
+
+  it('deriveDisplayNodes 在无聚光灯与无锁定时复用原数组，局部变更时复用未变化节点引用', () => {
+    const cache = new Map<string, DisplayNodeCacheEntry>();
+    const n1 = { id: 'n1', type: 'process' as const, position: { x: 0, y: 0 }, data: { label: '1', type: 'process' as const } };
+    const n2 = { id: 'n2', type: 'process' as const, position: { x: 200, y: 0 }, data: { label: '2', type: 'process' as const, lockMode: 'position' as const } };
+    const n3 = { id: 'n3', type: 'process' as const, position: { x: 400, y: 0 }, data: { label: '3', type: 'process' as const } };
+
+    // 1. 无聚光灯、无锁定：直接返回原数组引用
+    const unlocked = [n1, n3];
+    expect(deriveDisplayNodes(unlocked, { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false }, cache)).toBe(unlocked);
+
+    // 2. 存在锁定节点时，移动 n1 不应重建 n2 与 n3 的派生引用
+    const frame1 = deriveDisplayNodes([n1, n2, n3], { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false }, cache);
+    expect(frame1[1].draggable).toBe(false);
+    expect(frame1[2]).toBe(n3);
+
+    const n1Moved = { ...n1, position: { x: 50, y: 0 } };
+    const frame2 = deriveDisplayNodes([n1Moved, n2, n3], { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false }, cache);
+    expect(frame2[1]).toBe(frame1[1]);
+    expect(frame2[2]).toBe(n3);
+
+    // 3. 聚光灯模式下，移动 n1 不应重建 n2 与 n3 的派生引用
+    const spotlightResult = { nodeIds: new Set(['n1']), edgeIds: new Set<string>(), laneIds: new Set<string>() };
+    const spot1 = deriveDisplayNodes([n1, n2, n3], { hasSpotlightDim: true, spotlightResult, isReadOnly: false }, cache);
+    const spot2 = deriveDisplayNodes([n1Moved, n2, n3], { hasSpotlightDim: true, spotlightResult, isReadOnly: false }, cache);
+    expect(spot2[0]).not.toBe(spot1[0]);
+    expect(spot2[1]).toBe(spot1[1]);
+    expect(spot2[2]).toBe(spot1[2]);
   });
 });

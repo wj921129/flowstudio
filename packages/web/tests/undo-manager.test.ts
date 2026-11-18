@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as Y from 'yjs';
-import { YjsDiagramBridge } from '../src/features/collaboration/yjs-doc-bridge';
+import { YjsDiagramBridge, applyThemeToYDoc } from '../src/features/collaboration/yjs-doc-bridge';
 import { CollaborativeUndoManager } from '../src/features/collaboration/undo-manager';
+import { THEME_PRESETS, DEFAULT_THEME_ID } from '../src/features/sidebar/styles/theme-presets';
 
 describe('CollaborativeUndoManager', () => {
   let doc: Y.Doc;
@@ -40,5 +41,29 @@ describe('CollaborativeUndoManager', () => {
     undoManager.redo();
     const afterRedo = bridgeLocal.toReactFlowState();
     expect(afterRedo.nodes.map((n) => n.id).sort()).toEqual(['node-a', 'node-b']);
+  });
+
+  it('undoes and redoes meta.themeId together with node styles while ignoring system:init meta writes', () => {
+    bridgeLocal.setTitle('服务端初始化标题', 'system:init');
+    expect(undoManager.canUndo()).toBe(false);
+
+    bridgeLocal.putNodes([
+      { id: 'n1', type: 'process', position: { x: 0, y: 0 }, data: { label: '步骤', type: 'process' } },
+    ]);
+    undoManager.stopCapturing();
+
+    const targetTheme = THEME_PRESETS.find((t) => t.id !== DEFAULT_THEME_ID)!;
+    applyThemeToYDoc(doc, targetTheme, true, 'user-local');
+
+    expect(bridgeLocal.getThemeId()).toBe(targetTheme.id);
+    expect(bridgeLocal.toReactFlowState().nodes[0].data.style?.fillColor).toBe(targetTheme.tokens.nodeBg);
+
+    undoManager.undo();
+    expect(bridgeLocal.getThemeId()).toBe(DEFAULT_THEME_ID);
+    expect(bridgeLocal.toReactFlowState().nodes[0].data.style?.fillColor).toBeUndefined();
+
+    undoManager.redo();
+    expect(bridgeLocal.getThemeId()).toBe(targetTheme.id);
+    expect(bridgeLocal.toReactFlowState().nodes[0].data.style?.fillColor).toBe(targetTheme.tokens.nodeBg);
   });
 });

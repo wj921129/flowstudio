@@ -1,24 +1,26 @@
 import React, { useState, useMemo } from 'react';
 import { useCollaboration } from './collaboration-provider.js';
+import { useRemoteUsers } from './remote-users-store.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 
 export const CollaboratorAvatars: React.FC = () => {
   const collab = useCollaboration();
+  const remoteUsers = useRemoteUsers();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const followingUserId = useFlowStore((s) => s.followingUserId);
   const setFollowingUser = useFlowStore((s) => s.setFollowingUser);
 
   const uniqueRemoteUsers = useMemo(() => {
-    if (!collab?.remoteUsers) return [];
-    const map = new Map<string, typeof collab.remoteUsers[0]>();
-    for (const user of collab.remoteUsers) {
+    if (remoteUsers.length === 0) return [];
+    const map = new Map<string, typeof remoteUsers[0]>();
+    for (const user of remoteUsers) {
       if (user?.clientId && !map.has(user.clientId)) {
         map.set(user.clientId, user);
       }
     }
     return Array.from(map.values());
-  }, [collab?.remoteUsers]);
+  }, [remoteUsers]);
 
   if (!collab) return null;
 

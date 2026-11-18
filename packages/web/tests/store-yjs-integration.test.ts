@@ -230,4 +230,74 @@ describe('useFlowStore + Yjs integration', () => {
     expect(useFlowStore.getState().diagramTitle).toBe('服务端初始化标题');
     expect(undoA.canUndo()).toBe(false);
   });
+
+  it('skips structuredClone history snapshot in collaborative mode and short-circuits identical viewportZoom', () => {
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    const store = useFlowStore.getState();
+
+    const n1 = store.addNode('process', { x: 10, y: 10 });
+    store.updateNodeData(n1.id, { label: '已修改' });
+    store.onNodesChange([
+      { id: n1.id, type: 'position', position: { x: 50, y: 60 }, dragging: false } as any,
+    ]);
+
+    expect(cloneSpy).not.toHaveBeenCalled();
+    cloneSpy.mockRestore();
+
+    let notifyCount = 0;
+    const unsub = useFlowStore.subscribe(() => {
+      notifyCount++;
+    });
+    store.setViewportZoom(1.5);
+    expect(notifyCount).toBe(1);
+    store.setViewportZoom(1.5);
+    expect(notifyCount).toBe(1);
+    unsub();
+  });
+
+  it('merges rapid local edits within 500ms captureTimeout while keeping explicit breakpoints for imports', () => {
+    useFlowStore.getState().unbindCollaboration();
+    const timedUndo = new CollaborativeUndoManager(docA, 'client-a', 500);
+    useFlowStore.getState().bindCollaboration(bridgeA, timedUndo);
+
+    const store = useFlowStore.getState();
+    const n1 = store.addNode('process', { x: 10, y: 10 });
+    store.updateNodeData(n1.id, { label: '连贯编辑' });
+
+    expect(timedUndo.canUndo()).toBe(true);
+    store.undo();
+    expect(useFlowStore.getState().nodes.length).toBe(0);
+
+    // 显式导入操作（appendSubgraph / setDiagram）保持断点隔离
+    const n2: FlowNode = { id: 'imp-1', type: 'process', position: { x: 0, y: 0 }, data: { label: '前置', type: 'process' } };
+    store.addNodes([n2]);
+    store.appendSubgraph(
+      [{ id: 'imp-2', type: 'process', position: { x: 200, y: 0 }, data: { label: '导入', type: 'process' } }],
+      []
+    );
+    expect(useFlowStore.getState().nodes.length).toBe(2);
+    store.undo();
+    expect(useFlowStore.getState().nodes.map((n) => n.id)).toEqual(['imp-1']);
+
+    timedUndo.destroy();
+  });
+
+  it('clears toastTimer and centeredResizes on unbindCollaboration', () => {
+    vi.useFakeTimers();
+    const store = useFlowStore.getState();
+    const n1 = store.addNode('process', { x: 100, y: 100 });
+    store.startCenteredResize(n1.id);
+    store.showToast('临时提示', 1000);
+
+    store.unbindCollaboration();
+
+    vi.advanceTimersByTime(1500);
+    expect(useFlowStore.getState().toastMessage).toBe('临时提示');
+
+    const spyPatch = vi.spyOn(bridgeA, 'patchNode');
+    store.finishCenteredResize(n1.id);
+    expect(spyPatch).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
 });

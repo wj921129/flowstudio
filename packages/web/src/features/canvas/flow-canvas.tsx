@@ -37,10 +37,12 @@ import { CollaborativeCursors } from '../collaboration/collaborative-cursors';
 import { AiBatchBanner } from '../collaboration/ai-batch-banner';
 import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
 import { useCollaboration } from '../collaboration/collaboration-provider';
+import { useRemoteUsersStore } from '../collaboration/remote-users-store';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
 import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
 import { computePathSpotlight, computeGlobalPathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { isNodeLocked } from './utils/node-lock-manager';
+import { deriveDisplayNodes, type DisplayNodeCacheEntry } from './utils/display-nodes';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
@@ -104,32 +106,33 @@ export const FlowCanvas: React.FC = () => {
     point: { x: number; y: number };
   } | null>(null);
 
+  const followingUser = useRemoteUsersStore((s) =>
+    followingUserId ? s.remoteUsers.find((u) => u.clientId === followingUserId) ?? null : null
+  );
+
   // 监听并执行主讲人视角与聚光灯带看跟随 (M1)
   useEffect(() => {
-    if (!followingUserId || !collab?.remoteUsers) return;
-    const targetUser = collab.remoteUsers.find((u) => u.clientId === followingUserId);
-    if (!targetUser) return;
+    if (!followingUser) return;
 
-    if (targetUser.viewport) {
+    if (followingUser.viewport) {
       setViewport(
-        { x: targetUser.viewport.x, y: targetUser.viewport.y, zoom: targetUser.viewport.zoom },
+        { x: followingUser.viewport.x, y: followingUser.viewport.y, zoom: followingUser.viewport.zoom },
         { duration: 150 }
       );
     }
 
     // 同步聚光灯带看高亮链路
-    if (targetUser.spotlightTargetId) {
-      if (!spotlightActive || spotlightTargetId !== targetUser.spotlightTargetId) {
+    if (followingUser.spotlightTargetId) {
+      if (!spotlightActive || spotlightTargetId !== followingUser.spotlightTargetId) {
         toggleSpotlightMode(true);
-        setSpotlightTarget(targetUser.spotlightTargetId, 'all');
+        setSpotlightTarget(followingUser.spotlightTargetId, 'all');
       }
     } else if (spotlightActive) {
       toggleSpotlightMode(false);
       setSpotlightTarget(null);
     }
   }, [
-    followingUserId,
-    collab?.remoteUsers,
+    followingUser,
     setViewport,
     spotlightActive,
     spotlightTargetId,
@@ -164,52 +167,17 @@ export const FlowCanvas: React.FC = () => {
     return getDecisionBranches(effectiveSpotlightTargetId, edges);
   }, [effectiveSpotlightTargetId, edges]);
 
+  const displayNodeCacheRef = useRef<Map<string, DisplayNodeCacheEntry>>(new Map());
+
   // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定及包含锁定子节点的容器禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
     const hasSpotlightDim = Boolean(spotlightActive && spotlightResult);
-    // 检查是否有 position/full 锁定的节点 (B8 性能优化)
-    const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
-    // 检查是否有包含锁定子节点的祖先容器（lane / pool / group）(B3 容器拖拽穿透防护)
-    const lockedContainers = new Set<string>();
-    for (const n of nodes) {
-      if (n.parentId && lockedNodeIds.has(n.id)) {
-        let curr: string | undefined = n.parentId;
-        while (curr) {
-          lockedContainers.add(curr);
-          const pNode = nodes.find((x) => x.id === curr);
-          curr = pNode?.parentId;
-        }
-      }
-    }
-
-    const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
-    // B8: 无聚光灯降噪且无任何锁定节点/容器时，直接返回原数组引用，防止每帧生成新对象导致 React Flow 重渲
-    if (!hasSpotlightDim && !hasAnyLocked && !isReadOnly) {
-      return nodes;
-    }
-
-    return nodes.map((node) => {
-      const isLockedFromDrag = isReadOnly || lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
-      const isHighlighted = hasSpotlightDim && spotlightResult
-        ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
-        : true;
-
-      return {
-        ...node,
-        draggable: isLockedFromDrag ? false : undefined,
-        style: {
-          ...node.style,
-          ...(hasSpotlightDim
-            ? {
-                opacity: isHighlighted ? 1 : 0.15,
-                filter: isHighlighted ? undefined : 'grayscale(80%)',
-                transition: 'opacity 0.2s ease, filter 0.2s ease',
-              }
-            : {}),
-        },
-      };
-    });
-  }, [nodes, spotlightActive, spotlightTargetId, spotlightResult, isReadOnly]);
+    return deriveDisplayNodes(
+      nodes,
+      { hasSpotlightDim, spotlightResult, isReadOnly },
+      displayNodeCacheRef.current
+    );
+  }, [nodes, spotlightActive, spotlightResult, isReadOnly]);
 
   // 映射聚光灯走查及断键悬停下的连线样式
   const displayEdges = useMemo(() => {
@@ -1003,12 +971,6 @@ export const FlowCanvas: React.FC = () => {
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, [isReadOnly]);
-
-  // 获取当前正在跟随的主讲人信息
-  const followingUser = useMemo(() => {
-    if (!followingUserId || !collab?.remoteUsers) return null;
-    return collab.remoteUsers.find((u) => u.clientId === followingUserId) ?? null;
-  }, [followingUserId, collab?.remoteUsers]);
 
   const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
   const effectiveConnectMode = isShiftPressed

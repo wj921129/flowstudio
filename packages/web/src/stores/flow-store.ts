@@ -22,8 +22,12 @@ import type {
   XYPosition,
   MermaidBridgeOp,
 } from '@flowstudio/shared';
-import { DEFAULT_EDGE_TYPE } from '@flowstudio/shared';
+import { DEFAULT_EDGE_TYPE, parseBorderAnchorHandle } from '@flowstudio/shared';
 import { createNodeFromType, generateEdgeId, generateUniqueId, type CreateNodeOptions } from '../lib/node-utils';
+import {
+  resolveNodeSemanticRoleFromCounts,
+  type NodeSemanticRole,
+} from '../features/sidebar/styles/style-resolver';
 import {
   computeBoundingBox,
   toLocalPosition,
@@ -240,12 +244,13 @@ let toastTimer: any = null;
  */
 const centeredResizes = new Map<string, { x: number; y: number }>();
 
-function commitBridgeDelta(fn: (bridge: YjsDiagramBridge) => void) {
+function commitBridgeDelta(fn: (bridge: YjsDiagramBridge) => void, stopCapturing = false) {
   if (activeBridge) {
+    if (stopCapturing) activeUndoManager?.stopCapturing();
     activeBridge.transact(() => {
       fn(activeBridge!);
     });
-    activeUndoManager?.stopCapturing();
+    if (stopCapturing) activeUndoManager?.stopCapturing();
   }
 }
 
@@ -292,6 +297,9 @@ function pushHistorySnapshot(
   nodes: FlowNode[],
   edges: FlowEdge[]
 ) {
+  if (activeUndoManager !== null) {
+    return {};
+  }
   const snapshot = cloneSnapshot(nodes, edges);
   const nextPast = [...currentPast, snapshot];
   if (nextPast.length > MAX_HISTORY_LENGTH) {
@@ -962,7 +970,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     commitBridgeDelta((bridge) => {
       if (safeNodes.length > 0) bridge.putNodes(safeNodes);
       if (safeEdges.length > 0) bridge.putEdges(safeEdges);
-    });
+    }, true);
   },
 
   deleteSelected: () => {
@@ -1357,7 +1365,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   setViewportZoom: (zoom: number) => {
-    set({ viewportZoom: zoom });
+    set((s) => (s.viewportZoom === zoom ? s : { viewportZoom: zoom }));
   },
 
   setAlignmentSnapEnabled: (enabled: boolean) => {
@@ -1910,7 +1918,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     commitBridgeDelta((bridge) => {
       bridge.setDiagram(cleanNodes, cleanEdges);
-    });
+    }, true);
   },
 
   setDiagramTitle: (title: string) => {
@@ -2030,6 +2038,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     set({ toastMessage: message });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
+      toastTimer = null;
       set({ toastMessage: null });
     }, duration);
   },
@@ -2290,7 +2299,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         if (removeEdgeIds.length > 0) bridge.removeEdges(removeEdgeIds);
         if (putNodes.length > 0) bridge.putNodes(putNodes);
         if (putEdges.length > 0) bridge.putEdges(putEdges);
-      });
+      }, true);
     }
 
     return { addedNodes: addedNodesCount, addedEdges: addedEdgesCount };
@@ -2448,9 +2457,161 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       unsubscribeUndoManager();
       unsubscribeUndoManager = null;
     }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    centeredResizes.clear();
     activeBridge = null;
     activeUndoManager = null;
   },
 }));
 
 export const flowStore = useFlowStore;
+
+interface NodeEdgeSummary {
+  inCount: number;
+  outCount: number;
+  explicitIncomingHandles: string[];
+  implicitIncomingSources: string[];
+  borderHandles: string[];
+}
+
+const nodeLookupCache = new WeakMap<FlowNode[], Map<string, FlowNode>>();
+const edgeSummaryCache = new WeakMap<FlowEdge[], Map<string, NodeEdgeSummary>>();
+
+function getNodeLookupMap(nodes: FlowNode[]): Map<string, FlowNode> {
+  let map = nodeLookupCache.get(nodes);
+  if (!map) {
+    map = new Map<string, FlowNode>();
+    for (const n of nodes) map.set(n.id, n);
+    nodeLookupCache.set(nodes, map);
+  }
+  return map;
+}
+
+function getOrCreateSummary(map: Map<string, {
+  inCount: number;
+  outCount: number;
+  explicitSet: Set<string>;
+  implicitSources: string[];
+  borderSet: Set<string>;
+}>, id: string) {
+  let entry = map.get(id);
+  if (!entry) {
+    entry = {
+      inCount: 0,
+      outCount: 0,
+      explicitSet: new Set<string>(),
+      implicitSources: [],
+      borderSet: new Set<string>(),
+    };
+    map.set(id, entry);
+  }
+  return entry;
+}
+
+function getEdgeSummaryMap(edges: FlowEdge[]): Map<string, NodeEdgeSummary> {
+  let cached = edgeSummaryCache.get(edges);
+  if (cached) return cached;
+
+  const temp = new Map<string, {
+    inCount: number;
+    outCount: number;
+    explicitSet: Set<string>;
+    implicitSources: string[];
+    borderSet: Set<string>;
+  }>();
+
+  for (const edge of edges) {
+    const srcEntry = getOrCreateSummary(temp, edge.source);
+    srcEntry.outCount += 1;
+    if (edge.sourceHandle && parseBorderAnchorHandle(edge.sourceHandle)) {
+      srcEntry.borderSet.add(edge.sourceHandle);
+    }
+
+    const tgtEntry = getOrCreateSummary(temp, edge.target);
+    tgtEntry.inCount += 1;
+    if (edge.targetHandle) {
+      tgtEntry.explicitSet.add(edge.targetHandle);
+      if (parseBorderAnchorHandle(edge.targetHandle)) {
+        tgtEntry.borderSet.add(edge.targetHandle);
+      }
+    } else {
+      tgtEntry.implicitSources.push(edge.source);
+    }
+  }
+
+  cached = new Map<string, NodeEdgeSummary>();
+  for (const [id, entry] of temp) {
+    cached.set(id, {
+      inCount: entry.inCount,
+      outCount: entry.outCount,
+      explicitIncomingHandles: Array.from(entry.explicitSet).sort(),
+      implicitIncomingSources: entry.implicitSources,
+      borderHandles: Array.from(entry.borderSet).sort(),
+    });
+  }
+  edgeSummaryCache.set(edges, cached);
+  return cached;
+}
+
+export function selectNodeById(nodes: FlowNode[], id: string): FlowNode | undefined {
+  return getNodeLookupMap(nodes).get(id);
+}
+
+export function selectNodeSemanticRole(
+  edges: FlowEdge[],
+  id: string,
+  type: FlowNodeType | string,
+  label?: string
+): NodeSemanticRole {
+  if (type !== 'start-end') {
+    return resolveNodeSemanticRoleFromCounts(type, label, 0, 0);
+  }
+  const summary = getEdgeSummaryMap(edges).get(id);
+  return resolveNodeSemanticRoleFromCounts(type, label, summary?.inCount ?? 0, summary?.outCount ?? 0);
+}
+
+export function selectIncomingHandleKeys(nodes: FlowNode[], edges: FlowEdge[], id: string): string {
+  const summary = getEdgeSummaryMap(edges).get(id);
+  if (!summary) return '';
+  if (summary.implicitIncomingSources.length === 0) {
+    return summary.explicitIncomingHandles.join(',');
+  }
+
+  const handleSet = new Set(summary.explicitIncomingHandles);
+  const nodeMap = getNodeLookupMap(nodes);
+  const thisNode = nodeMap.get(id);
+
+  for (const sourceId of summary.implicitIncomingSources) {
+    const srcNode = nodeMap.get(sourceId);
+    if (thisNode && srcNode) {
+      const dx = thisNode.position.x - srcNode.position.x;
+      const dy = thisNode.position.y - srcNode.position.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        handleSet.add(dx >= 0 ? 'left' : 'right');
+      } else {
+        handleSet.add(dy >= 0 ? 'top' : 'bottom');
+      }
+    } else {
+      handleSet.add('left');
+      handleSet.add('top');
+    }
+  }
+  return Array.from(handleSet).sort().join(',');
+}
+
+export function selectCustomAttachedHandleKeys(
+  edges: FlowEdge[],
+  id: string,
+  baseHandleIdSet: ReadonlySet<string>
+): string {
+  const summary = getEdgeSummaryMap(edges).get(id);
+  if (!summary || summary.borderHandles.length === 0) return '';
+  const result: string[] = [];
+  for (const h of summary.borderHandles) {
+    if (!baseHandleIdSet.has(h)) result.push(h);
+  }
+  return result.join(',');
+}
