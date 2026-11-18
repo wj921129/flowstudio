@@ -12,4 +12,8 @@ export class SaveStatusTracker {
   getLastSavedAt(diagramId: string): string | null {
     return this.lastSavedAt.get(diagramId) ?? this.repo.getDiagramById(diagramId)?.updatedAt ?? null;
   }
+
+  clear(diagramId: string): void {
+    this.lastSavedAt.delete(diagramId);
+  }
 }

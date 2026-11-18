@@ -11,13 +11,14 @@ export class SqlitePersistenceExtension implements Extension {
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<void> {
     const { documentName, document } = data;
-    const existingState = this.repo.getYDocState(documentName);
+    const diagram = this.repo.getDiagramById(documentName);
+    if (!diagram) {
+      throw new Error('图表不存在，拒绝建立协同连接');
+    }
 
+    const existingState = this.repo.getYDocState(documentName);
     if (!existingState || existingState.byteLength === 0) {
-      const meta = this.repo.getDiagramById(documentName);
-      if (meta) {
-        document.getMap('meta').set('title', meta.title);
-      }
+      document.getMap('meta').set('title', diagram.title);
       return;
     }
 

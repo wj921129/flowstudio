@@ -93,13 +93,37 @@ export const flowDiagramSchema = z.object({
 export const createDiagramInputSchema = z.object({
   title: z.string().trim().min(1, '标题不能为空').max(100, '标题不能超过 100 字符'),
   description: z.string().max(500, '描述不能超过 500 字符').optional(),
-  thumbnail: z.string().optional(),
+  thumbnail: z.string().max(512 * 1024, '缩略图大小不能超过 512KB').optional(),
 });
 
 export const updateDiagramInputSchema = z.object({
   title: z.string().trim().min(1, '标题不能为空').max(100, '标题不能超过 100 字符').optional(),
   description: z.string().max(500, '描述不能超过 500 字符').optional(),
-  thumbnail: z.string().optional(),
+  thumbnail: z.string().max(512 * 1024, '缩略图大小不能超过 512KB').optional(),
+});
+
+export const createSnapshotInputSchema = z.object({
+  label: z.string().trim().max(100, '快照标签不能超过 100 字符').optional(),
+  triggerType: z.enum(['manual', 'ai_batch', 'auto', 'timer']).optional(),
+});
+
+export const restoreSnapshotInputSchema = z.object({
+  mode: z.enum(['apply', 'delta']).optional(),
+  applyLocal: z.boolean().optional(),
+});
+
+const optionalIntParam = (min: number, max?: number) =>
+  z.preprocess(
+    (v) => (v === '' || v === undefined ? undefined : v),
+    max !== undefined
+      ? z.coerce.number().int().min(min).max(max).optional()
+      : z.coerce.number().int().min(min).optional(),
+  );
+
+export const listQuerySchema = z.object({
+  q: z.string().max(200, '搜索关键字不能超过 200 字符').optional(),
+  limit: optionalIntParam(1, 200),
+  offset: optionalIntParam(0),
 });
 
 export const awarenessUserStateSchema = z.object({
