@@ -213,7 +213,6 @@ describe('Server Snapshots & Lossless Delta Rollback', () => {
     await server.app.close();
   }, 20000);
 
-<<<<<<< HEAD
   it('恢复快照时彻底清理快照后附加到节点和连线上的多余子字段', async () => {
     const db = initDatabase(tmpDbPath);
     const repo = new DiagramRepository(db);
