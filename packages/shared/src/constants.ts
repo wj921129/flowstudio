@@ -87,3 +87,7 @@ export const DEFAULT_VIEWPORT = {
   y: 0,
   zoom: 1,
 } as const;
+
+export const YDOC_TOP_LEVEL_MAPS = ['nodes', 'edges', 'meta', 'comments'] as const;
+
+export type YDocTopLevelMapName = (typeof YDOC_TOP_LEVEL_MAPS)[number];

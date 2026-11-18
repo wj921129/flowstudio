@@ -1,16 +1,18 @@
-import { parentPort, workerData } from 'node:worker_threads';
+import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import * as Y from 'yjs';
+import { YDOC_TOP_LEVEL_MAPS } from '@flowstudio/shared';
 
-/**
- * 节点/连线根表的下钻一层结构: key -> Y.Map<字段>
- */
-function copyNestedMap(src: Y.Map<Y.Map<unknown>>, dst: Y.Map<Y.Map<unknown>>): void {
+function copyNestedMap(src: Y.Map<unknown>, dst: Y.Map<unknown>): void {
   src.forEach((value, key) => {
-    const inner = new Y.Map<unknown>();
-    value.forEach((fieldValue, fieldKey) => {
-      inner.set(fieldKey, fieldValue);
-    });
-    dst.set(key, inner);
+    if (value instanceof Y.Map) {
+      const inner = new Y.Map<unknown>();
+      value.forEach((fieldValue, fieldKey) => {
+        inner.set(fieldKey, fieldValue);
+      });
+      dst.set(key, inner);
+    } else {
+      dst.set(key, value);
+    }
   });
 }
 
@@ -20,20 +22,39 @@ function copyFlatMap(src: Y.Map<unknown>, dst: Y.Map<unknown>): void {
   });
 }
 
-const bloated = new Y.Doc();
-Y.applyUpdate(bloated, new Uint8Array(workerData.update as ArrayBuffer));
+export function rebuildCleanYDocState(update: Uint8Array): Uint8Array {
+  const bloated = new Y.Doc();
+  Y.applyUpdate(bloated, update);
 
-const fresh = new Y.Doc();
-fresh.transact(() => {
-  copyNestedMap(bloated.getMap<Y.Map<unknown>>('nodes'), fresh.getMap<Y.Map<unknown>>('nodes'));
-  copyNestedMap(bloated.getMap<Y.Map<unknown>>('edges'), fresh.getMap<Y.Map<unknown>>('edges'));
-  copyFlatMap(bloated.getMap<unknown>('meta'), fresh.getMap<unknown>('meta'));
-});
+  let maxClientId = 0;
+  for (const clientId of bloated.store.clients.keys()) {
+    if (clientId > maxClientId) maxClientId = clientId;
+  }
 
-const compacted = Y.encodeStateAsUpdate(fresh);
-const view = compacted.slice().buffer;
+  const fresh = new Y.Doc();
+  // 确保新血缘 clientID 大于历史所有写入者，防止合并时旧 docEpoch 在 LWW 中胜出
+  fresh.clientID = maxClientId < 0xffffffff ? maxClientId + 1 : 0xffffffff;
+  try {
+    fresh.transact(() => {
+      for (const mapName of YDOC_TOP_LEVEL_MAPS) {
+        if (mapName === 'meta') {
+          copyFlatMap(bloated.getMap<unknown>(mapName), fresh.getMap<unknown>(mapName));
+        } else {
+          copyNestedMap(bloated.getMap<unknown>(mapName), fresh.getMap<unknown>(mapName));
+        }
+      }
+      const prevEpoch = bloated.getMap<unknown>('meta').get('docEpoch');
+      const baseEpoch = typeof prevEpoch === 'number' && Number.isFinite(prevEpoch) ? prevEpoch : 1;
+      fresh.getMap<unknown>('meta').set('docEpoch', baseEpoch + 1);
+    });
+    return Y.encodeStateAsUpdate(fresh);
+  } finally {
+    bloated.destroy();
+    fresh.destroy();
+  }
+}
 
-bloated.destroy();
-fresh.destroy();
-
-parentPort!.postMessage({ bytes: view });
+if (!isMainThread && parentPort) {
+  const compacted = rebuildCleanYDocState(new Uint8Array(workerData.update as ArrayBuffer));
+  parentPort.postMessage({ bytes: compacted.slice().buffer });
+}

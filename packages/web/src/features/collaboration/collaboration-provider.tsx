@@ -7,6 +7,7 @@ import { YjsDiagramBridge } from './yjs-doc-bridge.js';
 import { CollaborativeUndoManager } from './undo-manager.js';
 import { getOrCreateUserIdentity, saveUserNickname } from './user-identity.js';
 import { useAwareness, type AwarenessUserState } from './use-awareness.js';
+import { createDocEpochGuard } from './doc-epoch-guard.js';
 import { NicknameModal } from './nickname-modal.js';
 import { useFlowStore } from '../../stores/flow-store.js';
 import { useSidebarStore } from '../sidebar/sidebar-store.js';
@@ -54,6 +55,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
   const [connectionStatus, setConnectionStatus] = useState<CollaborationConnectionStatus>('connecting');
   const [isSynced, setIsSynced] = useState(false);
   const [session, setSession] = useState<CollaborationSession | null>(null);
+  const [epochGeneration, setEpochGeneration] = useState(0);
 
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
   const spotlightActive = useFlowStore((s) => s.spotlightActive);
@@ -96,6 +98,12 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     };
 
     let isCancelled = false;
+    const epochGuard = createDocEpochGuard(d, () => {
+      if (!isCancelled) {
+        setEpochGeneration((g) => g + 1);
+      }
+    });
+
     apiClient.getDiagram(diagramId).then((meta) => {
       if (isCancelled || !meta?.title) return;
       useFlowStore.setState({ diagramTitle: meta.title });
@@ -104,6 +112,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
     const handleSynced = ({ state }: { state: boolean }) => {
       setIsSynced(state);
       if (state) {
+        epochGuard.markSynced();
         const raw = b.getRawTitle();
         if (raw) {
           useFlowStore.setState({ diagramTitle: raw });
@@ -138,6 +147,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       }
       p.off('status', handleStatus);
       p.off('synced', handleSynced);
+      epochGuard.destroy();
       unbindStore();
       unbindComments();
       unbindTheme();
@@ -151,7 +161,7 @@ export const CollaborationProvider: React.FC<CollaborationProviderProps> = ({
       useSidebarStore.getState().reset();
       setSession(null);
     };
-  }, [diagramId, wsUrl, currentUser.clientId]);
+  }, [diagramId, wsUrl, currentUser.clientId, epochGeneration]);
 
   // 首次访问自动弹窗提醒
   useEffect(() => {
