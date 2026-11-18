@@ -398,6 +398,48 @@ export class AiCollaborator {
   }
 
   /**
+   * 服务端 AI 在线感知广播切面
+   */
+  private async withAiAwareness<T>(
+    diagramId: string,
+    agentName: string | undefined,
+    summary: string,
+    targetNodeIds: string[],
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const liveDoc = this.writer.getLiveDocument(diagramId) as
+      | (Y.Doc & { awareness?: { setLocalState: (s: unknown) => void } })
+      | null;
+
+    if (liveDoc?.awareness) {
+      liveDoc.awareness.setLocalState({
+        user: {
+          clientId: 'ai-collaborator',
+          nickname: agentName || 'AI Assistant',
+          color: '#8b5cf6',
+          cursor: null,
+          selectedNodeIds: targetNodeIds,
+          isAi: true,
+          agentName: agentName || 'AI Assistant',
+          aiPlanning: {
+            isPlanning: true,
+            prompt: summary,
+            targetNodeIds,
+          },
+        },
+      });
+    }
+
+    try {
+      return await action();
+    } finally {
+      if (liveDoc?.awareness) {
+        liveDoc.awareness.setLocalState(null);
+      }
+    }
+  }
+
+  /**
    * 5. scaffold_diagram（在线优先写入 + 可逆批次账本）
    */
   async scaffoldDiagram(input: {
@@ -410,7 +452,14 @@ export class AiCollaborator {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    const existing = await this.writer.readDocument(input.diagramId, (doc) => {
+    const targetNodeIds = (input.spec.nodes || []).map((n) => n.id).filter(Boolean) as string[];
+    return this.withAiAwareness(
+      input.diagramId,
+      input.agentName,
+      `AI 正在根据 ${input.spec.paradigm || '默认'} 范式构建图表...`,
+      targetNodeIds,
+      async () => {
+        const existing = await this.writer.readDocument(input.diagramId, (doc) => {
       const nodes: FlowNode[] = [];
       const edges: FlowEdge[] = [];
       const locks = new Map<string, NodeLockMode>();
@@ -594,15 +643,17 @@ export class AiCollaborator {
       createdAt: new Date().toISOString(),
     });
 
-    return {
-      success: true,
-      batchId,
-      message: `已成功按 ${input.spec.paradigm} 范式渲染 ${rendered.nodes.length} 个节点、${rendered.edges.length} 条连线`,
-      warnings: outcome.result.warnings,
-      live: outcome.live,
-      url: `${this.serverBaseUrl}/#${input.diagramId}`,
-    };
-  }
+      return {
+        success: true,
+        batchId,
+        message: `已成功按 ${input.spec.paradigm} 范式渲染 ${rendered.nodes.length} 个节点、${rendered.edges.length} 条连线`,
+        warnings: outcome.result.warnings,
+        live: outcome.live,
+        url: `${this.serverBaseUrl}/#${input.diagramId}`,
+      };
+    },
+  );
+}
 
   /**
    * 6. apply_ops（原子增量操作 + 实体级 Diff 账本 + 锚定锁保护）
@@ -612,11 +663,25 @@ export class AiCollaborator {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    const preSnapshotState = this.writer.getSnapshotState(input.diagramId);
-    const batchId = this.newBatchId();
-    const isAtomic = Boolean(input.atomic);
+    const targetNodeIds: string[] = [];
+    for (const op of input.ops) {
+      if ('id' in op && typeof (op as any).id === 'string') targetNodeIds.push((op as any).id);
+      if ('nodeId' in op && typeof (op as any).nodeId === 'string') targetNodeIds.push((op as any).nodeId);
+      if ('source' in op && typeof (op as any).source === 'string') targetNodeIds.push((op as any).source);
+      if ('target' in op && typeof (op as any).target === 'string') targetNodeIds.push((op as any).target);
+    }
 
-    const outcome = await this.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
+    return this.withAiAwareness(
+      input.diagramId,
+      input.agentName,
+      `AI 正在执行 ${input.ops.length} 项增量操作...`,
+      Array.from(new Set(targetNodeIds)),
+      async () => {
+        const preSnapshotState = this.writer.getSnapshotState(input.diagramId);
+        const batchId = this.newBatchId();
+        const isAtomic = Boolean(input.atomic);
+
+        const outcome = await this.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
       const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
 
@@ -1445,7 +1510,8 @@ export class AiCollaborator {
       warnings,
       live: outcome.live,
     };
-  }
+  });
+}
 
   /**
    * 7. auto_layout（遵守 position/full 锚定锁，记录位置级 Diff）
@@ -1455,7 +1521,13 @@ export class AiCollaborator {
       throw new Error(`图表 ${input.diagramId} 不存在`);
     }
 
-    this.writer.createSnapshot(input.diagramId, '服务端自动排版前快照', 'auto');
+    return this.withAiAwareness(
+      input.diagramId,
+      input.agentName,
+      'AI 正在执行正交自动排版...',
+      [],
+      async () => {
+        this.writer.createSnapshot(input.diagramId, '服务端自动排版前快照', 'auto');
 
     const graph = await this.writer.readDocument(input.diagramId, (doc) => {
       const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
@@ -1831,14 +1903,16 @@ export class AiCollaborator {
       });
     }
 
-    return {
-      success: true,
-      batchId,
-      message: '服务端排版完成',
-      warnings: outcome.result.warnings,
-      live: outcome.live,
-    };
-  }
+      return {
+        success: true,
+        batchId,
+        message: '服务端排版完成',
+        warnings: outcome.result.warnings,
+        live: outcome.live,
+      };
+    },
+  );
+}
 
   private inspectDiagramSemantics(
     nodesMap: Y.Map<Y.Map<unknown>>,
