@@ -87,7 +87,8 @@ describe('MCP 巨型模块解耦子模块契约', () => {
       expect(state.fullProtectedIds.has('node1')).toBe(true);
       expect(state.fullProtectedIds.has('lane1')).toBe(true);
       expect(state.fullProtectedIds.has('pool1')).toBe(true);
-      expect(state.hasLockedAncestor('node1')).toBe(true);
+      expect(state.hasLockedAncestor('node1', state.fullProtectedIds)).toBe(true);
+      expect(state.hasLockedAncestor('node1')).toBe(false);
     });
 
     it('根据水平/垂直排版约束正确计算尺寸与偏移', () => {
