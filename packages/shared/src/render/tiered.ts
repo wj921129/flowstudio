@@ -8,7 +8,8 @@ export function renderTiered(n: NormalizedSpec, ctx: RenderContext): RenderResul
   const warnings = [...n.warnings];
   if (ctx.fixed.size > 0) warnings.push('tiered-dag 暂不支持 fixed 让位，锁节点保持原坐标');
   const eid = (id: string) => ctx.idPrefix + id;
-  const nodeOf = (id: string) => n.nodes.find((x) => x.id === id)!;
+  const nodeById = new Map(n.nodes.map((x) => [x.id, x]));
+  const nodeOf = (id: string) => nodeById.get(id)!;
   const sizeOf = (id: string) => getDefaultNodeSize(nodeOf(id).type ?? 'process');
   const incoming = new Map<string, string[]>();
   for (const e of n.edges) {
@@ -17,15 +18,24 @@ export function renderTiered(n: NormalizedSpec, ctx: RenderContext): RenderResul
     incoming.set(e.to, list);
   }
   const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  let hasCycle = false;
   const layer = (id: string): number => {
     const hit = memo.get(id);
     if (hit !== undefined) return hit;
+    if (visiting.has(id)) {
+      hasCycle = true;
+      return 0;
+    }
+    visiting.add(id);
     const ins = incoming.get(id) ?? [];
     const l = ins.length > 0 ? Math.max(...ins.map(layer)) + 1 : 0;
+    visiting.delete(id);
     memo.set(id, l);
     return l;
   };
   for (const x of n.nodes) layer(x.id);
+  if (hasCycle) warnings.push('tiered-dag 检测到有向环，已降级打破环计算层级');
   const rows = new Map<number, string[]>();
   for (const x of n.nodes) {
     const l = memo.get(x.id)!;

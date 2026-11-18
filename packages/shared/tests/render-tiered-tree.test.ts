@@ -78,6 +78,26 @@ describe('tiered-dag 几何约定', () => {
     });
     expect(new Set(centers.map((c) => Math.round(c))).size).toBe(1);
   });
+
+  it('遇到有向环时不发生栈溢出并输出降级警告', () => {
+    const cyclicSpec = {
+      paradigm: 'tiered-dag' as const,
+      lanes: [],
+      nodes: [
+        { id: 'a', label: 'A', role: 'main' as const },
+        { id: 'b', label: 'B', role: 'main' as const },
+      ],
+      edges: [
+        { from: 'a', to: 'b', kind: 'next' as const },
+        { from: 'b', to: 'a', kind: 'next' as const },
+      ],
+      mainOrder: ['a', 'b'],
+      warnings: [],
+    };
+    const r = renderTiered(cyclicSpec, ctx);
+    expect(r.nodes.length).toBe(2);
+    expect(r.warnings.some((w) => w.includes('环'))).toBe(true);
+  });
 });
 
 function layerOf(r: ReturnType<typeof renderTiered>, id: string): number {
@@ -116,5 +136,20 @@ describe('tree 几何约定', () => {
     const cto = byId(r, 'cto');
     const team = byId(r, 'teamDev');
     expect(team.position.y - (cto.position.y + cto.height!)).toBe(60);
+  });
+
+  it('fixed 锁定节点保持原有 X/Y 坐标与尺寸不被行高覆写', () => {
+    const fixedCtx: RenderContext = {
+      idPrefix: '',
+      origin: { x: 50, y: 50 },
+      fixed: new Map([['cto', { position: { x: 420, y: 777 }, width: 180, height: 90 }]]),
+      laneSizes: new Map(),
+      obstacles: new Map(),
+    };
+    const r = renderTree(normalizeSpec(orgSpec), fixedCtx);
+    const cto = byId(r, 'cto');
+    expect(cto.position).toEqual({ x: 420, y: 777 });
+    expect(cto.width).toBe(180);
+    expect(cto.height).toBe(90);
   });
 });

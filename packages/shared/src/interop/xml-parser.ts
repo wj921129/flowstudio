@@ -7,11 +7,14 @@ export interface XmlNode {
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
+const isValidCodePoint = (code: number): boolean =>
+  Number.isFinite(code) && code >= 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+
 const decodeEntities = (raw: string): string =>
   raw.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, body: string) => {
     if (body[0] === '#') {
       const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      return isValidCodePoint(code) ? String.fromCodePoint(code) : m;
     }
     return ENTITIES[body] ?? m;
   });
@@ -25,6 +28,9 @@ export function parseXml(xml: string): XmlNode {
     .replace(/^\uFEFF/, '')
     .replace(/<\?[\s\S]*?\?>/g, '')
     .replace(/<!--[\s\S]*?-->/g, '');
+  if (/<!(?:DOCTYPE|ENTITY)\b/i.test(rest.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, ''))) {
+    throw new Error('XML 包含禁止的 DOCTYPE 或 ENTITY 声明');
+  }
 
   const tagRe = /<(\/?)([a-zA-Z_][\w.:-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>|<!\[CDATA\[([\s\S]*?)\]\]>/g;
   let lastTextEnd = 0;
