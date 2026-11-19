@@ -18,6 +18,31 @@ const crossDeptSpec: DiagramSpec = {
   edges: [{ from: 'n1', to: 'n2' }, { from: 'n2', to: 'n3' }, { from: 'n3', to: 'n4' }],
 };
 
+const horizontalSpec: DiagramSpec = {
+  paradigm: 'swimlane',
+  lanes: [
+    { id: 'lane-db', label: '数据库交互' },
+    { id: 'lane-main', label: '主流程' },
+    { id: 'lane-ext', label: '外部服务' },
+  ],
+  nodes: [
+    { id: 'm1', label: '开始', laneId: 'lane-main', type: 'start-end' },
+    { id: 'm2', label: '处理', laneId: 'lane-main' },
+    { id: 'm3', label: '校验', laneId: 'lane-main', type: 'decision' },
+    { id: 'b1', label: '失败告警', laneId: 'lane-main' },
+    { id: 'm4', label: '完成', laneId: 'lane-main', type: 'start-end' },
+    { id: 'd1', label: '订单表', laneId: 'lane-db', type: 'database', attachTo: 'm2' },
+    { id: 'd2', label: '动账表', laneId: 'lane-db', type: 'database', attachTo: 'm2' },
+    { id: 'e1', label: '账务服务', laneId: 'lane-ext', type: 'arch-microservice', attachTo: 'm3' },
+  ],
+  edges: [
+    { from: 'm1', to: 'm2' },
+    { from: 'm2', to: 'm3' },
+    { from: 'm3', to: 'm4', label: '通过' },
+    { from: 'm3', to: 'b1', kind: 'branch', label: '不通过' },
+  ],
+};
+
 const ctx: RenderContext = { idPrefix: '', origin: { x: 50, y: 50 }, fixed: new Map(), laneSizes: new Map(), obstacles: new Map() };
 
 describe('swimlane 几何约定', () => {
@@ -70,5 +95,53 @@ describe('swimlane 几何约定', () => {
       return lane ? { ...n, position: { x: n.position.x + lane.position.x, y: n.position.y + lane.position.y } } : n;
     });
     expect(noOverlap(world.filter((n) => !['pool', 'lane'].includes(n.type)))).toBe(true);
+  });
+});
+
+describe('swimlane 横向主干范式（主干同泳道）', () => {
+  const r = renderSwimlane(normalizeSpec(horizontalSpec), ctx);
+
+  it('主干自左向右推进且主干边走 right → left', () => {
+    const m1 = byId(r, 'm1');
+    const m2 = byId(r, 'm2');
+    const m3 = byId(r, 'm3');
+    const m4 = byId(r, 'm4');
+    expect(m2.position.x).toBeGreaterThan(m1.position.x);
+    expect(m3.position.x).toBeGreaterThan(m2.position.x);
+    expect(m4.position.x).toBeGreaterThan(m3.position.x);
+    expect(new Set([m1.position.y, m2.position.y, m3.position.y, m4.position.y]).size).toBe(1);
+    const trunk = r.edges.find((e) => e.source === 'm1' && e.target === 'm2')!;
+    expect(trunk.sourceHandle).toBe('right');
+    expect(trunk.targetHandle).toBe('left');
+  });
+
+  it('依赖节点与主干水平居中对齐并走上下连接桩', () => {
+    const d1 = byId(r, 'd1');
+    const m2 = byId(r, 'm2');
+    expect(d1.position.x + d1.width! / 2).toBeCloseTo(m2.position.x + m2.width! / 2, 0);
+    const ann = r.edges.find((e) => e.source === 'm2' && e.target === 'd1')!;
+    expect(ann.sourceHandle).toBe('top');
+    expect(ann.targetHandle).toBe('bottom');
+    const ext = r.edges.find((e) => e.source === 'm3' && e.target === 'e1')!;
+    expect(ext.sourceHandle).toBe('bottom');
+    expect(ext.targetHandle).toBe('top');
+  });
+
+  it('同宿主附注纵向堆叠且分支落在主干下方', () => {
+    const d1 = byId(r, 'd1');
+    const d2 = byId(r, 'd2');
+    expect(d2.position.y).toBeGreaterThan(d1.position.y + d1.height!);
+    const b1 = byId(r, 'b1');
+    const m3 = byId(r, 'm3');
+    expect(b1.position.y).toBeGreaterThan(m3.position.y + m3.height!);
+  });
+
+  it('全图无重叠且子节点收纳在泳道内', () => {
+    const world = r.nodes.map((n) => {
+      const lane = r.nodes.find((l) => l.id === n.parentId && l.type === 'lane');
+      return lane ? { ...n, position: { x: n.position.x + lane.position.x, y: n.position.y + lane.position.y } } : n;
+    });
+    expect(noOverlap(world.filter((n) => !['pool', 'lane'].includes(n.type)))).toBe(true);
+    expect(laneContainsAllChildren(r)).toBe(true);
   });
 });
