@@ -46,7 +46,7 @@ flowstudio/
 │       └── tests/              # 前端组件与算法测试套件
 │
 ├── data/                       # 运行时持久化数据目录（SQLite 数据库与 WAL，已 gitignore）
-├── scripts/                    # 运维与验收脚本（start.bat, dev-all.bat, stop.bat, render-acceptance-svg.mjs）
+├── scripts/                    # 运维与验收脚本（start.bat, dev-all.bat, stop.bat, pull.bat, render-acceptance-svg.mjs）
 ├── mcp/                        # MCP stdio 桥接脚本（flowstudio-mcp.cjs，对接 Cursor / Claude Desktop）
 └── .work/                      # 项目标准文档中心（文件夹英文简称，文档中文）
     ├── prd/                    # 产品需求规格说明书与已实现功能全景清单
