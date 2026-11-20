@@ -47,6 +47,131 @@ export function formatBorderAnchorHandle(side: BorderSide, offset: number): stri
   return `${side}@${Number(clamped.toFixed(4))}`;
 }
 
+export function getShapeBorderNormalizedPoint(
+  side: BorderSide,
+  offset: number,
+  nodeType?: string,
+  dimensions?: { width: number; height: number }
+): { u: number; v: number } {
+  const t = clampBorderOffset(offset);
+
+  switch (nodeType) {
+    case 'decision': {
+      const inset = 0.01 + Math.abs(t - 0.5) * 0.98;
+      if (side === 'top') return { u: t, v: inset };
+      if (side === 'bottom') return { u: t, v: 1 - inset };
+      if (side === 'left') return { u: inset, v: t };
+      return { u: 1 - inset, v: t };
+    }
+    case 'database': {
+      if (side === 'top') {
+        const dx = Math.min(1, Math.abs(t - 0.5) / 0.49);
+        return { u: t, v: 0.13 - 0.12 * Math.sqrt(Math.max(0, 1 - dx * dx)) };
+      }
+      if (side === 'bottom') {
+        const dx = Math.min(1, Math.abs(t - 0.5) / 0.49);
+        return { u: t, v: 0.87 + 0.12 * Math.sqrt(Math.max(0, 1 - dx * dx)) };
+      }
+      if (side === 'left') {
+        let u = 0.01;
+        if (t < 0.13) {
+          const dy = Math.min(1, (0.13 - t) / 0.12);
+          u = 0.5 - 0.49 * Math.sqrt(Math.max(0, 1 - dy * dy));
+        } else if (t > 0.87) {
+          const dy = Math.min(1, (t - 0.87) / 0.12);
+          u = 0.5 - 0.49 * Math.sqrt(Math.max(0, 1 - dy * dy));
+        }
+        return { u, v: t };
+      }
+      let u = 0.99;
+      if (t < 0.13) {
+        const dy = Math.min(1, (0.13 - t) / 0.12);
+        u = 0.5 + 0.49 * Math.sqrt(Math.max(0, 1 - dy * dy));
+      } else if (t > 0.87) {
+        const dy = Math.min(1, (t - 0.87) / 0.12);
+        u = 0.5 + 0.49 * Math.sqrt(Math.max(0, 1 - dy * dy));
+      }
+      return { u, v: t };
+    }
+    case 'io': {
+      if (side === 'left') return { u: 0.11 - 0.1 * t, v: t };
+      if (side === 'right') return { u: 0.99 - 0.1 * t, v: t };
+      if (side === 'top') {
+        return {
+          u: t,
+          v: t < 0.11 ? Math.min(0.99, 0.01 + ((0.11 - t) / 0.1) * 0.98) : 0.01,
+        };
+      }
+      return {
+        u: t,
+        v: t > 0.89 ? Math.max(0.01, 0.99 - ((t - 0.89) / 0.1) * 0.98) : 0.99,
+      };
+    }
+    case 'document': {
+      if (side === 'top') return { u: t, v: 0.01 };
+      if (side === 'bottom') {
+        const v =
+          t >= 0.5
+            ? (() => {
+                const s = (0.99 - Math.min(0.99, t)) / 0.49;
+                return (1 - s) * (1 - s) * 0.92 + 2 * (1 - s) * s * 0.84 + s * s * 0.98;
+              })()
+            : (() => {
+                const s = (0.5 - Math.max(0.01, t)) / 0.49;
+                return Math.min(
+                  0.995,
+                  (1 - s) * (1 - s) * 0.98 + 2 * (1 - s) * s * 1.06 + s * s * 0.92
+                );
+              })();
+        return { u: t, v };
+      }
+      if (side === 'left') return { u: 0.01, v: Math.min(0.92, t) };
+      return { u: 0.99, v: Math.min(0.92, t) };
+    }
+    case 'start-end': {
+      const w = Math.max(1, dimensions?.width ?? 120);
+      const h = Math.max(1, dimensions?.height ?? 60);
+      const r = Math.min(w, h) / 2;
+      const ru = r / w;
+      const rv = r / h;
+      if (side === 'top' || side === 'bottom') {
+        let insetV = 0;
+        if (t < ru) {
+          const dx = (ru - t) / ru;
+          insetV = rv * (1 - Math.sqrt(Math.max(0, 1 - dx * dx)));
+        } else if (t > 1 - ru) {
+          const dx = (t - (1 - ru)) / ru;
+          insetV = rv * (1 - Math.sqrt(Math.max(0, 1 - dx * dx)));
+        }
+        return { u: t, v: side === 'top' ? insetV : 1 - insetV };
+      }
+      let insetU = 0;
+      if (t < rv) {
+        const dy = (rv - t) / rv;
+        insetU = ru * (1 - Math.sqrt(Math.max(0, 1 - dy * dy)));
+      } else if (t > 1 - rv) {
+        const dy = (t - (1 - rv)) / rv;
+        insetU = ru * (1 - Math.sqrt(Math.max(0, 1 - dy * dy)));
+      }
+      return { u: side === 'left' ? insetU : 1 - insetU, v: t };
+    }
+    case 'uml-activation': {
+      const w = Math.max(14, dimensions?.width ?? 32);
+      const halfBar = Math.min(0.5, 7 / w);
+      if (side === 'left') return { u: 0.5 - halfBar, v: t };
+      if (side === 'right') return { u: 0.5 + halfBar, v: t };
+      if (side === 'top') return { u: 0.5, v: 0 };
+      return { u: 0.5, v: 1 };
+    }
+    default: {
+      if (side === 'top') return { u: t, v: 0 };
+      if (side === 'bottom') return { u: t, v: 1 };
+      if (side === 'left') return { u: 0, v: t };
+      return { u: 1, v: t };
+    }
+  }
+}
+
 export interface ProjectedBorderPoint {
   side: BorderSide;
   offset: number;
@@ -60,22 +185,33 @@ export function projectPointToNodeBorder(
   localY: number,
   width: number,
   height: number,
-  options?: { snapThresholdPx?: number; disableSnap?: boolean }
+  options?: { snapThresholdPx?: number; disableSnap?: boolean; nodeType?: string }
 ): ProjectedBorderPoint {
   const w = Math.max(1, width);
   const h = Math.max(1, height);
   const cx = Math.min(w, Math.max(0, localX));
   const cy = Math.min(h, Math.max(0, localY));
+  const dims = { width: w, height: h };
 
-  const distances: Array<{ side: BorderSide; dist: number; rawOffset: number; length: number }> = [
-    { side: 'top', dist: Math.abs(localY), rawOffset: cx / w, length: w },
-    { side: 'bottom', dist: Math.abs(localY - h), rawOffset: cx / w, length: w },
-    { side: 'left', dist: Math.abs(localX), rawOffset: cy / h, length: h },
-    { side: 'right', dist: Math.abs(localX - w), rawOffset: cy / h, length: h },
+  const candidates: Array<{ side: BorderSide; rawOffset: number; length: number }> = [
+    { side: 'top', rawOffset: cx / w, length: w },
+    { side: 'bottom', rawOffset: cx / w, length: w },
+    { side: 'left', rawOffset: cy / h, length: h },
+    { side: 'right', rawOffset: cy / h, length: h },
   ];
 
-  distances.sort((a, b) => a.dist - b.dist);
-  const best = distances[0];
+  const distances = candidates.map((c) => {
+    const pt = getShapeBorderNormalizedPoint(c.side, c.rawOffset, options?.nodeType, dims);
+    const dist = Math.hypot(localX - pt.u * w, localY - pt.v * h);
+    return { ...c, dist };
+  });
+
+  const minDist = Math.min(...distances.map((d) => d.dist));
+  const nearBest = distances.filter((d) => d.dist <= minDist + 2);
+  nearBest.sort(
+    (a, b) => Math.abs(a.rawOffset - 0.5) - Math.abs(b.rawOffset - 0.5) || a.dist - b.dist
+  );
+  const best = nearBest[0];
 
   let offset = clampBorderOffset(best.rawOffset);
   let snappedLabel: string | undefined;
@@ -93,41 +229,26 @@ export function projectPointToNodeBorder(
     }
   }
 
-  let x = 0;
-  let y = 0;
-  if (best.side === 'top') {
-    x = offset * w;
-    y = 0;
-  } else if (best.side === 'bottom') {
-    x = offset * w;
-    y = h;
-  } else if (best.side === 'left') {
-    x = 0;
-    y = offset * h;
-  } else {
-    x = w;
-    y = offset * h;
-  }
-
-  return { side: best.side, offset, x, y, snappedLabel };
+  const finalPt = getShapeBorderNormalizedPoint(best.side, offset, options?.nodeType, dims);
+  return { side: best.side, offset, x: finalPt.u * w, y: finalPt.v * h, snappedLabel };
 }
 
 export function getBorderAnchorWorldPoint(
   rect: { x: number; y: number; width: number; height: number },
   handleId?: string | null,
-  fallbackSide: BorderSide = 'right'
+  fallbackSide: BorderSide = 'right',
+  nodeType?: string
 ): { x: number; y: number; side: BorderSide; offset: number } {
   const parsed = parseBorderAnchorHandle(handleId) ?? { side: fallbackSide, offset: 0.5 };
   const { side, offset } = parsed;
-  switch (side) {
-    case 'top':
-      return { x: rect.x + rect.width * offset, y: rect.y, side, offset };
-    case 'bottom':
-      return { x: rect.x + rect.width * offset, y: rect.y + rect.height, side, offset };
-    case 'left':
-      return { x: rect.x, y: rect.y + rect.height * offset, side, offset };
-    case 'right':
-    default:
-      return { x: rect.x + rect.width, y: rect.y + rect.height * offset, side, offset };
-  }
+  const { u, v } = getShapeBorderNormalizedPoint(side, offset, nodeType, {
+    width: rect.width,
+    height: rect.height,
+  });
+  return {
+    x: rect.x + rect.width * u,
+    y: rect.y + rect.height * v,
+    side,
+    offset,
+  };
 }

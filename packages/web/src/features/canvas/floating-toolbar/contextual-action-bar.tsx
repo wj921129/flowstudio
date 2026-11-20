@@ -4,7 +4,6 @@
  */
 
 import React from 'react';
-import { useViewport } from '@xyflow/react';
 import {
   Group as GroupIcon,
   Ungroup as UngroupIcon,
@@ -18,9 +17,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import { useFlowStore } from '../../../stores/flow-store';
-import { computeBoundingBox, toWorldPosition } from '../utils/group-calculator';
 import { isNodeLocked } from '../utils/node-lock-manager';
-import type { FlowNode } from '@flowstudio/shared';
 
 const PALETTE_COLORS = [
   'var(--fs-palette-1)',
@@ -32,7 +29,6 @@ const PALETTE_COLORS = [
 ];
 
 export const ContextualActionBar: React.FC = () => {
-  const { x: vpX, y: vpY, zoom } = useViewport();
   const nodes = useFlowStore((s) => s.nodes);
   const selectedNodeIds = useFlowStore((s) => s.selectedNodeIds);
   const groupSelectedNodes = useFlowStore((s) => s.groupSelectedNodes);
@@ -56,30 +52,6 @@ export const ContextualActionBar: React.FC = () => {
   // 获取锁定状态用于徽章展示 (none -> position 📌 -> full 🔒)
   const currentLockMode = targetNodes[0]?.data?.lockMode ?? 'none';
 
-  // 换算所有选中节点的世界坐标以确定综合包围盒
-  const nodeMap = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
-  const getAbsolutePos = (node: FlowNode): { x: number; y: number } => {
-    if (node.parentId && nodeMap.has(node.parentId)) {
-      const parent = nodeMap.get(node.parentId)!;
-      const parentPos = getAbsolutePos(parent);
-      return toWorldPosition(node.position, parentPos);
-    }
-    return { ...node.position };
-  };
-
-  const worldNodes: FlowNode[] = targetNodes.map((n) => ({
-    ...n,
-    position: getAbsolutePos(n),
-  }));
-
-  const bbox = computeBoundingBox(worldNodes, 0);
-  const rawTop = bbox.y * zoom + vpY - 12;
-  const rawBottom = (bbox.y + bbox.height) * zoom + vpY + 12;
-  const isAbove = rawTop >= 48;
-  const screenX = (bbox.x + bbox.width / 2) * zoom + vpX;
-  const screenY = isAbove ? rawTop : rawBottom;
-  const transform = isAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)';
-
   const handleApplyColor = (colorVar: string) => {
     const unlockedTargets = targetNodes.filter((n) => !isNodeLocked(n, 'content'));
     if (unlockedTargets.length === 0 && targetNodes.length > 0) {
@@ -101,14 +73,7 @@ export const ContextualActionBar: React.FC = () => {
   return (
     <div
       data-testid="contextual-action-bar"
-      style={{
-        position: 'absolute',
-        left: `${Math.round(screenX)}px`,
-        top: `${Math.round(screenY)}px`,
-        transform,
-        zIndex: 40,
-      }}
-      className="nodrag nopan flex items-center gap-1 p-1 rounded-lg bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-md select-none text-[var(--fs-text)]"
+      className="nodrag nopan absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 px-2 py-1.5 rounded-xl bg-[var(--fs-surface)]/95 backdrop-blur-md border border-[var(--fs-border)] shadow-lg select-none text-[var(--fs-text)]"
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >

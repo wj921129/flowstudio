@@ -21,6 +21,7 @@ import {
   parseBorderAnchorHandle,
   formatBorderAnchorHandle,
   projectPointToNodeBorder,
+  getShapeBorderNormalizedPoint,
 } from '@flowstudio/shared';
 import { THEME_PRESETS } from '../src/features/sidebar/styles/theme-presets';
 import { resolveNodeStyle } from '../src/features/sidebar/styles/style-resolver';
@@ -238,5 +239,62 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(spot2[0]).not.toBe(spot1[0]);
     expect(spot2[1]).toBe(spot1[1]);
     expect(spot2[2]).toBe(spot1[2]);
+  });
+
+  it('特殊形状连接点贴合真实几何边框，移除分点浮标，顶部操作栏固定居中且浅色节点光标高对比', () => {
+    // 1. 菱形 decision: 1/4 与 1/3 位置严格落在菱形斜边上
+    const decTopQuarter = getShapeBorderNormalizedPoint('top', 0.25, 'decision');
+    expect(decTopQuarter.u).toBeCloseTo(0.25, 4);
+    expect(decTopQuarter.v).toBeCloseTo(0.255, 4);
+    const decProj = projectPointToNodeBorder(140 / 3, 17.33, 140, 100, { nodeType: 'decision' });
+    expect(decProj.side).toBe('top');
+    expect(decProj.x).toBeCloseTo(140 / 3, 1);
+    expect(decProj.y).toBeCloseTo(17.33, 1);
+
+    // 2. 圆柱 database: 顶部 1/4 贴合上椭圆弧，底部中点贴合下弧底
+    const dbTopQuarter = getShapeBorderNormalizedPoint('top', 0.25, 'database');
+    expect(dbTopQuarter.v).toBeGreaterThan(0.02);
+    expect(dbTopQuarter.v).toBeLessThan(0.13);
+    const dbProj = projectPointToNodeBorder(60, 99, 120, 100, { nodeType: 'database' });
+    expect(dbProj.side).toBe('bottom');
+    expect(dbProj.y).toBeCloseTo(99, 1);
+
+    // 3. 平行四边形 io: 左右斜边随纵坐标线性内缩
+    const ioLeft = getShapeBorderNormalizedPoint('left', 0.5, 'io');
+    const ioRight = getShapeBorderNormalizedPoint('right', 0.5, 'io');
+    expect(ioLeft.u).toBeCloseTo(0.06, 4);
+    expect(ioRight.u).toBeCloseTo(0.94, 4);
+    const ioProj = projectPointToNodeBorder(10, 40, 160, 80, { nodeType: 'io' });
+    expect(ioProj.side).toBe('left');
+    expect(ioProj.x).toBeCloseTo(9.6, 1);
+
+    // 4. 文档 document: 底边右侧波浪谷位高于底框
+    const docBottomRight = getShapeBorderNormalizedPoint('bottom', 0.75, 'document');
+    expect(docBottomRight.v).toBeLessThan(0.95);
+    const docProj = projectPointToNodeBorder(120, 72, 160, 80, { nodeType: 'document' });
+    expect(docProj.side).toBe('bottom');
+    expect(docProj.y).toBeLessThan(76);
+
+    // 5. BaseNodeWrapper 不再渲染 snappedLabel 文字浮标
+    const wrapperCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/base-node-wrapper.tsx'),
+      'utf-8'
+    );
+    expect(wrapperCode).not.toContain('hoverAnchor.snappedLabel');
+
+    // 6. ContextualActionBar 固定至画布顶部居中
+    const actionBarCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/floating-toolbar/contextual-action-bar.tsx'),
+      'utf-8'
+    );
+    expect(actionBarCode).toContain('top-4 left-1/2 -translate-x-1/2');
+    expect(actionBarCode).not.toContain('computeBoundingBox');
+
+    // 7. 浅色节点内悬停使用高对比深色手掌光标，不落回白手
+    const tokensCss = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/theme/tokens.css'),
+      'utf-8'
+    );
+    expect(tokensCss).toContain('.react-flow:not(.fs-cursor-connect) .react-flow__node.draggable');
   });
 });

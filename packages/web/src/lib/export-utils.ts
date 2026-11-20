@@ -4,7 +4,7 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
-import { flowNodeSchema, flowEdgeSchema } from '@flowstudio/shared';
+import { flowNodeSchema, flowEdgeSchema, getBorderAnchorWorldPoint } from '@flowstudio/shared';
 import { getNodeDimensions } from '../features/canvas/utils/group-calculator.js';
 import { getNodeWorldPosition } from '../features/canvas/utils/split-insert-manager.js';
 import { sanitizeNodes, sanitizeEdges } from './storage.js';
@@ -135,19 +135,13 @@ function getHandleEndpoint(
   isSource = true
 ): XYPosition {
   const { width: w, height: h } = getNodeDimensions(node);
-  const side = handleId || (isSource ? 'right' : 'left');
-
-  switch (side) {
-    case 'top':
-      return { x: worldPos.x + w / 2, y: worldPos.y };
-    case 'bottom':
-      return { x: worldPos.x + w / 2, y: worldPos.y + h };
-    case 'left':
-      return { x: worldPos.x, y: worldPos.y + h / 2 };
-    case 'right':
-    default:
-      return { x: worldPos.x + w, y: worldPos.y + h / 2 };
-  }
+  const { x, y } = getBorderAnchorWorldPoint(
+    { x: worldPos.x, y: worldPos.y, width: w, height: h },
+    handleId,
+    isSource ? 'right' : 'left',
+    node.type
+  );
+  return { x, y };
 }
 
 /**

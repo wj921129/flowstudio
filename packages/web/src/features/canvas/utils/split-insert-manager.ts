@@ -42,7 +42,8 @@ export function getHandlePoint(
   const { x, y } = getBorderAnchorWorldPoint(
     { x: worldPos.x, y: worldPos.y, width, height },
     handleId,
-    fallbackSide === 'source' ? 'right' : 'left'
+    fallbackSide === 'source' ? 'right' : 'left',
+    node.type
   );
   return { x, y };
 }

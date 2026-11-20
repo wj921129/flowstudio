@@ -8,9 +8,11 @@ import { Handle, Position, NodeResizer, useConnection, useUpdateNodeInternals } 
 import type { FlowNodeData, FlowNodeType, HandlePosition, BorderSide } from '@flowstudio/shared';
 import {
   getNodeRegistryEntry,
+  getDefaultNodeSize,
   parseBorderAnchorHandle,
   formatBorderAnchorHandle,
   projectPointToNodeBorder,
+  getShapeBorderNormalizedPoint,
 } from '@flowstudio/shared';
 import {
   useFlowStore,
@@ -36,6 +38,29 @@ const POSITION_MAP: Record<HandlePosition, Position> = {
   bottom: Position.Bottom,
   left: Position.Left,
 };
+
+function buildHandleAnchorStyle(
+  side: BorderSide,
+  offset: number,
+  nodeType: FlowNodeType,
+  width?: number,
+  height?: number
+): React.CSSProperties {
+  const { u, v } = getShapeBorderNormalizedPoint(side, offset, nodeType, {
+    width: width || 120,
+    height: height || 60,
+  });
+  switch (side) {
+    case 'top':
+      return { left: `${u * 100}%`, top: `${v * 100}%`, right: 'auto', bottom: 'auto' };
+    case 'bottom':
+      return { left: `${u * 100}%`, bottom: `${(1 - v) * 100}%`, right: 'auto', top: 'auto' };
+    case 'left':
+      return { left: `${u * 100}%`, top: `${v * 100}%`, right: 'auto', bottom: 'auto' };
+    case 'right':
+      return { right: `${(1 - u) * 100}%`, top: `${v * 100}%`, left: 'auto', bottom: 'auto' };
+  }
+}
 
 import {
   resolveNodeSemanticRole,
@@ -66,6 +91,8 @@ export interface BaseNodeWrapperProps {
   id: string;
   data: FlowNodeData;
   selected?: boolean;
+  width?: number;
+  height?: number;
   className?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;
@@ -79,6 +106,8 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   id,
   data,
   selected = false,
+  width,
+  height,
   className = '',
   style = {},
   children,
@@ -88,6 +117,9 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '');
   const remoteSelector = useRemoteNodeSelector(id);
+  const defaultSize = getDefaultNodeSize(data.type);
+  const resolvedWidth = width ?? defaultSize.width;
+  const resolvedHeight = height ?? defaultSize.height;
 
   let isConnecting = false;
   try {
@@ -107,7 +139,6 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     id: string;
     side: BorderSide;
     offset: number;
-    snappedLabel?: string;
   } | null>(null);
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
@@ -199,17 +230,6 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         return;
       }
 
-      const distTop = Math.abs(clientY - rect.top);
-      const distBottom = Math.abs(clientY - rect.bottom);
-      const distLeft = Math.abs(clientX - rect.left);
-      const distRight = Math.abs(clientX - rect.right);
-      const minDist = Math.min(distTop, distBottom, distLeft, distRight);
-
-      if (minDist > margin) {
-        setHoverAnchor(null);
-        return;
-      }
-
       const nodeWidth = el.offsetWidth || rect.width;
       const nodeHeight = el.offsetHeight || rect.height;
       const localX = ((clientX - rect.left) / rect.width) * nodeWidth;
@@ -217,15 +237,23 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       const proj = projectPointToNodeBorder(localX, localY, nodeWidth, nodeHeight, {
         snapThresholdPx: 5,
         disableSnap,
+        nodeType: data.type,
       });
+      const distScreen = Math.hypot(
+        ((localX - proj.x) / nodeWidth) * rect.width,
+        ((localY - proj.y) / nodeHeight) * rect.height
+      );
+      if (distScreen > margin) {
+        setHoverAnchor(null);
+        return;
+      }
+
       const hid = formatBorderAnchorHandle(proj.side, proj.offset);
       setHoverAnchor((prev) =>
-        prev && prev.id === hid && prev.snappedLabel === proj.snappedLabel
-          ? prev
-          : { id: hid, side: proj.side, offset: proj.offset, snappedLabel: proj.snappedLabel }
+        prev && prev.id === hid ? prev : { id: hid, side: proj.side, offset: proj.offset }
       );
     },
-    [baseHandles.length, isSpacePanning]
+    [baseHandles.length, isSpacePanning, data.type]
   );
 
   useEffect(() => {
@@ -242,7 +270,15 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
     if (updateNodeInternals) {
       updateNodeInternals(id);
     }
-  }, [id, customAttachedHandleKeys, hoverAnchor?.id, updateNodeInternals]);
+  }, [
+    id,
+    data.type,
+    resolvedWidth,
+    resolvedHeight,
+    customAttachedHandleKeys,
+    hoverAnchor?.id,
+    updateNodeInternals,
+  ]);
 
   // 合并节点样式
   const nodeStyle = data.style || {};
@@ -330,6 +366,13 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         const hasIncomingEdge = incomingHandles.has(handle.id);
         const isForceShowHandles = isConnecting || activeTool === 'connect';
         const showVisualIndicator = isForceShowHandles ? true : (!hasIncomingEdge && showHandles);
+        const anchorStyle = buildHandleAnchorStyle(
+          handle.position as BorderSide,
+          0.5,
+          data.type,
+          resolvedWidth,
+          resolvedHeight
+        );
 
         return (
           <React.Fragment key={handle.id}>
@@ -338,6 +381,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               position={pos}
               id={handle.id}
               isConnectable={true}
+              style={anchorStyle}
               className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-0 ${
                 showHandles ? '!opacity-100' : 'opacity-0'
               }`}
@@ -347,6 +391,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               position={pos}
               id={handle.id}
               isConnectable={true}
+              style={anchorStyle}
               className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] cursor-crosshair group/handle !pointer-events-auto ${
                 hasIncomingEdge ? 'z-0' : 'z-10'
               } transition-opacity duration-150 ${
@@ -369,10 +414,13 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
 
       {customAttachedHandles.map((ch) => {
         const pos = POSITION_MAP[ch.side];
-        const anchorStyle: React.CSSProperties =
-          ch.side === 'top' || ch.side === 'bottom'
-            ? { left: `${ch.offset * 100}%`, right: 'auto' }
-            : { top: `${ch.offset * 100}%`, bottom: 'auto' };
+        const anchorStyle = buildHandleAnchorStyle(
+          ch.side,
+          ch.offset,
+          data.type,
+          resolvedWidth,
+          resolvedHeight
+        );
         return (
           <React.Fragment key={`custom-${ch.id}`}>
             <Handle
@@ -404,51 +452,35 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
           const isNewHandle =
             !baseHandleIdSet.has(hoverAnchor.id) &&
             !customAttachedHandles.some((c) => c.id === hoverAnchor.id);
+          if (!isNewHandle) return null;
           const pos = POSITION_MAP[hoverAnchor.side];
-          const anchorStyle: React.CSSProperties =
-            hoverAnchor.side === 'top' || hoverAnchor.side === 'bottom'
-              ? { left: `${hoverAnchor.offset * 100}%`, right: 'auto' }
-              : { top: `${hoverAnchor.offset * 100}%`, bottom: 'auto' };
+          const anchorStyle = buildHandleAnchorStyle(
+            hoverAnchor.side,
+            hoverAnchor.offset,
+            data.type,
+            resolvedWidth,
+            resolvedHeight
+          );
           return (
             <>
-              {isNewHandle && (
-                <>
-                  <Handle
-                    type="target"
-                    position={pos}
-                    id={hoverAnchor.id}
-                    isConnectable={true}
-                    style={anchorStyle}
-                    className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] pointer-events-auto z-20"
-                  />
-                  <Handle
-                    type="source"
-                    position={pos}
-                    id={hoverAnchor.id}
-                    isConnectable={true}
-                    style={anchorStyle}
-                    className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] cursor-crosshair !pointer-events-auto z-30"
-                  >
-                    <span className="fs-handle-dot w-3 h-3 bg-blue-600 border-2 border-white shadow-[0_0_0_3px_rgba(37,99,235,0.35)] pointer-events-none" />
-                  </Handle>
-                </>
-              )}
-              {hoverAnchor.snappedLabel && (
-                <div
-                  style={
-                    hoverAnchor.side === 'top'
-                      ? { left: `${hoverAnchor.offset * 100}%`, top: '-22px', transform: 'translateX(-50%)' }
-                      : hoverAnchor.side === 'bottom'
-                        ? { left: `${hoverAnchor.offset * 100}%`, bottom: '-22px', transform: 'translateX(-50%)' }
-                        : hoverAnchor.side === 'left'
-                          ? { left: '-28px', top: `${hoverAnchor.offset * 100}%`, transform: 'translateY(-50%)' }
-                          : { right: '-28px', top: `${hoverAnchor.offset * 100}%`, transform: 'translateY(-50%)' }
-                  }
-                  className="absolute z-40 px-1 py-0.5 rounded bg-slate-900/90 text-white text-[9px] font-mono leading-none pointer-events-none shadow-sm whitespace-nowrap"
-                >
-                  {hoverAnchor.snappedLabel}
-                </div>
-              )}
+              <Handle
+                type="target"
+                position={pos}
+                id={hoverAnchor.id}
+                isConnectable={true}
+                style={anchorStyle}
+                className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] pointer-events-auto z-20"
+              />
+              <Handle
+                type="source"
+                position={pos}
+                id={hoverAnchor.id}
+                isConnectable={true}
+                style={anchorStyle}
+                className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] cursor-crosshair !pointer-events-auto z-30"
+              >
+                <span className="fs-handle-dot w-3 h-3 bg-blue-600 border-2 border-white shadow-[0_0_0_3px_rgba(37,99,235,0.35)] pointer-events-none" />
+              </Handle>
             </>
           );
         })()

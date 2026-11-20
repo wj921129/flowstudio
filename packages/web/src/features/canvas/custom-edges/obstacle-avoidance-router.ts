@@ -138,20 +138,81 @@ export function buildRoutingGrid(
 function getSafeAnchorPoint(
   point: XYPosition,
   dir?: EdgeAnchorDirection,
-  offset: number = 16
+  offset: number = 16,
+  selfBox?: ObstacleBox
 ): XYPosition {
   switch (dir) {
     case 'right':
-      return { x: point.x + offset, y: point.y };
+      return {
+        x: (selfBox ? Math.max(point.x, selfBox.x + selfBox.width) : point.x) + offset,
+        y: point.y,
+      };
     case 'left':
-      return { x: point.x - offset, y: point.y };
+      return {
+        x: (selfBox ? Math.min(point.x, selfBox.x) : point.x) - offset,
+        y: point.y,
+      };
     case 'top':
-      return { x: point.x, y: point.y - offset };
+      return {
+        x: point.x,
+        y: (selfBox ? Math.min(point.y, selfBox.y) : point.y) - offset,
+      };
     case 'bottom':
-      return { x: point.x, y: point.y + offset };
+      return {
+        x: point.x,
+        y: (selfBox ? Math.max(point.y, selfBox.y + selfBox.height) : point.y) + offset,
+      };
     default:
       return { ...point };
   }
+}
+
+function isDirectedAlong(p1: XYPosition, p2: XYPosition, dir?: EdgeAnchorDirection): boolean {
+  switch (dir) {
+    case 'top':
+      return p2.y <= p1.y;
+    case 'bottom':
+      return p2.y >= p1.y;
+    case 'left':
+      return p2.x <= p1.x;
+    case 'right':
+      return p2.x >= p1.x;
+    default:
+      return false;
+  }
+}
+
+function checkDefaultPathCollidesSelf(
+  points: XYPosition[],
+  selfObstacles: ObstacleBox[],
+  sourceNodeId?: string,
+  targetNodeId?: string,
+  sourcePosition?: EdgeAnchorDirection,
+  targetPosition?: EdgeAnchorDirection
+): boolean {
+  if (selfObstacles.length === 0) return false;
+  const lastSegIndex = points.length - 2;
+  for (let i = 0; i <= lastSegIndex; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    for (const obs of selfObstacles) {
+      if (obs.isLane) continue;
+      if (i === 0 && obs.id === sourceNodeId && isDirectedAlong(p1, p2, sourcePosition)) {
+        continue;
+      }
+      if (
+        i === lastSegIndex &&
+        obs.id === targetNodeId &&
+        isDirectedAlong(p2, p1, targetPosition)
+      ) {
+        continue;
+      }
+      if (isSegmentIntersectingBox(p1, p2, obs, -2)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function simplifyCollinearPoints(points: XYPosition[]): XYPosition[] {
@@ -350,16 +411,24 @@ export function findObstacleAvoidingPath(
   const defaultPathPoints = [source, ...defaultWaypoints, target];
 
   const collidesOther = checkPathCollidesWithObstacles(defaultPathPoints, otherObstacles, 4);
-  const collidesSelf =
-    selfObstacles.length > 0 && checkPathCollidesWithObstacles(defaultPathPoints, selfObstacles, -2);
+  const collidesSelf = checkDefaultPathCollidesSelf(
+    defaultPathPoints,
+    selfObstacles,
+    options.sourceNodeId,
+    options.targetNodeId,
+    sourcePosition,
+    targetPosition
+  );
 
   if (!collidesOther && !collidesSelf) {
     return defaultWaypoints;
   }
 
   if (selfObstacles.length > 0) {
-    const candidateStart = getSafeAnchorPoint(source, sourcePosition, 16);
-    const candidateEnd = getSafeAnchorPoint(target, targetPosition, 16);
+    const sourceBox = selfObstacles.find((o) => o.id === options.sourceNodeId);
+    const targetBox = selfObstacles.find((o) => o.id === options.targetNodeId);
+    const candidateStart = getSafeAnchorPoint(source, sourcePosition, 16, sourceBox);
+    const candidateEnd = getSafeAnchorPoint(target, targetPosition, 16, targetBox);
     const leadStart = isPointInsideObstacle(candidateStart, otherObstacles, 2) ? source : candidateStart;
     const leadEnd = isPointInsideObstacle(candidateEnd, otherObstacles, 2) ? target : candidateEnd;
     const allObs = [...otherObstacles, ...selfObstacles];

@@ -1029,7 +1029,7 @@ export const FlowCanvas: React.FC = () => {
 
       {/* 聚光灯决策节点分支单选筛选胶囊 */}
       {spotlightActive && effectiveSpotlightTargetId && decisionBranches.length > 0 && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1 bg-slate-900/85 text-white rounded-full shadow-xl border border-slate-700/60 backdrop-blur-md">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1 bg-slate-900/85 text-white rounded-full shadow-xl border border-slate-700/60 backdrop-blur-md">
           <span className="text-[11px] font-medium text-slate-300 pl-2.5 pr-1">因果分支:</span>
           <button
             key="all"
