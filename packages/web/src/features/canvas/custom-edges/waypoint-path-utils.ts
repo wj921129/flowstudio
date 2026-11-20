@@ -173,3 +173,71 @@ export function projectPointOntoPolyline(
     ratio: Math.max(0.03, Math.min(0.97, Math.round(bestRatio * 1000) / 1000)),
   };
 }
+
+export type SegmentAxis = 'h' | 'v';
+
+export const SEGMENT_STUB = 16;
+
+export function getSegmentAxis(a: XYPosition, b: XYPosition): SegmentAxis | null {
+  if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) >= 0.5) return 'h';
+  if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) >= 0.5) return 'v';
+  return null;
+}
+
+export function moveOrthogonalSegment(
+  source: XYPosition,
+  target: XYPosition,
+  waypoints: XYPosition[],
+  segIndex: number,
+  offset: number
+): XYPosition[] {
+  const pts = [source, ...waypoints, target].map((p) => ({ ...p }));
+  const a = pts[segIndex];
+  const b = pts[segIndex + 1];
+  const axis = a && b ? getSegmentAxis(a, b) : null;
+  if (!axis || offset === 0) return waypoints.map((p) => ({ ...p }));
+  const shift = (p: XYPosition): XYPosition => (axis === 'h' ? { x: p.x, y: p.y + offset } : { x: p.x + offset, y: p.y });
+  const len = Math.abs(axis === 'h' ? b.x - a.x : b.y - a.y);
+  const stub = Math.min(SEGMENT_STUB, len / 3);
+  const toward = (from: XYPosition, to: XYPosition): XYPosition =>
+    axis === 'h'
+      ? { x: from.x + Math.sign(to.x - from.x) * stub, y: from.y }
+      : { x: from.x, y: from.y + Math.sign(to.y - from.y) * stub };
+  const lastIndex = pts.length - 1;
+  const head: XYPosition[] = [];
+  const tail: XYPosition[] = [];
+  if (segIndex === 0) {
+    const s = toward(a, b);
+    head.push(s, shift(s));
+  } else {
+    head.push(shift(a));
+  }
+  if (segIndex + 1 === lastIndex) {
+    const t = toward(b, a);
+    tail.push(shift(t), t);
+  } else {
+    tail.push(shift(b));
+  }
+  return [...pts.slice(1, Math.max(1, segIndex)), ...head, ...tail, ...pts.slice(segIndex + 2, lastIndex)];
+}
+
+export function simplifyOrthogonalWaypoints(
+  source: XYPosition,
+  target: XYPosition,
+  waypoints: XYPosition[]
+): XYPosition[] {
+  const pts = [source, ...waypoints.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })), target];
+  const same = (a: number, b: number) => Math.abs(a - b) < 1;
+  const out: XYPosition[] = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i];
+    const prev = out[out.length - 1];
+    if (i < pts.length - 1 && same(p.x, prev.x) && same(p.y, prev.y)) continue;
+    if (out.length >= 2) {
+      const pp = out[out.length - 2];
+      if ((same(pp.x, prev.x) && same(prev.x, p.x)) || (same(pp.y, prev.y) && same(prev.y, p.y))) out.pop();
+    }
+    out.push(p);
+  }
+  return out.slice(1, -1);
+}

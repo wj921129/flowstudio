@@ -153,6 +153,8 @@ export interface NodeStyleData {
   [key: string]: unknown;
 }
 
+export type EdgeStrokeStyle = 'solid' | 'dashed' | 'dotted';
+
 /**
  * 连线样式自定义数据
  */
@@ -161,8 +163,8 @@ export interface EdgeStyleData {
   strokeColor?: string;
   /** 连线线宽 (px) */
   strokeWidth?: number;
-  /** 连线线型 (实线/虚线) */
-  strokeStyle?: 'solid' | 'dashed';
+  /** 连线线型 (实线/虚线/点线) */
+  strokeStyle?: EdgeStrokeStyle;
   /** 是否呈现流动动画 */
   animated?: boolean;
   /** 扩展属性 */

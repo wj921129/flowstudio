@@ -4,7 +4,7 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
-import { flowNodeSchema, flowEdgeSchema, getBorderAnchorWorldPoint } from '@flowstudio/shared';
+import { flowNodeSchema, flowEdgeSchema, getBorderAnchorWorldPoint, getEdgeDashArray } from '@flowstudio/shared';
 import { getNodeDimensions } from '../features/canvas/utils/group-calculator.js';
 import { getNodeWorldPosition } from '../features/canvas/utils/split-insert-manager.js';
 import { sanitizeNodes, sanitizeEdges } from './storage.js';
@@ -212,7 +212,8 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
     const edgeStyle = edge.data?.style;
     const strokeColor = sanitizeSvgColor(edgeStyle?.strokeColor, '#64748B');
     const strokeWidth = sanitizeSvgNumber(edgeStyle?.strokeWidth, 2, 0.5, 20);
-    const strokeDash = edgeStyle?.strokeStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
+    const dashArray = getEdgeDashArray(edgeStyle?.strokeStyle);
+    const strokeDash = dashArray ? `stroke-dasharray="${dashArray}"` : '';
 
     let pathD: string;
     const waypoints = edge.data?.waypoints;

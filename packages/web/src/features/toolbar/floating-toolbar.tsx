@@ -15,9 +15,26 @@ import {
   Redo2,
   Trash2,
 } from 'lucide-react';
-import { getDefaultNodeSize } from '@flowstudio/shared';
+import {
+  EDGE_STROKE_STYLES,
+  EDGE_STROKE_STYLE_LABELS,
+  getDefaultNodeSize,
+  getEdgeDashArray,
+  type EdgeStrokeStyle,
+} from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { ToolbarButton } from './toolbar-button';
+
+const LINE_STYLE_ICONS = Object.fromEntries(
+  EDGE_STROKE_STYLES.map((s) => [
+    s,
+    ({ className }: { className?: string }) => (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round">
+        <line x1="3" y1="12" x2="21" y2="12" strokeDasharray={getEdgeDashArray(s)} />
+      </svg>
+    ),
+  ])
+) as Record<EdgeStrokeStyle, React.FC<{ className?: string }>>;
 
 export interface FloatingToolbarProps {
   /** 外部传入的附加样式类名 */
@@ -92,6 +109,18 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
     }
   }, [activeTool, setActiveTool, setEdgeConnectMode, toggleEdgeConnectMode]);
 
+  const edgeLineStyle = useFlowStore((s) => s.edgeLineStyle);
+  const selectedEdgeStyle = useFlowStore((s) =>
+    s.selectedEdgeId ? (s.edges.find((e) => e.id === s.selectedEdgeId)?.data?.style?.strokeStyle ?? 'solid') : null
+  );
+  const displayLineStyle = (selectedEdgeStyle ?? edgeLineStyle) as EdgeStrokeStyle;
+  const handleLineStyleCycle = useCallback(() => {
+    const next = EDGE_STROKE_STYLES[(EDGE_STROKE_STYLES.indexOf(displayLineStyle) + 1) % EDGE_STROKE_STYLES.length];
+    const { setEdgeLineStyle, updateEdgeData } = useFlowStore.getState();
+    setEdgeLineStyle(next);
+    if (selectedEdgeId) updateEdgeData(selectedEdgeId, { style: { strokeStyle: next } });
+  }, [displayLineStyle, selectedEdgeId]);
+
   // 绑定全局工具模式快捷键 (V: 选择, H: 漫游平移, C: 连线, T: 便签)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -165,6 +194,11 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           shortcut="C"
           active={activeTool === 'connect' && !isSpacePanning}
           onClick={handleConnectToolToggle}
+        />
+        <ToolbarButton
+          icon={LINE_STYLE_ICONS[displayLineStyle] ?? LINE_STYLE_ICONS.solid}
+          label={`线型：${EDGE_STROKE_STYLE_LABELS[displayLineStyle] ?? '实线'}（点击切换${selectedEdgeId ? '选中连线及' : ''}新建连线线型）`}
+          onClick={handleLineStyleCycle}
         />
         <ToolbarButton
           icon={StickyNote}

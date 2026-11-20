@@ -66,6 +66,20 @@ export const DEFAULT_EDGE_STYLE: Readonly<EdgeStyleData> = {
   animated: false,
 };
 
+export const EDGE_STROKE_STYLES = ['solid', 'dashed', 'dotted'] as const;
+
+export const EDGE_STROKE_STYLE_LABELS: Record<(typeof EDGE_STROKE_STYLES)[number], string> = {
+  solid: '实线',
+  dashed: '虚线',
+  dotted: '点线',
+};
+
+export function getEdgeDashArray(strokeStyle: unknown): string | undefined {
+  if (strokeStyle === 'dashed') return '5 5';
+  if (strokeStyle === 'dotted') return '0.5 4';
+  return undefined;
+}
+
 /**
  * 画布缩放范围限制
  */

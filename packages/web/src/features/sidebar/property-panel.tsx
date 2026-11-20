@@ -652,13 +652,14 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
                   value={selectedEdge.data?.style?.strokeStyle ?? 'solid'}
                   onChange={(e) =>
                     updateEdgeData(selectedEdge.id, {
-                      style: { strokeStyle: e.target.value as 'solid' | 'dashed' },
+                      style: { strokeStyle: e.target.value as 'solid' | 'dashed' | 'dotted' },
                     })
                   }
                   className="w-full text-xs px-2 py-1.5 rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)] text-[var(--fs-text)] outline-none focus:border-[var(--fs-primary)] cursor-pointer"
                 >
                   <option value="solid">实线 (solid)</option>
                   <option value="dashed">虚线 (dashed)</option>
+                  <option value="dotted">点线 (dotted)</option>
                 </select>
               </div>
 

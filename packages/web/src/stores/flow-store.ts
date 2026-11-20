@@ -22,7 +22,7 @@ import type {
   XYPosition,
   MermaidBridgeOp,
 } from '@flowstudio/shared';
-import { DEFAULT_EDGE_TYPE, parseBorderAnchorHandle } from '@flowstudio/shared';
+import { DEFAULT_EDGE_TYPE, parseBorderAnchorHandle, type EdgeStrokeStyle } from '@flowstudio/shared';
 import { createNodeFromType, generateEdgeId, generateUniqueId, type CreateNodeOptions } from '../lib/node-utils';
 import {
   resolveNodeSemanticRoleFromCounts,
@@ -81,6 +81,7 @@ export interface FlowStoreState {
   /** 当前激活的操作工具模式 */
   activeTool: ActiveTool;
   edgeConnectMode: EdgeConnectMode;
+  edgeLineStyle: EdgeStrokeStyle;
   isShiftPressed: boolean;
   isSpacePanning: boolean;
   editingEdgeLabelId: string | null;
@@ -167,6 +168,7 @@ export interface FlowStoreActions {
   setActiveTool: (tool: ActiveTool) => void;
   setEdgeConnectMode: (mode: EdgeConnectMode) => void;
   toggleEdgeConnectMode: () => void;
+  setEdgeLineStyle: (style: EdgeStrokeStyle) => void;
   setShiftPressed: (pressed: boolean) => void;
   setSpacePanning: (panning: boolean) => void;
   setEditingEdgeLabelId: (id: string | null) => void;
@@ -335,6 +337,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   selectedEdgeId: null,
   activeTool: 'select',
   edgeConnectMode: 'orthogonal',
+  edgeLineStyle: 'solid',
   isShiftPressed: false,
   isSpacePanning: false,
   editingEdgeLabelId: null,
@@ -637,12 +640,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   onConnect: (connection: Connection) => {
     if (!connection.source || !connection.target) return;
 
-    const { nodes, edges, historyPast, edgeConnectMode, isShiftPressed } = get();
+    const { nodes, edges, historyPast, edgeConnectMode, edgeLineStyle, isShiftPressed } = get();
     const effectiveMode = isShiftPressed
       ? edgeConnectMode === 'orthogonal'
         ? 'straight'
         : 'orthogonal'
       : edgeConnectMode;
+    const newData = {
+      ...(effectiveMode === 'straight' ? { routingType: 'straight' as const } : {}),
+      ...(edgeLineStyle !== 'solid' ? { style: { strokeStyle: edgeLineStyle } } : {}),
+    };
 
     const newEdge: FlowEdge = {
       id: generateEdgeId(connection.source, connection.target),
@@ -651,7 +658,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       sourceHandle: connection.sourceHandle ?? undefined,
       targetHandle: connection.targetHandle ?? undefined,
       type: effectiveMode,
-      ...(effectiveMode === 'straight' ? { data: { routingType: 'straight' } } : {}),
+      ...(Object.keys(newData).length ? { data: newData } : {}),
       markerEnd: { type: MarkerType.ArrowClosed },
       animated: false,
     };
@@ -1300,6 +1307,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setEdgeConnectMode: (mode: EdgeConnectMode) => {
     set({ edgeConnectMode: mode });
+  },
+
+  setEdgeLineStyle: (style: EdgeStrokeStyle) => {
+    set({ edgeLineStyle: style });
   },
 
   toggleEdgeConnectMode: () => {

@@ -88,7 +88,8 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       'connect 支持 kind（next/branch/loop/jump/annotate/tree），' +
       'jump 表示主干跨段旁路（跳过中段直达下游主干，不改变节点角色），' +
       'loop 支持分支通过结果回归源主干节点（双重判断回归，横向侧路），' +
-      'add_node 支持 role/attachTo 语义字段',
+      'add_node 支持 role/attachTo 语义字段；' +
+      'connect / update_edge 的 style 支持 strokeStyle（solid 实线 / dashed 虚线 / dotted 点线）、strokeColor、strokeWidth',
     inputSchema: z.toJSONSchema(applyOpsInputSchema) as any,
   },
   {

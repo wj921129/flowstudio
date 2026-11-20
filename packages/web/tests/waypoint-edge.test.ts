@@ -2,7 +2,47 @@ import { describe, it, expect } from 'vitest';
 import {
   buildWaypointPath,
   deriveDefaultOrthogonalWaypoints,
+  moveOrthogonalSegment,
+  simplifyOrthogonalWaypoints,
 } from '../src/features/canvas/custom-edges/waypoint-path-utils.js';
+import type { XYPosition } from '@flowstudio/shared';
+
+const isOrthogonal = (pts: XYPosition[]) =>
+  pts.slice(1).every((p, i) => p.x === pts[i].x || p.y === pts[i].y);
+
+describe('waypoint-path-utils: 线段横纵拖动', () => {
+  const s = { x: 0, y: 0 };
+  const t = { x: 200, y: 100 };
+  const wps = [{ x: 100, y: 0 }, { x: 100, y: 100 }];
+
+  it('中间竖线段只沿 X 平移并保持正交', () => {
+    const next = moveOrthogonalSegment(s, t, wps, 1, 30);
+    expect(next).toEqual([{ x: 130, y: 0 }, { x: 130, y: 100 }]);
+  });
+
+  it('首段横线段上下拖动时补短桩，端点不动', () => {
+    const next = moveOrthogonalSegment(s, t, wps, 0, -40);
+    expect(isOrthogonal([s, ...next, t])).toBe(true);
+    expect(next[0]).toEqual({ x: 16, y: 0 });
+    expect(next[1]).toEqual({ x: 16, y: -40 });
+  });
+
+  it('无折点的直通线段两端补桩', () => {
+    const a = { x: 0, y: 50 };
+    const b = { x: 300, y: 50 };
+    const next = moveOrthogonalSegment(a, b, [], 0, 20);
+    expect(next).toEqual([{ x: 16, y: 50 }, { x: 16, y: 70 }, { x: 284, y: 70 }, { x: 284, y: 50 }]);
+    expect(isOrthogonal([a, ...next, b])).toBe(true);
+  });
+
+  it('简化时合并共线与重复折点', () => {
+    expect(simplifyOrthogonalWaypoints(s, t, [{ x: 50, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 100, y: 100 }])).toEqual([
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ]);
+    expect(simplifyOrthogonalWaypoints({ x: 0, y: 50 }, { x: 300, y: 50 }, [{ x: 16, y: 50 }, { x: 16, y: 50 }, { x: 284, y: 50 }, { x: 284, y: 50 }])).toEqual([]);
+  });
+});
 
 describe('waypoint-path-utils: Orthogonal Edge Waypoints and Routing', () => {
   it('builds orthogonal SVG path string from source, waypoints, and target', () => {

@@ -1,5 +1,5 @@
 import type { FlowEdge, FlowNode, FlowNodeType } from '@flowstudio/shared';
-import { getNodeRegistryEntry } from '@flowstudio/shared';
+import { getEdgeDashArray, getNodeRegistryEntry } from '@flowstudio/shared';
 
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -161,7 +161,8 @@ const renderEdge = (e: FlowEdge, nodes: FlowNode[]): string => {
   const pts = e.data?.waypoints && e.data.waypoints.length >= 2 ? [sc, ...e.data.waypoints, tc] : [sc, tc];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
   const labelPos = pts[Math.floor(pts.length / 2)];
-  const dash = e.data?.routingType === 'straight' ? ' stroke-dasharray="7,4"' : '';
+  const dashArray = getEdgeDashArray(e.data?.style?.strokeStyle);
+  const dash = dashArray ? ` stroke-dasharray="${dashArray}" stroke-linecap="round"` : '';
   return (
     `<g class="fs-edge" data-id="${esc(e.id)}" data-source="${esc(e.source)}" data-target="${esc(e.target)}">` +
     `<path d="${path}" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#fs-arrow)"${dash}/>` +
