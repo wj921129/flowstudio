@@ -300,4 +300,36 @@ describe('画布交互体验与视觉改造回归测试', () => {
     );
     expect(tokensCss).toContain('.react-flow:not(.fs-cursor-pan):not(.fs-cursor-connect) .react-flow__node.draggable');
   });
+
+  it('底部工具栏连线模式与线型按钮采用悬停向上弹窗选择，移出消失且不再点击循环切换', () => {
+    const toolbarCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/toolbar/floating-toolbar.tsx'),
+      'utf-8'
+    );
+    expect(toolbarCode).toContain('onMouseEnter={() => setOpen(true)}');
+    expect(toolbarCode).toContain('onMouseLeave={() => setOpen(false)}');
+    expect(toolbarCode).toContain('bottom-full left-1/2 -translate-x-1/2 pb-2');
+    expect(toolbarCode).toContain('EDGE_MODE_OPTIONS');
+    expect(toolbarCode).toContain('LINE_STYLE_OPTIONS');
+    expect(toolbarCode).not.toContain('toggleEdgeConnectMode');
+    expect(toolbarCode).not.toContain('handleLineStyleCycle');
+    expect(toolbarCode).toMatch(/handleActivateConnectTool[\s\S]*?setActiveTool\('connect'\)/);
+    expect(toolbarCode).not.toMatch(/handleActivateConnectTool[\s\S]*?setEdgeConnectMode\('orthogonal'\)/);
+
+    useFlowStore.setState({
+      nodes: [
+        { id: 'n1', type: 'process', position: { x: 0, y: 0 }, data: { label: 'A', type: 'process' } },
+        { id: 'n2', type: 'process', position: { x: 200, y: 0 }, data: { label: 'B', type: 'process' } },
+      ],
+      edges: [],
+      edgeConnectMode: 'orthogonal',
+      edgeLineStyle: 'solid',
+    });
+    useFlowStore.getState().setEdgeConnectMode('straight');
+    useFlowStore.getState().setEdgeLineStyle('dashed');
+    useFlowStore.getState().onConnect({ source: 'n1', target: 'n2', sourceHandle: null, targetHandle: null });
+    const created = useFlowStore.getState().edges[0];
+    expect(created.type).toBe('straight');
+    expect(created.data?.style?.strokeStyle).toBe('dashed');
+  });
 });

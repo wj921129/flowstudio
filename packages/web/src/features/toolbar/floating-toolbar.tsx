@@ -3,7 +3,7 @@
  * @description 采用毛玻璃质感置于画布底部居中，支持选择、平移、连线与便签模式切换、撤销重做历史控制与删除操作
  */
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { Panel, useReactFlow } from '@xyflow/react';
 import {
   MousePointer2,
@@ -14,6 +14,7 @@ import {
   Undo2,
   Redo2,
   Trash2,
+  Check,
 } from 'lucide-react';
 import {
   EDGE_STROKE_STYLES,
@@ -36,6 +37,109 @@ const LINE_STYLE_ICONS = Object.fromEntries(
   ])
 ) as Record<EdgeStrokeStyle, React.FC<{ className?: string }>>;
 
+const EDGE_MODE_OPTIONS = [
+  { value: 'orthogonal' as const, label: '折线连线', icon: CornerDownRight },
+  { value: 'straight' as const, label: '直线连线', icon: ArrowUpRight },
+];
+
+const LINE_STYLE_OPTIONS: HoverMenuOption<EdgeStrokeStyle>[] = EDGE_STROKE_STYLES.map((s) => ({
+  value: s,
+  label: EDGE_STROKE_STYLE_LABELS[s],
+  icon: LINE_STYLE_ICONS[s] ?? LINE_STYLE_ICONS.solid,
+}));
+
+interface HoverMenuOption<T extends string> {
+  value: T;
+  label: string;
+  icon: React.FC<{ className?: string }>;
+}
+
+function ToolbarHoverMenu<T extends string>({
+  icon: Icon,
+  label,
+  shortcut,
+  active,
+  selectedValue,
+  options,
+  onButtonClick,
+  onSelect,
+}: {
+  icon: React.FC<{ className?: string }>;
+  label: string;
+  shortcut?: string;
+  active?: boolean;
+  selectedValue: T;
+  options: readonly HoverMenuOption<T>[];
+  onButtonClick?: () => void;
+  onSelect: (value: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className="relative flex items-center justify-center"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={active}
+        aria-expanded={open}
+        onClick={onButtonClick}
+        className={`p-2 rounded-xl transition-all duration-150 flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--fs-selection-ring)] ${
+          active
+            ? 'bg-[var(--fs-primary)]/15 text-[var(--fs-primary)] font-semibold shadow-xs ring-1 ring-[var(--fs-primary)]/30'
+            : 'text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-bg)]'
+        }`}
+      >
+        <Icon className="w-4 h-4 shrink-0 transition-transform active:scale-95" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label={label}
+          className="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 z-50"
+        >
+          <div className="min-w-[124px] p-1 rounded-xl backdrop-blur-md bg-[var(--fs-surface)]/95 border border-[var(--fs-border)] shadow-xl flex flex-col gap-0.5">
+            {options.map((opt) => {
+              const OptIcon = opt.icon;
+              const isSelected = opt.value === selectedValue;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isSelected}
+                  onClick={() => onSelect(opt.value)}
+                  className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-[var(--fs-primary)]/15 text-[var(--fs-primary)] font-medium'
+                      : 'text-[var(--fs-text)] hover:bg-[var(--fs-bg)]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <OptIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span>{opt.label}</span>
+                  </span>
+                  {isSelected && <Check className="w-3 h-3 shrink-0" />}
+                </button>
+              );
+            })}
+            {shortcut && (
+              <div className="mt-0.5 pt-1 border-t border-[var(--fs-border)]/70 px-2 flex items-center justify-between text-[10px] text-[var(--fs-text-muted)]">
+                <span>激活连线</span>
+                <kbd className="px-1 py-0.5 font-mono rounded bg-[var(--fs-bg)] border border-[var(--fs-border)]">{shortcut}</kbd>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface FloatingToolbarProps {
   /** 外部传入的附加样式类名 */
   className?: string;
@@ -48,7 +152,6 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
   const setEdgeConnectMode = useFlowStore((s) => s.setEdgeConnectMode);
-  const toggleEdgeConnectMode = useFlowStore((s) => s.toggleEdgeConnectMode);
   const displayEdgeMode = isShiftPressed
     ? edgeConnectMode === 'orthogonal'
       ? 'straight'
@@ -100,26 +203,31 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
     }
   }, [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]);
 
-  const handleConnectToolToggle = useCallback(() => {
-    if (activeTool !== 'connect') {
+  const handleActivateConnectTool = useCallback(() => {
+    setActiveTool('connect');
+  }, [setActiveTool]);
+
+  const handleSelectConnectMode = useCallback(
+    (mode: 'orthogonal' | 'straight') => {
+      setEdgeConnectMode(mode);
       setActiveTool('connect');
-      setEdgeConnectMode('orthogonal');
-    } else {
-      toggleEdgeConnectMode();
-    }
-  }, [activeTool, setActiveTool, setEdgeConnectMode, toggleEdgeConnectMode]);
+    },
+    [setEdgeConnectMode, setActiveTool]
+  );
 
   const edgeLineStyle = useFlowStore((s) => s.edgeLineStyle);
   const selectedEdgeStyle = useFlowStore((s) =>
     s.selectedEdgeId ? (s.edges.find((e) => e.id === s.selectedEdgeId)?.data?.style?.strokeStyle ?? 'solid') : null
   );
   const displayLineStyle = (selectedEdgeStyle ?? edgeLineStyle) as EdgeStrokeStyle;
-  const handleLineStyleCycle = useCallback(() => {
-    const next = EDGE_STROKE_STYLES[(EDGE_STROKE_STYLES.indexOf(displayLineStyle) + 1) % EDGE_STROKE_STYLES.length];
-    const { setEdgeLineStyle, updateEdgeData } = useFlowStore.getState();
-    setEdgeLineStyle(next);
-    if (selectedEdgeId) updateEdgeData(selectedEdgeId, { style: { strokeStyle: next } });
-  }, [displayLineStyle, selectedEdgeId]);
+  const handleSelectLineStyle = useCallback(
+    (style: EdgeStrokeStyle) => {
+      const { setEdgeLineStyle, updateEdgeData } = useFlowStore.getState();
+      setEdgeLineStyle(style);
+      if (selectedEdgeId) updateEdgeData(selectedEdgeId, { style: { strokeStyle: style } });
+    },
+    [selectedEdgeId]
+  );
 
   // 绑定全局工具模式快捷键 (V: 选择, H: 漫游平移, C: 连线, T: 便签)
   useEffect(() => {
@@ -148,7 +256,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
         setActiveTool('pan');
       } else if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
-        handleConnectToolToggle();
+        handleActivateConnectTool();
       } else if (e.key === 't' || e.key === 'T') {
         e.preventDefault();
         handleAddNote();
@@ -157,7 +265,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setActiveTool, handleConnectToolToggle, handleAddNote]);
+  }, [setActiveTool, handleActivateConnectTool, handleAddNote]);
 
   return (
     <Panel
@@ -184,21 +292,23 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           active={activeTool === 'pan' || isSpacePanning}
           onClick={() => setActiveTool('pan')}
         />
-        <ToolbarButton
+        <ToolbarHoverMenu
           icon={displayEdgeMode === 'straight' ? ArrowUpRight : CornerDownRight}
-          label={
-            displayEdgeMode === 'straight'
-              ? '直线连线 (点击切折线 / Shift 临时切换)'
-              : '折线连线 (点击切直线 / Shift 临时切换)'
-          }
+          label={displayEdgeMode === 'straight' ? '直线连线' : '折线连线'}
           shortcut="C"
           active={activeTool === 'connect' && !isSpacePanning}
-          onClick={handleConnectToolToggle}
+          selectedValue={displayEdgeMode}
+          options={EDGE_MODE_OPTIONS}
+          onButtonClick={handleActivateConnectTool}
+          onSelect={handleSelectConnectMode}
         />
-        <ToolbarButton
+        <ToolbarHoverMenu
           icon={LINE_STYLE_ICONS[displayLineStyle] ?? LINE_STYLE_ICONS.solid}
-          label={`线型：${EDGE_STROKE_STYLE_LABELS[displayLineStyle] ?? '实线'}（点击切换${selectedEdgeId ? '选中连线及' : ''}新建连线线型）`}
-          onClick={handleLineStyleCycle}
+          label={`连线线型：${EDGE_STROKE_STYLE_LABELS[displayLineStyle] ?? '实线'}`}
+          active={displayLineStyle !== 'solid'}
+          selectedValue={displayLineStyle}
+          options={LINE_STYLE_OPTIONS}
+          onSelect={handleSelectLineStyle}
         />
         <ToolbarButton
           icon={StickyNote}
