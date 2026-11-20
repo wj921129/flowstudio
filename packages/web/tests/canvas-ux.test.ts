@@ -107,6 +107,8 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(toolbarCode).toContain("active={activeTool === 'pan' || isSpacePanning}");
     expect(tokensCss).toContain("fill='%23ffffff' stroke='%232563eb'");
     expect(tokensCss).toContain("fill='%230f172a' stroke='%23ffffff'");
+    expect(tokensCss).toContain("width='16' height='16'");
+    expect(tokensCss).not.toContain("width='24' height='24'");
   });
 
   it('6 套元素风格均为开始与结束节点提供独立且可区分的主题配色', () => {
