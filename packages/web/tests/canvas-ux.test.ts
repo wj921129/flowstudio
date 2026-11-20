@@ -107,7 +107,7 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(toolbarCode).toContain("active={activeTool === 'pan' || isSpacePanning}");
     expect(tokensCss).toContain("fill='%23ffffff' stroke='%232563eb'");
     expect(tokensCss).toContain("fill='%230f172a' stroke='%23ffffff'");
-    expect(tokensCss).toContain("width='16' height='16'");
+    expect(tokensCss).toContain("width='20' height='20'");
     expect(tokensCss).not.toContain("width='24' height='24'");
   });
 
