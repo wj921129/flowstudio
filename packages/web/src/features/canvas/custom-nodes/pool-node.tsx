@@ -144,7 +144,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       {/* 顶部池表头 */}
       <div
         onDoubleClick={handleHeaderDoubleClick}
-        className="h-10 px-4 bg-[var(--fs-surface)]/85 dark:bg-[var(--fs-surface)]/60 border-b border-[var(--fs-border)]/70 flex items-center justify-between select-none cursor-grab active:cursor-grabbing z-10"
+        className="h-10 px-4 bg-[var(--fs-surface)]/85 dark:bg-[var(--fs-surface)]/60 border-b border-[var(--fs-border)]/70 flex items-center justify-between select-none z-10"
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="flex items-center justify-center w-5 h-5 rounded-md bg-[var(--fs-selection-ring)]/15 text-[var(--fs-selection-ring)]">

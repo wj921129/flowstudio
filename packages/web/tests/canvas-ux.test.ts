@@ -78,7 +78,8 @@ describe('画布交互体验与视觉改造回归测试', () => {
       'utf-8'
     );
     expect(tokensCss).toContain('.fs-cursor-pan');
-    expect(tokensCss).toContain("stroke='%230f172a'");
+    expect(tokensCss).toContain("stroke='%232563eb'");
+    expect(tokensCss).toContain('M4.037 4.688');
     expect(tokensCss).toContain('.fs-handle-dot');
     expect(tokensCss).toContain('aspect-ratio: 1 / 1');
     expect(tokensCss).toContain('--fs-node-start-bg');
@@ -104,7 +105,7 @@ describe('画布交互体验与视觉改造回归测试', () => {
       'utf-8'
     );
     expect(toolbarCode).toContain("active={activeTool === 'pan' || isSpacePanning}");
-    expect(tokensCss).toContain("fill='%23ffffff' stroke='%230f172a'");
+    expect(tokensCss).toContain("fill='%23ffffff' stroke='%232563eb'");
     expect(tokensCss).toContain("fill='%230f172a' stroke='%23ffffff'");
   });
 
@@ -290,11 +291,11 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(actionBarCode).toContain('top-4 left-1/2 -translate-x-1/2');
     expect(actionBarCode).not.toContain('computeBoundingBox');
 
-    // 7. 浅色节点内悬停使用高对比深色手掌光标，不落回白手
+    // 7. 浅色节点内悬停使用蓝边箭头图标，不落回系统白手
     const tokensCss = fs.readFileSync(
       path.resolve(__dirname, '../src/features/theme/tokens.css'),
       'utf-8'
     );
-    expect(tokensCss).toContain('.react-flow:not(.fs-cursor-connect) .react-flow__node.draggable');
+    expect(tokensCss).toContain('.react-flow:not(.fs-cursor-pan):not(.fs-cursor-connect) .react-flow__node.draggable');
   });
 });

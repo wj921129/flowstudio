@@ -44,7 +44,7 @@ export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       >
         <div
           onDoubleClick={handleHeaderDoubleClick}
-          className="h-8 px-3 flex items-center justify-between border-b border-[var(--fs-border)] bg-[var(--fs-surface)]/80 rounded-t-xl text-xs font-semibold text-[var(--fs-text-muted)] cursor-grab active:cursor-grabbing"
+          className="h-8 px-3 flex items-center justify-between border-b border-[var(--fs-border)] bg-[var(--fs-surface)]/80 rounded-t-xl text-xs font-semibold text-[var(--fs-text-muted)]"
         >
           {isEditing ? (
             <InlineTextEditor

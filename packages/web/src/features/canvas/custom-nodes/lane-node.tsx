@@ -129,7 +129,7 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       {/* 泳道表头 */}
       <div
         onDoubleClick={handleHeaderDoubleClick}
-        className={`group select-none cursor-grab active:cursor-grabbing bg-[var(--fs-surface)]/80 dark:bg-[var(--fs-surface)]/50 backdrop-blur-xs flex items-center justify-between ${
+        className={`group select-none bg-[var(--fs-surface)]/80 dark:bg-[var(--fs-surface)]/50 backdrop-blur-xs flex items-center justify-between ${
           isHorizontal
             ? 'w-10 min-w-10 h-full border-r border-[var(--fs-border)]/70 flex-col py-3 px-1'
             : 'w-full h-9 min-h-9 border-b border-[var(--fs-border)]/70 flex-row px-3'
