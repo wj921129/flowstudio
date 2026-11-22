@@ -459,7 +459,11 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(controlsCode).toContain('!mr-[340px]');
     expect(controlsCode).toContain('pannable={false}');
     expect(controlsCode).toContain('setCenter(target.x, target.y');
-    expect(controlsCode).toContain('maskStrokeColor="var(--fs-primary)"');
+    expect(controlsCode).toContain('maskStrokeColor="transparent"');
+    expect(controlsCode).toContain('maskStrokeWidth={0}');
+    expect(controlsCode).toContain('MiniMapFocusNode');
+    expect(controlsCode).toContain('fs-minimap-focus-ring');
+    expect(controlsCode).not.toContain('maskStrokeColor="var(--fs-primary)"');
     expect(controlsCode).not.toContain('maskColor="var(--fs-canvas-dot)"');
 
     const edgeCode = fs.readFileSync(
@@ -481,5 +485,117 @@ describe('画布交互体验与视觉改造回归测试', () => {
       'utf-8'
     );
     expect(canvasCode).toContain('translateExtent={translateExtent}');
+  });
+
+  it('选中连线及箭头变蓝、平移节点保持折线结构、两端支持拖拽重连', () => {
+    const edgeCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
+      'utf-8'
+    );
+    expect(edgeCode).toContain("selected && incomingStroke !== '#6366f1'");
+    expect(edgeCode.indexOf('...style,')).toBeLessThan(edgeCode.indexOf('stroke: strokeColor,'));
+    expect(edgeCode).toContain('aria-label="拖动连线起点"');
+    expect(edgeCode).toContain('aria-label="拖动连线终点"');
+    expect(edgeCode).toContain('SEGMENT_MERGE_SNAP_THRESHOLD');
+
+    const canvasCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+      'utf-8'
+    );
+    expect(canvasCode).toContain('tintMarker(edge.markerEnd');
+
+    const tokensCss = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/theme/tokens.css'),
+      'utf-8'
+    );
+    expect(tokensCss).toContain('--xy-edge-stroke-selected: var(--fs-selection-ring)');
+
+    // Store 节点平移保角与两头重连校验
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'n1',
+          type: 'process',
+          position: { x: 0, y: 100 },
+          width: 120,
+          height: 60,
+          data: { label: 'A', type: 'process' },
+        },
+        {
+          id: 'n2',
+          type: 'process',
+          position: { x: 300, y: 200 },
+          width: 120,
+          height: 60,
+          data: { label: 'B', type: 'process' },
+        },
+        {
+          id: 'n3',
+          type: 'process',
+          position: { x: 300, y: 0 },
+          width: 120,
+          height: 60,
+          data: { label: 'C', type: 'process' },
+        },
+      ],
+      edges: [
+        {
+          id: 'e1',
+          source: 'n1',
+          target: 'n2',
+          sourceHandle: 'right',
+          targetHandle: 'left',
+          type: 'orthogonal',
+          data: {
+            waypoints: [
+              { x: 210, y: 130 },
+              { x: 210, y: 230 },
+            ],
+          },
+        },
+      ],
+      historyPast: [],
+      selectedEdgeId: 'e1',
+    });
+
+    // 纯测量变更不得改写连线 waypoints
+    useFlowStore.getState().onNodesChange([
+      { id: 'n1', type: 'dimensions', dimensions: { width: 120, height: 60 } } as any,
+    ]);
+    expect(useFlowStore.getState().edges[0].data?.waypoints).toEqual([
+      { x: 210, y: 130 },
+      { x: 210, y: 230 },
+    ]);
+
+    // 拖拽 n1 下移 20px、右移 10px：折线仅首段跟进 y，保持 x=210 结构不变
+    useFlowStore.getState().onNodesChange([
+      { id: 'n1', type: 'position', position: { x: 10, y: 120 }, dragging: false } as any,
+    ]);
+    expect(useFlowStore.getState().edges[0].data?.waypoints).toEqual([
+      { x: 210, y: 150 },
+      { x: 210, y: 230 },
+    ]);
+
+    // 两端重连：同一连接点重复触发不入历史栈，更换起点/终点均正常生效并保持选中
+    const historyBeforeSame = useFlowStore.getState().historyPast.length;
+    useFlowStore.getState().reconnectEdge(useFlowStore.getState().edges[0], {
+      source: 'n1',
+      target: 'n2',
+      sourceHandle: 'right',
+      targetHandle: 'left',
+    });
+    expect(useFlowStore.getState().historyPast.length).toBe(historyBeforeSame);
+
+    useFlowStore.getState().reconnectEdge(useFlowStore.getState().edges[0], {
+      source: 'n3',
+      target: 'n2',
+      sourceHandle: 'bottom',
+      targetHandle: 'top',
+    });
+    expect(useFlowStore.getState().edges[0].source).toBe('n3');
+    expect(useFlowStore.getState().edges[0].sourceHandle).toBe('bottom');
+    expect(useFlowStore.getState().edges[0].targetHandle).toBe('top');
+    expect(useFlowStore.getState().edges[0].selected).toBe(true);
+    expect(useFlowStore.getState().selectedEdgeId).toBe('e1');
   });
 });

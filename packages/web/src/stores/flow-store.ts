@@ -22,7 +22,7 @@ import type {
   XYPosition,
   MermaidBridgeOp,
 } from '@flowstudio/shared';
-import { DEFAULT_EDGE_TYPE, parseBorderAnchorHandle, type EdgeStrokeStyle } from '@flowstudio/shared';
+import { DEFAULT_EDGE_TYPE, parseBorderAnchorHandle, getBorderAnchorWorldPoint, type EdgeStrokeStyle } from '@flowstudio/shared';
 import { createNodeFromType, generateEdgeId, generateUniqueId, type CreateNodeOptions } from '../lib/node-utils';
 import {
   resolveNodeSemanticRoleFromCounts,
@@ -42,6 +42,10 @@ import {
 import type { YjsDiagramBridge } from '../features/collaboration/yjs-doc-bridge';
 import type { CollaborativeUndoManager } from '../features/collaboration/undo-manager';
 import { isNodeLocked } from '../features/canvas/utils/node-lock-manager';
+import {
+  adjustWaypointsOnNodeMove,
+  type EdgeAnchorDirection,
+} from '../features/canvas/custom-edges/waypoint-path-utils';
 
 /**
  * 画布操作工具模式枚举
@@ -126,6 +130,7 @@ interface FlowStoreInternalState extends FlowStoreState {
   /** Mermaid 代码抽屉是否展开 */
   mermaidDrawerOpen: boolean;
   copilotOpen: boolean;
+  isReconnectingEdge: boolean;
   /** 全局浮动轻提示消息 */
   toastMessage: string | null;
 }
@@ -219,6 +224,7 @@ export interface FlowStoreActions {
   /** 开关 Mermaid 代码抽屉 */
   setMermaidDrawerOpen: (open: boolean) => void;
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  setReconnectingEdge: (reconnecting: boolean) => void;
   /** 应用 Mermaid 增量融合产生的操作集合 */
   applyMermaidOps: (ops: MermaidBridgeOp[]) => { addedNodes: number; addedEdges: number };
   /** 弹出全局轻提示 Toast */
@@ -245,6 +251,115 @@ let toastTimer: any = null;
  * React Flow 的 resizer 只会锚定对角，这里按尺寸反算位置，实现"左右同步、上下同步"
  */
 const centeredResizes = new Map<string, { x: number; y: number }>();
+const dirtyMovedEdgeIds = new Set<string>();
+
+function resolveNodeWorldRectFromMap(
+  node: FlowNode,
+  byId: Map<string, FlowNode>
+): { x: number; y: number; width: number; height: number } {
+  let x = node.position.x;
+  let y = node.position.y;
+  let curr = node.parentId ? byId.get(node.parentId) : undefined;
+  const visited = new Set<string>([node.id]);
+  while (curr && !visited.has(curr.id)) {
+    visited.add(curr.id);
+    x += curr.position.x;
+    y += curr.position.y;
+    curr = curr.parentId ? byId.get(curr.parentId) : undefined;
+  }
+  const { width, height } = getNodeDimensions(node);
+  return { x, y, width, height };
+}
+
+function resolveAnchorWorldPoint(
+  node: FlowNode,
+  byId: Map<string, FlowNode>,
+  handleId?: string | null,
+  fallbackSide: 'left' | 'right' | 'top' | 'bottom' = 'right'
+): { x: number; y: number; side?: EdgeAnchorDirection } {
+  const rect = resolveNodeWorldRectFromMap(node, byId);
+  if (handleId) {
+    const pt = getBorderAnchorWorldPoint(rect, handleId, fallbackSide, node.type);
+    return { x: pt.x, y: pt.y, side: pt.side };
+  }
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+function syncEdgesWaypointsOnNodeMove(
+  prevNodes: FlowNode[],
+  nextNodes: FlowNode[],
+  edges: FlowEdge[],
+  skipEdgeIds?: ReadonlySet<string>
+): { edges: FlowEdge[]; modifiedEdgeIds: string[] } {
+  let hasCandidate = false;
+  for (const e of edges) {
+    if (skipEdgeIds?.has(e.id)) continue;
+    if (e.type === 'straight' || e.data?.routingType === 'straight') continue;
+    if (e.data?.waypoints && e.data.waypoints.length > 0) {
+      hasCandidate = true;
+      break;
+    }
+  }
+  if (!hasCandidate) return { edges, modifiedEdgeIds: [] };
+
+  const prevById = new Map(prevNodes.map((n) => [n.id, n]));
+  const nextById = new Map(nextNodes.map((n) => [n.id, n]));
+  const modifiedEdgeIds: string[] = [];
+  let changed = false;
+
+  const nextEdges = edges.map((edge) => {
+    if (skipEdgeIds?.has(edge.id)) return edge;
+    if (edge.type === 'straight' || edge.data?.routingType === 'straight') return edge;
+    const waypoints = edge.data?.waypoints;
+    if (!waypoints || waypoints.length === 0) return edge;
+
+    const prevSrc = prevById.get(edge.source);
+    const nextSrc = nextById.get(edge.source);
+    const prevTgt = prevById.get(edge.target);
+    const nextTgt = nextById.get(edge.target);
+    if (!prevSrc || !nextSrc || !prevTgt || !nextTgt) return edge;
+
+    const oldSource = resolveAnchorWorldPoint(prevSrc, prevById, edge.sourceHandle, 'right');
+    const newSource = resolveAnchorWorldPoint(nextSrc, nextById, edge.sourceHandle, 'right');
+    const oldTarget = resolveAnchorWorldPoint(prevTgt, prevById, edge.targetHandle, 'left');
+    const newTarget = resolveAnchorWorldPoint(nextTgt, nextById, edge.targetHandle, 'left');
+
+    const sourceDelta = { x: newSource.x - oldSource.x, y: newSource.y - oldSource.y };
+    const targetDelta = { x: newTarget.x - oldTarget.x, y: newTarget.y - oldTarget.y };
+    if (
+      Math.abs(sourceDelta.x) < 1e-4 &&
+      Math.abs(sourceDelta.y) < 1e-4 &&
+      Math.abs(targetDelta.x) < 1e-4 &&
+      Math.abs(targetDelta.y) < 1e-4
+    ) {
+      return edge;
+    }
+
+    const nextWaypoints = adjustWaypointsOnNodeMove({
+      waypoints,
+      sourceDelta,
+      targetDelta,
+      sourceSide: newSource.side ?? oldSource.side,
+      targetSide: newTarget.side ?? oldTarget.side,
+      oldSource: { x: oldSource.x, y: oldSource.y },
+      oldTarget: { x: oldTarget.x, y: oldTarget.y },
+      newSource: { x: newSource.x, y: newSource.y },
+      newTarget: { x: newTarget.x, y: newTarget.y },
+    });
+
+    changed = true;
+    modifiedEdgeIds.push(edge.id);
+    return {
+      ...edge,
+      data: {
+        ...edge.data,
+        waypoints: nextWaypoints,
+      },
+    };
+  });
+
+  return { edges: changed ? nextEdges : edges, modifiedEdgeIds };
+}
 
 function commitBridgeDelta(fn: (bridge: YjsDiagramBridge) => void, stopCapturing = false) {
   if (activeBridge) {
@@ -361,6 +476,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   dismissedAiBatchIds: new Set<string>(),
   mermaidDrawerOpen: false,
   copilotOpen: false,
+  isReconnectingEdge: false,
   toastMessage: null,
 
   onNodesChange: (changes: NodeChange[]) => {
@@ -515,6 +631,17 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       );
     }
 
+    const hasGeometryChange =
+      !isSelectionOnly &&
+      !isMeasureOnly &&
+      safeChanges.some((c) => c.type === 'position' || c.type === 'dimensions');
+
+    if (hasGeometryChange) {
+      const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, nextEdges);
+      nextEdges = synced.edges;
+      for (const eid of synced.modifiedEdgeIds) dirtyMovedEdgeIds.add(eid);
+    }
+
     const nextSelectedNodeIds = nextNodes
       .filter((n) => n.selected)
       .map((n) => n.id);
@@ -582,11 +709,29 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         }
       }
 
-      if (removedIds.length > 0 || addedOrReplaced.length > 0 || patches.length > 0) {
+      const movedEdgesToCommit: FlowEdge[] = [];
+      if (dirtyMovedEdgeIds.size > 0) {
+        const nextEdgeMap = new Map(nextEdges.map((e) => [e.id, e]));
+        for (const eid of dirtyMovedEdgeIds) {
+          const e = nextEdgeMap.get(eid);
+          if (e) movedEdgesToCommit.push(e);
+        }
+        dirtyMovedEdgeIds.clear();
+      }
+
+      if (
+        removedIds.length > 0 ||
+        addedOrReplaced.length > 0 ||
+        patches.length > 0 ||
+        movedEdgesToCommit.length > 0
+      ) {
         commitBridgeDelta((bridge) => {
           if (removedIds.length > 0) bridge.removeNodes(removedIds);
           if (addedOrReplaced.length > 0) bridge.putNodes(addedOrReplaced);
           if (patches.length > 0) bridge.patchNodes(patches);
+          for (const e of movedEdgesToCommit) {
+            bridge.patchEdge(e.id, { data: e.data });
+          }
         });
       }
     }
@@ -683,6 +828,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     if (!newConnection.source || !newConnection.target || newConnection.source === newConnection.target) {
       return;
     }
+    const nextSourceHandle = newConnection.sourceHandle ?? undefined;
+    const nextTargetHandle = newConnection.targetHandle ?? undefined;
+    if (
+      oldEdge.source === newConnection.source &&
+      oldEdge.target === newConnection.target &&
+      (oldEdge.sourceHandle ?? undefined) === nextSourceHandle &&
+      (oldEdge.targetHandle ?? undefined) === nextTargetHandle
+    ) {
+      return;
+    }
     const { nodes, edges, historyPast } = get();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -694,14 +849,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         ...e,
         source: newConnection.source!,
         target: newConnection.target!,
-        sourceHandle: newConnection.sourceHandle ?? undefined,
-        targetHandle: newConnection.targetHandle ?? undefined,
+        sourceHandle: nextSourceHandle,
+        targetHandle: nextTargetHandle,
+        selected: true,
         data: nextData,
       };
     });
 
     set({
       edges: nextEdges,
+      selectedEdgeId: oldEdge.id,
       ...historyUpdate,
     });
 
@@ -1719,13 +1876,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       return { ...node, position: nextPos };
     });
 
-    set({ nodes: nextNodes, ...historyUpdate });
+    const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
+    set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
     const patches = nextNodes
       .filter((n) => targetIdSet.has(n.id) && !isNodeLocked(n, 'position'))
       .map((n) => ({ id: n.id, patch: { position: n.position } }));
-    if (patches.length > 0) {
+    const edgePatches = synced.modifiedEdgeIds.length
+      ? synced.edges.filter((e) => synced.modifiedEdgeIds.includes(e.id))
+      : [];
+    if (patches.length > 0 || edgePatches.length > 0) {
       commitBridgeDelta((bridge) => {
-        bridge.patchNodes(patches);
+        if (patches.length > 0) bridge.patchNodes(patches);
+        for (const e of edgePatches) bridge.patchEdge(e.id, { data: e.data });
       });
     }
   },
@@ -1762,13 +1924,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         return node;
       });
 
-      set({ nodes: nextNodes, ...historyUpdate });
+      const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
+      set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
       const patches = nextNodes
         .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
         .map((n) => ({ id: n.id, patch: { position: n.position } }));
-      if (patches.length > 0) {
+      const edgePatches = synced.modifiedEdgeIds.length
+        ? synced.edges.filter((e) => synced.modifiedEdgeIds.includes(e.id))
+        : [];
+      if (patches.length > 0 || edgePatches.length > 0) {
         commitBridgeDelta((bridge) => {
-          bridge.patchNodes(patches);
+          if (patches.length > 0) bridge.patchNodes(patches);
+          for (const e of edgePatches) bridge.patchEdge(e.id, { data: e.data });
         });
       }
     } else {
@@ -1794,13 +1961,18 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         return node;
       });
 
-      set({ nodes: nextNodes, ...historyUpdate });
+      const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
+      set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
       const patches = nextNodes
         .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
         .map((n) => ({ id: n.id, patch: { position: n.position } }));
-      if (patches.length > 0) {
+      const edgePatches = synced.modifiedEdgeIds.length
+        ? synced.edges.filter((e) => synced.modifiedEdgeIds.includes(e.id))
+        : [];
+      if (patches.length > 0 || edgePatches.length > 0) {
         commitBridgeDelta((bridge) => {
-          bridge.patchNodes(patches);
+          if (patches.length > 0) bridge.patchNodes(patches);
+          for (const e of edgePatches) bridge.patchEdge(e.id, { data: e.data });
         });
       }
     }
@@ -1859,6 +2031,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
+    const skipMovedSyncIds = new Set<string>([
+      ...putEdges.map((e) => e.id),
+      ...Array.from(removedEdgeSet),
+    ]);
+    const syncedOnDelta =
+      putNodes.length > 0
+        ? syncEdgesWaypointsOnNodeMove(nodes, nextNodes, nextEdges, skipMovedSyncIds)
+        : { edges: nextEdges, modifiedEdgeIds: [] };
+    const syncedEdges = syncedOnDelta.edges;
+
     let nextSelectedNodeIds = selectedNodeIds;
     let nextSelectedEdgeId = selectedEdgeId;
     if (delta.clearSelection) {
@@ -1878,8 +2060,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const finalEdges =
       delta.clearSelection || delta.selectNodeIds
-        ? nextEdges.map((e) => (e.selected ? { ...e, selected: false } : e))
-        : nextEdges;
+        ? syncedEdges.map((e) => (e.selected ? { ...e, selected: false } : e))
+        : syncedEdges;
 
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
@@ -1895,15 +2077,21 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       ...historyUpdate,
     });
 
+    const movedEdgePatches = syncedOnDelta.modifiedEdgeIds.length
+      ? syncedEdges.filter((e) => syncedOnDelta.modifiedEdgeIds.includes(e.id))
+      : [];
+
     commitBridgeDelta((bridge) => {
       if (delta.removeNodeIds?.length) bridge.removeNodes(delta.removeNodeIds);
       if (putNodes.length > 0) bridge.putNodes(putNodes);
       if (delta.removeEdgeIds?.length) bridge.removeEdges(delta.removeEdgeIds);
       if (putEdges.length > 0) bridge.putEdges(putEdges);
+      for (const e of movedEdgePatches) bridge.patchEdge(e.id, { data: e.data });
     });
   },
 
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => {
+    dirtyMovedEdgeIds.clear();
     const snapshot = cloneSnapshot(nodes, edges);
     const cleanNodes = snapshot.nodes.map((n) => ({
       ...n,
@@ -1925,6 +2113,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canUndo: false,
       canRedo: false,
       isInteracting: false,
+      isReconnectingEdge: false,
     });
 
     commitBridgeDelta((bridge) => {
@@ -1942,6 +2131,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   resetDiagramState: () => {
     centeredResizes.clear();
+    dirtyMovedEdgeIds.clear();
     if (toastTimer) {
       clearTimeout(toastTimer);
       toastTimer = null;
@@ -1957,6 +2147,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canUndo: false,
       canRedo: false,
       isInteracting: false,
+      isReconnectingEdge: false,
       alignmentGuides: [],
       spotlightActive: false,
       spotlightTargetId: null,
@@ -2043,6 +2234,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => {
     set((s) => ({ copilotOpen: typeof open === 'function' ? open(s.copilotOpen) : open }));
+  },
+
+  setReconnectingEdge: (reconnecting: boolean) => {
+    set((s) => (s.isReconnectingEdge === reconnecting ? s : { isReconnectingEdge: reconnecting }));
   },
 
   showToast: (message: string, duration = 3000) => {
@@ -2473,6 +2668,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       toastTimer = null;
     }
     centeredResizes.clear();
+    dirtyMovedEdgeIds.clear();
     activeBridge = null;
     activeUndoManager = null;
   },

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Panel, useReactFlow, MiniMap } from '@xyflow/react';
+import { Panel, useReactFlow, MiniMap, type MiniMapNodeProps } from '@xyflow/react';
 import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessageSquare, MessagesSquare, X } from 'lucide-react';
 import { useCommentsStore } from '../comments';
 import { usePresentationStore } from '../presentation';
@@ -39,6 +39,65 @@ function readMiniMapSvgMetrics(
     viewBox: { x: parts[0], y: parts[1], width: parts[2], height: parts[3] },
   };
 }
+
+const MiniMapFocusNode = React.memo<MiniMapNodeProps>(
+  ({
+    id,
+    x,
+    y,
+    width,
+    height,
+    style,
+    color,
+    strokeColor,
+    strokeWidth,
+    className,
+    borderRadius,
+    shapeRendering,
+    selected,
+    onClick,
+  }) => {
+    const fill = color || style?.background || style?.backgroundColor;
+    const pad = Math.min(20, Math.max(10, Math.min(width, height) * 0.2));
+    return (
+      <g>
+        <rect
+          className={`react-flow__minimap-node${selected ? ' selected' : ''}${className ? ` ${className}` : ''}`}
+          x={x}
+          y={y}
+          rx={borderRadius}
+          ry={borderRadius}
+          width={width}
+          height={height}
+          style={{
+            fill: typeof fill === 'string' ? fill : undefined,
+            stroke: strokeColor,
+            strokeWidth,
+          }}
+          shapeRendering={shapeRendering}
+          onClick={onClick ? (event) => onClick(event, id) : undefined}
+        />
+        {selected && (
+          <rect
+            className="fs-minimap-focus-ring"
+            x={x - pad}
+            y={y - pad}
+            width={width + pad * 2}
+            height={height + pad * 2}
+            rx={borderRadius + 4}
+            ry={borderRadius + 4}
+            fill="none"
+            stroke="var(--fs-primary)"
+            strokeWidth={2}
+            vectorEffect="non-scaling-stroke"
+            shapeRendering="geometricPrecision"
+            pointerEvents="none"
+          />
+        )}
+      </g>
+    );
+  }
+);
 
 export const CanvasControls: React.FC = () => {
   const { zoomIn, zoomOut, fitView, setCenter, getZoom } = useReactFlow();
@@ -169,9 +228,10 @@ export const CanvasControls: React.FC = () => {
               nodeStrokeColor={resolveMiniMapNodeStrokeColor}
               nodeStrokeWidth={1}
               nodeBorderRadius={6}
+              nodeComponent={MiniMapFocusNode}
               maskColor="var(--fs-minimap-mask)"
-              maskStrokeColor="var(--fs-primary)"
-              maskStrokeWidth={1.5}
+              maskStrokeColor="transparent"
+              maskStrokeWidth={0}
               style={{
                 width: 184,
                 height: 124,

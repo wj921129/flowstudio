@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
+  SEGMENT_MERGE_SNAP_THRESHOLD,
+  adjustWaypointsOnNodeMove,
   buildWaypointPath,
   deriveDefaultOrthogonalWaypoints,
+  findNearestNodeBorderAnchor,
   moveOrthogonalSegment,
   simplifyOrthogonalWaypoints,
 } from '../src/features/canvas/custom-edges/waypoint-path-utils.js';
-import type { XYPosition } from '@flowstudio/shared';
+import type { FlowNode, XYPosition } from '@flowstudio/shared';
 
 const isOrthogonal = (pts: XYPosition[]) =>
   pts.slice(1).every((p, i) => p.x === pts[i].x || p.y === pts[i].y);
@@ -46,6 +49,218 @@ describe('waypoint-path-utils: 线段横纵拖动', () => {
       { x: 100, y: 100 },
     ]);
     expect(simplifyOrthogonalWaypoints({ x: 0, y: 50 }, { x: 300, y: 50 }, [{ x: 16, y: 50 }, { x: 16, y: 50 }, { x: 284, y: 50 }, { x: 284, y: 50 }])).toEqual([]);
+  });
+
+  it('平行两条折线中间存在折线时，拖动靠近另一平行线触发极窄吸附并合并三条折线为一条', () => {
+    const src = { x: 0, y: 100 };
+    const tgt = { x: 300, y: 100 };
+    const wps5H = [
+      { x: 100, y: 100 },
+      { x: 100, y: 180 },
+      { x: 200, y: 180 },
+      { x: 200, y: 100 },
+    ];
+    // 水平中段 segIndex=2 原在 y=180，向 y=100 拖动 75px -> y=105，落入 8px 阈值内吸附到 y=100 并合并 3 条折线
+    const mergedH = moveOrthogonalSegment(src, tgt, wps5H, 2, -75);
+    expect(mergedH).toEqual([]);
+
+    // 另一侧仅后段共线：源 y=100、目标 y=160，中段 y=200 向目标 y=160 拖动至 y=165（5px <= 8px）
+    const tgt2 = { x: 300, y: 160 };
+    const wps5H2 = [
+      { x: 100, y: 100 },
+      { x: 100, y: 200 },
+      { x: 200, y: 200 },
+      { x: 200, y: 160 },
+    ];
+    const mergedToTgt = moveOrthogonalSegment(src, tgt2, wps5H2, 2, -35);
+    expect(mergedToTgt).toEqual([
+      { x: 100, y: 100 },
+      { x: 100, y: 160 },
+    ]);
+    expect(isOrthogonal([src, ...mergedToTgt, tgt2])).toBe(true);
+
+    // 竖直平行段中间存在水平折线：竖中段 x=220 向首竖段 x=100 拖动至 x=106（6px <= 8px）合并
+    const vSrc = { x: 100, y: 0 };
+    const vTgt = { x: 180, y: 300 };
+    const wps5V = [
+      { x: 100, y: 100 },
+      { x: 220, y: 100 },
+      { x: 220, y: 200 },
+      { x: 180, y: 200 },
+    ];
+    const mergedV = moveOrthogonalSegment(vSrc, vTgt, wps5V, 2, -114);
+    expect(mergedV).toEqual([
+      { x: 100, y: 200 },
+      { x: 180, y: 200 },
+    ]);
+    expect(isOrthogonal([vSrc, ...mergedV, vTgt])).toBe(true);
+
+    // U 型回折合并：简化时收敛消除退化回折
+    const uSrc = { x: 0, y: 50 };
+    const uTgt = { x: 300, y: 50 };
+    const uWps = [
+      { x: 100, y: 50 },
+      { x: 100, y: 120 },
+      { x: 200, y: 120 },
+      { x: 200, y: 50 },
+    ];
+    expect(moveOrthogonalSegment(uSrc, uTgt, uWps, 2, -65, SEGMENT_MERGE_SNAP_THRESHOLD)).toEqual([]);
+
+    // 超过阈值或关闭吸附 (snapThreshold=0) 时保留折线不合并
+    const unmerged = moveOrthogonalSegment(src, tgt, wps5H, 2, -65);
+    expect(unmerged).toHaveLength(4);
+    const noSnap = moveOrthogonalSegment(src, tgt, wps5H, 2, -75, 0);
+    expect(noSnap[1].y).toBe(105);
+    expect(noSnap).toHaveLength(4);
+  });
+});
+
+describe('waypoint-path-utils: 节点平移保角与两端锚点吸附', () => {
+  it('平移单个节点时只增缩连接线段，不改变折线直角结构', () => {
+    const src = { x: 100, y: 100 };
+    const tgt = { x: 300, y: 200 };
+    const wps = [
+      { x: 200, y: 100 },
+      { x: 200, y: 200 },
+    ];
+
+    // 源节点向右平移 30、向下平移 40：首折点仅随 y 跟进，x=200 保持结构不变
+    const movedSrc = adjustWaypointsOnNodeMove({
+      waypoints: wps,
+      sourceDelta: { x: 30, y: 40 },
+      targetDelta: { x: 0, y: 0 },
+      sourceSide: 'right',
+      targetSide: 'left',
+      oldSource: src,
+      oldTarget: tgt,
+      newSource: { x: 130, y: 140 },
+      newTarget: tgt,
+    });
+    expect(movedSrc).toEqual([
+      { x: 200, y: 140 },
+      { x: 200, y: 200 },
+    ]);
+    expect(isOrthogonal([{ x: 130, y: 140 }, ...movedSrc, tgt])).toBe(true);
+
+    // 源节点大幅右移跨过 x=200（newSource.x=230）：防倒穿推进中竖段至 230+16=246，仍保正交
+    const pushedSrc = adjustWaypointsOnNodeMove({
+      waypoints: wps,
+      sourceDelta: { x: 130, y: 0 },
+      targetDelta: { x: 0, y: 0 },
+      sourceSide: 'right',
+      targetSide: 'left',
+      oldSource: src,
+      oldTarget: tgt,
+      newSource: { x: 230, y: 100 },
+      newTarget: tgt,
+    });
+    expect(pushedSrc).toEqual([
+      { x: 246, y: 100 },
+      { x: 246, y: 200 },
+    ]);
+    expect(isOrthogonal([{ x: 230, y: 100 }, ...pushedSrc, tgt])).toBe(true);
+
+    // 目标节点向下平移 50：仅尾折点跟进 y
+    const movedTgt = adjustWaypointsOnNodeMove({
+      waypoints: wps,
+      sourceDelta: { x: 0, y: 0 },
+      targetDelta: { x: 0, y: 50 },
+      sourceSide: 'right',
+      targetSide: 'left',
+      oldSource: src,
+      oldTarget: tgt,
+      newSource: src,
+      newTarget: { x: 300, y: 250 },
+    });
+    expect(movedTgt).toEqual([
+      { x: 200, y: 100 },
+      { x: 200, y: 250 },
+    ]);
+    expect(isOrthogonal([src, ...movedTgt, { x: 300, y: 250 }])).toBe(true);
+  });
+
+  it('双端同速平移刚性跟随，L 型单折点与共线单折点均保持正交', () => {
+    const rigid = adjustWaypointsOnNodeMove({
+      waypoints: [
+        { x: 200, y: 100 },
+        { x: 200, y: 200 },
+      ],
+      sourceDelta: { x: 45, y: -20 },
+      targetDelta: { x: 45, y: -20 },
+    });
+    expect(rigid).toEqual([
+      { x: 245, y: 80 },
+      { x: 245, y: 180 },
+    ]);
+
+    // L 型单折点（right -> top）
+    const lCorner = adjustWaypointsOnNodeMove({
+      waypoints: [{ x: 300, y: 100 }],
+      sourceDelta: { x: 10, y: 25 },
+      targetDelta: { x: -15, y: 5 },
+      sourceSide: 'right',
+      targetSide: 'top',
+    });
+    expect(lCorner).toEqual([{ x: 285, y: 125 }]);
+    expect(isOrthogonal([{ x: 110, y: 125 }, ...lCorner, { x: 285, y: 205 }])).toBe(true);
+
+    // 共线单折点（right -> left）源端垂直移动：自动拆为双折点保持正交
+    const splitCollinear = adjustWaypointsOnNodeMove({
+      waypoints: [{ x: 200, y: 100 }],
+      sourceDelta: { x: 0, y: 30 },
+      targetDelta: { x: 0, y: 0 },
+      sourceSide: 'right',
+      targetSide: 'left',
+    });
+    expect(splitCollinear).toEqual([
+      { x: 200, y: 130 },
+      { x: 200, y: 100 },
+    ]);
+    expect(isOrthogonal([{ x: 100, y: 130 }, ...splitCollinear, { x: 300, y: 100 }])).toBe(true);
+  });
+
+  it('findNearestNodeBorderAnchor 支持同节点跨边吸附与异节点几何边框吸附，且排除对端和容器节点', () => {
+    const nodes: FlowNode[] = [
+      {
+        id: 'pool-1',
+        type: 'pool',
+        position: { x: 0, y: 0 },
+        width: 800,
+        height: 400,
+        data: { label: '泳道池', type: 'pool' },
+      },
+      {
+        id: 'n1',
+        type: 'process',
+        position: { x: 100, y: 100 },
+        width: 120,
+        height: 60,
+        data: { label: 'A', type: 'process' },
+      },
+      {
+        id: 'n2',
+        type: 'decision',
+        position: { x: 360, y: 100 },
+        width: 120,
+        height: 80,
+        data: { label: 'B', type: 'decision' },
+      },
+    ];
+
+    // 拖到 n1 上边中点（可换到同节点其他边），排除对端 n2
+    const hitSelf = findNearestNodeBorderAnchor({ x: 160, y: 96 }, nodes, 'n2');
+    expect(hitSelf?.nodeId).toBe('n1');
+    expect(hitSelf?.side).toBe('top');
+    expect(hitSelf?.handleId).toBe('top');
+
+    // 拖到 n2 菱形左顶角附近
+    const hitDecision = findNearestNodeBorderAnchor({ x: 364, y: 140 }, nodes, 'n1');
+    expect(hitDecision?.nodeId).toBe('n2');
+    expect(hitDecision?.side).toBe('left');
+
+    // 拖到泳道空白处不误吸附容器节点
+    const hitEmpty = findNearestNodeBorderAnchor({ x: 700, y: 350 }, nodes, 'n1');
+    expect(hitEmpty).toBeNull();
   });
 });
 

@@ -143,10 +143,11 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   } | null>(null);
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const isReconnectingEdge = useFlowStore((s) => s.isReconnectingEdge);
   const isReadOnly = usePresentationStore((s) => s.isReadOnly);
   const isPanOrLocked = isSpacePanning || isReadOnly || activeTool === 'pan';
   const semanticRole = useFlowStore((s) => selectNodeSemanticRole(s.edges, id, data.type, data.label));
-  const showHandles = !isPanOrLocked && (isConnecting || activeTool === 'connect' || selected);
+  const showHandles = !isPanOrLocked && (isConnecting || isReconnectingEdge || activeTool === 'connect' || selected);
   const showResize = selected && activeTool === 'select' && !isPanOrLocked && !CONTAINER_NODE_TYPES.includes(data.type);
 
   const incomingHandleKeys = useFlowStore((s) => selectIncomingHandleKeys(s.nodes, s.edges, id));
@@ -373,7 +374,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         const pos = POSITION_MAP[handle.position];
         const hasIncomingEdge = incomingHandles.has(handle.id);
         const isForceShowHandles = isConnecting || activeTool === 'connect';
-        const showVisualIndicator = isForceShowHandles ? true : (!hasIncomingEdge && showHandles);
+        const showVisualIndicator = isForceShowHandles || isReconnectingEdge ? true : (!hasIncomingEdge && showHandles);
         const anchorStyle = buildHandleAnchorStyle(
           handle.position as BorderSide,
           0.5,

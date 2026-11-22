@@ -185,7 +185,15 @@ export const FlowCanvas: React.FC = () => {
 
   // 映射聚光灯走查及断键悬停下的连线样式
   const displayEdges = useMemo(() => {
-    if (!spotlightResult && !hoveredEdgeForInsert) return edges;
+    const tintMarker = (marker: FlowEdge['markerEnd'], color: string, fallbackType?: MarkerType) => {
+      if (marker && typeof marker === 'object') return { ...marker, color };
+      if (!marker && fallbackType) return { type: fallbackType, color };
+      return marker;
+    };
+
+    const selectionRing = 'var(--fs-selection-ring, #2563eb)';
+    const hasSelected = Boolean(selectedEdgeId) || edges.some((e) => e.selected);
+    if (!spotlightResult && !hoveredEdgeForInsert && !hasSelected) return edges;
     const edgeIds = spotlightResult?.edgeIds;
 
     return edges.map((edge) => {
@@ -203,27 +211,55 @@ export const FlowCanvas: React.FC = () => {
         };
       }
 
+      const isEdgeSelected = Boolean(edge.selected || (selectedEdgeId && edge.id === selectedEdgeId));
+      const selectedPatch = isEdgeSelected
+        ? {
+            markerEnd: tintMarker(edge.markerEnd, selectionRing, MarkerType.ArrowClosed),
+            ...(edge.markerStart ? { markerStart: tintMarker(edge.markerStart, selectionRing) } : {}),
+          }
+        : null;
+
       if (spotlightResult) {
         const isHighlighted = edgeIds ? edgeIds.has(edge.id) : true;
         const dimOthers = spotlightActive;
+        const nextStroke = isEdgeSelected || isHighlighted ? selectionRing : edge.style?.stroke;
         return {
           ...edge,
+          ...(selectedPatch || {}),
+          ...(isHighlighted && !selectedPatch
+            ? {
+                markerEnd: tintMarker(edge.markerEnd, selectionRing, MarkerType.ArrowClosed),
+                ...(edge.markerStart ? { markerStart: tintMarker(edge.markerStart, selectionRing) } : {}),
+              }
+            : {}),
           animated: isHighlighted,
           interactionWidth: dimOthers && !isHighlighted ? 0 : undefined,
           style: {
             ...edge.style,
             opacity: dimOthers ? (isHighlighted ? 1 : 0.15) : 1,
             pointerEvents: dimOthers && !isHighlighted ? 'none' : undefined,
-            stroke: isHighlighted ? 'var(--fs-selection-ring, #2563eb)' : edge.style?.stroke,
-            strokeWidth: isHighlighted ? 2.5 : edge.style?.strokeWidth ?? 1.5,
+            stroke: nextStroke,
+            strokeWidth: isHighlighted || isEdgeSelected ? 2.5 : edge.style?.strokeWidth ?? 1.5,
             transition: 'opacity 0.2s ease',
+          },
+        };
+      }
+
+      if (selectedPatch) {
+        return {
+          ...edge,
+          ...selectedPatch,
+          style: {
+            ...edge.style,
+            stroke: selectionRing,
+            strokeWidth: Math.max(typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.5, 2),
           },
         };
       }
 
       return edge;
     });
-  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert]);
+  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert, selectedEdgeId]);
 
   const lastCursorBroadcastRef = useRef(0);
 

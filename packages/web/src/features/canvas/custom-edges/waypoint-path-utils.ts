@@ -3,7 +3,14 @@
  * @description 支持多折拐点路径生成、段中点提取与折点更新
  */
 
-import type { XYPosition } from '@flowstudio/shared';
+import {
+  getNodeRegistryEntry,
+  projectPointToNodeBorder,
+  formatBorderAnchorHandle,
+  type BorderSide,
+  type FlowNode,
+  type XYPosition,
+} from '@flowstudio/shared';
 
 /**
  * 连线端点所依附的节点锚点方位（与 @xyflow/react 的 Position 枚举字面量一致）
@@ -176,6 +183,8 @@ export function projectPointOntoPolyline(
 
 export type SegmentAxis = 'h' | 'v';
 
+export const SEGMENT_MERGE_SNAP_THRESHOLD = 8;
+
 export function getSegmentAxis(a: XYPosition, b: XYPosition): SegmentAxis | null {
   if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) >= 0.5) return 'h';
   if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) >= 0.5) return 'v';
@@ -187,7 +196,8 @@ export function moveOrthogonalSegment(
   target: XYPosition,
   waypoints: XYPosition[],
   segIndex: number,
-  offset: number
+  offset: number,
+  snapThreshold: number = SEGMENT_MERGE_SNAP_THRESHOLD
 ): XYPosition[] {
   const pts = [source, ...waypoints, target].map((p) => ({ ...p }));
   const lastIndex = pts.length - 1;
@@ -198,11 +208,36 @@ export function moveOrthogonalSegment(
   const b = pts[segIndex + 1];
   const axis = a && b ? getSegmentAxis(a, b) : null;
   if (!axis || offset === 0) return waypoints.map((p) => ({ ...p }));
-  const shift = (p: XYPosition): XYPosition =>
-    axis === 'h' ? { x: p.x, y: p.y + offset } : { x: p.x + offset, y: p.y };
-  pts[segIndex] = shift(a);
-  pts[segIndex + 1] = shift(b);
-  return pts.slice(1, lastIndex);
+
+  const currentCoord = axis === 'h' ? a.y : a.x;
+  let targetCoord = currentCoord + offset;
+
+  let snapped = false;
+  if (snapThreshold > 0) {
+    const candidates: number[] = [];
+    if (segIndex - 2 >= 0 && getSegmentAxis(pts[segIndex - 2], pts[segIndex - 1]) === axis) {
+      candidates.push(axis === 'h' ? pts[segIndex - 2].y : pts[segIndex - 2].x);
+    }
+    if (segIndex + 3 <= lastIndex && getSegmentAxis(pts[segIndex + 2], pts[segIndex + 3]) === axis) {
+      candidates.push(axis === 'h' ? pts[segIndex + 2].y : pts[segIndex + 2].x);
+    }
+    let bestDist = snapThreshold;
+    for (const cand of candidates) {
+      const dist = Math.abs(targetCoord - cand);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        targetCoord = cand;
+        snapped = true;
+      }
+    }
+  }
+
+  const applyCoord = (p: XYPosition): XYPosition =>
+    axis === 'h' ? { x: p.x, y: targetCoord } : { x: targetCoord, y: p.y };
+  pts[segIndex] = applyCoord(a);
+  pts[segIndex + 1] = applyCoord(b);
+  const next = pts.slice(1, lastIndex);
+  return snapped ? simplifyOrthogonalWaypoints(source, target, next) : next;
 }
 
 export function simplifyOrthogonalWaypoints(
@@ -210,18 +245,316 @@ export function simplifyOrthogonalWaypoints(
   target: XYPosition,
   waypoints: XYPosition[]
 ): XYPosition[] {
-  const pts = [source, ...waypoints.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })), target];
+  const norm = (v: number) => Math.round(v * 100) / 100;
+  const pts = [
+    { x: norm(source.x), y: norm(source.y) },
+    ...waypoints.map((p) => ({ x: norm(p.x), y: norm(p.y) })),
+    { x: norm(target.x), y: norm(target.y) },
+  ];
   const same = (a: number, b: number) => Math.abs(a - b) < 1;
   const out: XYPosition[] = [pts[0]];
   for (let i = 1; i < pts.length; i++) {
     const p = pts[i];
-    const prev = out[out.length - 1];
-    if (i < pts.length - 1 && same(p.x, prev.x) && same(p.y, prev.y)) continue;
-    if (out.length >= 2) {
+    if (i < pts.length - 1 && same(p.x, out[out.length - 1].x) && same(p.y, out[out.length - 1].y)) continue;
+    while (out.length >= 2) {
+      const prev = out[out.length - 1];
       const pp = out[out.length - 2];
-      if ((same(pp.x, prev.x) && same(prev.x, p.x)) || (same(pp.y, prev.y) && same(prev.y, p.y))) out.pop();
+      const dupPrev = same(p.x, prev.x) && same(p.y, prev.y);
+      const colX = same(pp.x, prev.x) && same(prev.x, p.x);
+      const colY = same(pp.y, prev.y) && same(prev.y, p.y);
+      if (dupPrev || colX || colY) {
+        out.pop();
+      } else {
+        break;
+      }
     }
-    out.push(p);
+    if (i === pts.length - 1 || !same(p.x, out[out.length - 1].x) || !same(p.y, out[out.length - 1].y)) {
+      out.push(p);
+    }
   }
   return out.slice(1, -1);
+}
+
+export interface AdjustWaypointsOnNodeMoveParams {
+  waypoints: XYPosition[];
+  sourceDelta: XYPosition;
+  targetDelta: XYPosition;
+  sourceSide?: EdgeAnchorDirection;
+  targetSide?: EdgeAnchorDirection;
+  oldSource?: XYPosition;
+  oldTarget?: XYPosition;
+  newSource?: XYPosition;
+  newTarget?: XYPosition;
+  minStub?: number;
+}
+
+function sideToAxis(side?: EdgeAnchorDirection): SegmentAxis | null {
+  if (side === 'left' || side === 'right') return 'h';
+  if (side === 'top' || side === 'bottom') return 'v';
+  return null;
+}
+
+function inferSegmentAxis(a: XYPosition, b: XYPosition): SegmentAxis | null {
+  const dx = Math.abs(b.x - a.x);
+  const dy = Math.abs(b.y - a.y);
+  if (dx < 0.5 && dy < 0.5) return null;
+  if (dy <= dx) return 'h';
+  return 'v';
+}
+
+export function adjustWaypointsOnNodeMove({
+  waypoints,
+  sourceDelta,
+  targetDelta,
+  sourceSide,
+  targetSide,
+  oldSource,
+  oldTarget,
+  newSource,
+  newTarget,
+  minStub = 16,
+}: AdjustWaypointsOnNodeMoveParams): XYPosition[] {
+  if (waypoints.length === 0) return [];
+  const dxS = sourceDelta.x;
+  const dyS = sourceDelta.y;
+  const dxT = targetDelta.x;
+  const dyT = targetDelta.y;
+  if (Math.abs(dxS) < 1e-4 && Math.abs(dyS) < 1e-4 && Math.abs(dxT) < 1e-4 && Math.abs(dyT) < 1e-4) {
+    return waypoints.map((p) => ({ ...p }));
+  }
+
+  if (Math.abs(dxS - dxT) < 1e-4 && Math.abs(dyS - dyT) < 1e-4) {
+    return waypoints.map((p) => ({ x: p.x + dxS, y: p.y + dyS }));
+  }
+
+  const next = waypoints.map((p) => ({ ...p }));
+  const last = next.length - 1;
+
+  const firstAxis: SegmentAxis =
+    sideToAxis(sourceSide) ??
+    (oldSource ? inferSegmentAxis(oldSource, waypoints[0]) : null) ??
+    (next.length >= 2 ? (inferSegmentAxis(waypoints[0], waypoints[1]) === 'h' ? 'v' : 'h') : null) ??
+    (Math.abs(dxS) >= Math.abs(dyS) ? 'h' : 'v');
+
+  const lastAxis: SegmentAxis =
+    sideToAxis(targetSide) ??
+    (oldTarget ? inferSegmentAxis(waypoints[last], oldTarget) : null) ??
+    (next.length >= 2 ? (inferSegmentAxis(waypoints[last - 1], waypoints[last]) === 'h' ? 'v' : 'h') : null) ??
+    (Math.abs(dxT) >= Math.abs(dyT) ? 'h' : 'v');
+
+  if (next.length === 1 && firstAxis === lastAxis) {
+    const p = next[0];
+    if (firstAxis === 'h') {
+      return Math.abs(dyS - dyT) > 1e-4
+        ? [{ x: p.x, y: p.y + dyS }, { x: p.x, y: p.y + dyT }]
+        : [{ x: p.x, y: p.y + dyS }];
+    }
+    return Math.abs(dxS - dxT) > 1e-4
+      ? [{ x: p.x + dxS, y: p.y }, { x: p.x + dxT, y: p.y }]
+      : [{ x: p.x + dxS, y: p.y }];
+  }
+
+  if (Math.abs(dxS) >= 1e-4 || Math.abs(dyS) >= 1e-4) {
+    let prefixEnd = 0;
+    const maxPrefix = next.length > 1 ? last - 1 : 0;
+    while (prefixEnd < maxPrefix) {
+      const segAxis = inferSegmentAxis(next[prefixEnd], next[prefixEnd + 1]);
+      if (segAxis !== firstAxis) break;
+      prefixEnd++;
+    }
+    if (firstAxis === 'h') {
+      for (let i = 0; i <= prefixEnd; i++) next[i].y += dyS;
+      if (newSource && prefixEnd + 1 <= last) {
+        const segAfter = inferSegmentAxis(next[prefixEnd], next[prefixEnd + 1]);
+        const segNext =
+          prefixEnd + 2 <= last
+            ? inferSegmentAxis(next[prefixEnd + 1], next[prefixEnd + 2])
+            : newTarget
+            ? inferSegmentAxis(next[prefixEnd + 1], newTarget)
+            : null;
+        if (segAfter === 'v' && (segNext === 'h' || (segNext === null && sideToAxis(targetSide) === 'h'))) {
+          if (sourceSide === 'right' && dxS > 0 && next[prefixEnd].x < newSource.x + minStub) {
+            const pushX = newSource.x + minStub;
+            next[prefixEnd].x = pushX;
+            next[prefixEnd + 1].x = pushX;
+          } else if (sourceSide === 'left' && dxS < 0 && next[prefixEnd].x > newSource.x - minStub) {
+            const pushX = newSource.x - minStub;
+            next[prefixEnd].x = pushX;
+            next[prefixEnd + 1].x = pushX;
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i <= prefixEnd; i++) next[i].x += dxS;
+      if (newSource && prefixEnd + 1 <= last) {
+        const segAfter = inferSegmentAxis(next[prefixEnd], next[prefixEnd + 1]);
+        const segNext =
+          prefixEnd + 2 <= last
+            ? inferSegmentAxis(next[prefixEnd + 1], next[prefixEnd + 2])
+            : newTarget
+            ? inferSegmentAxis(next[prefixEnd + 1], newTarget)
+            : null;
+        if (segAfter === 'h' && (segNext === 'v' || (segNext === null && sideToAxis(targetSide) === 'v'))) {
+          if (sourceSide === 'bottom' && dyS > 0 && next[prefixEnd].y < newSource.y + minStub) {
+            const pushY = newSource.y + minStub;
+            next[prefixEnd].y = pushY;
+            next[prefixEnd + 1].y = pushY;
+          } else if (sourceSide === 'top' && dyS < 0 && next[prefixEnd].y > newSource.y - minStub) {
+            const pushY = newSource.y - minStub;
+            next[prefixEnd].y = pushY;
+            next[prefixEnd + 1].y = pushY;
+          }
+        }
+      }
+    }
+  }
+
+  if (Math.abs(dxT) >= 1e-4 || Math.abs(dyT) >= 1e-4) {
+    let suffixStart = last;
+    const minSuffix = next.length > 1 ? 1 : 0;
+    while (suffixStart > minSuffix) {
+      const segAxis = inferSegmentAxis(next[suffixStart - 1], next[suffixStart]);
+      if (segAxis !== lastAxis) break;
+      suffixStart--;
+    }
+    if (lastAxis === 'h') {
+      for (let i = suffixStart; i <= last; i++) next[i].y += dyT;
+      if (newTarget && suffixStart - 1 >= 0) {
+        const segBefore = inferSegmentAxis(next[suffixStart - 1], next[suffixStart]);
+        const segPrev =
+          suffixStart - 2 >= 0
+            ? inferSegmentAxis(next[suffixStart - 2], next[suffixStart - 1])
+            : newSource
+            ? inferSegmentAxis(newSource, next[suffixStart - 1])
+            : null;
+        if (segBefore === 'v' && (segPrev === 'h' || (segPrev === null && sideToAxis(sourceSide) === 'h'))) {
+          if (targetSide === 'right' && dxT > 0 && next[suffixStart].x < newTarget.x + minStub) {
+            const pushX = newTarget.x + minStub;
+            next[suffixStart].x = pushX;
+            next[suffixStart - 1].x = pushX;
+          } else if (targetSide === 'left' && dxT < 0 && next[suffixStart].x > newTarget.x - minStub) {
+            const pushX = newTarget.x - minStub;
+            next[suffixStart].x = pushX;
+            next[suffixStart - 1].x = pushX;
+          }
+        }
+      }
+    } else {
+      for (let i = suffixStart; i <= last; i++) next[i].x += dxT;
+      if (newTarget && suffixStart - 1 >= 0) {
+        const segBefore = inferSegmentAxis(next[suffixStart - 1], next[suffixStart]);
+        const segPrev =
+          suffixStart - 2 >= 0
+            ? inferSegmentAxis(next[suffixStart - 2], next[suffixStart - 1])
+            : newSource
+            ? inferSegmentAxis(newSource, next[suffixStart - 1])
+            : null;
+        if (segBefore === 'h' && (segPrev === 'v' || (segPrev === null && sideToAxis(sourceSide) === 'v'))) {
+          if (targetSide === 'bottom' && dyT > 0 && next[suffixStart].y < newTarget.y + minStub) {
+            const pushY = newTarget.y + minStub;
+            next[suffixStart].y = pushY;
+            next[suffixStart - 1].y = pushY;
+          } else if (targetSide === 'top' && dyT < 0 && next[suffixStart].y > newTarget.y - minStub) {
+            const pushY = newTarget.y - minStub;
+            next[suffixStart].y = pushY;
+            next[suffixStart - 1].y = pushY;
+          }
+        }
+      }
+    }
+  }
+
+  return next;
+}
+
+export interface ReconnectAnchorHit {
+  nodeId: string;
+  handleId: string;
+  side: BorderSide;
+  position: XYPosition;
+}
+
+export function inferAnchorDirection(from: XYPosition, to: XYPosition): EdgeAnchorDirection {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? 'right' : 'left';
+  }
+  return dy >= 0 ? 'bottom' : 'top';
+}
+
+function resolveNodeWorldRect(
+  node: FlowNode,
+  byId: Map<string, FlowNode>
+): { x: number; y: number; width: number; height: number } {
+  let x = node.position.x;
+  let y = node.position.y;
+  let curr = node.parentId ? byId.get(node.parentId) : undefined;
+  const visited = new Set<string>([node.id]);
+  while (curr && !visited.has(curr.id)) {
+    visited.add(curr.id);
+    x += curr.position.x;
+    y += curr.position.y;
+    curr = curr.parentId ? byId.get(curr.parentId) : undefined;
+  }
+  const styleWidth = typeof node.style?.width === 'number' ? node.style.width : undefined;
+  const styleHeight = typeof node.style?.height === 'number' ? node.style.height : undefined;
+  const entry = getNodeRegistryEntry(node.type);
+  const width = node.width ?? styleWidth ?? entry?.defaultSize.width ?? 160;
+  const height = node.height ?? styleHeight ?? entry?.defaultSize.height ?? 80;
+  return { x, y, width, height };
+}
+
+export function findNearestNodeBorderAnchor(
+  cursor: XYPosition,
+  nodes: FlowNode[],
+  excludeNodeId: string,
+  options?: { snapMargin?: number; disableBorderSnap?: boolean }
+): ReconnectAnchorHit | null {
+  const snapMargin = options?.snapMargin ?? 24;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  let best: { hit: ReconnectAnchorHit; score: number } | null = null;
+
+  for (const node of nodes) {
+    if (node.id === excludeNodeId || (node as { hidden?: boolean }).hidden) continue;
+    const entry = getNodeRegistryEntry(node.type);
+    if (!entry || entry.handles.length === 0) continue;
+
+    const rect = resolveNodeWorldRect(node, byId);
+    if (
+      cursor.x < rect.x - snapMargin ||
+      cursor.x > rect.x + rect.width + snapMargin ||
+      cursor.y < rect.y - snapMargin ||
+      cursor.y > rect.y + rect.height + snapMargin
+    ) {
+      continue;
+    }
+
+    const localX = cursor.x - rect.x;
+    const localY = cursor.y - rect.y;
+    const proj = projectPointToNodeBorder(localX, localY, rect.width, rect.height, {
+      snapThresholdPx: 5,
+      disableSnap: options?.disableBorderSnap,
+      nodeType: node.type,
+    });
+    const worldPt = { x: rect.x + proj.x, y: rect.y + proj.y };
+    const dist = Math.hypot(cursor.x - worldPt.x, cursor.y - worldPt.y);
+    const inside = localX >= 0 && localX <= rect.width && localY >= 0 && localY <= rect.height;
+    if (!inside && dist > snapMargin) continue;
+
+    const score = inside ? dist * 0.5 : dist;
+    if (!best || score < best.score) {
+      best = {
+        score,
+        hit: {
+          nodeId: node.id,
+          handleId: formatBorderAnchorHandle(proj.side, proj.offset),
+          side: proj.side,
+          position: worldPt,
+        },
+      };
+    }
+  }
+
+  return best ? best.hit : null;
 }

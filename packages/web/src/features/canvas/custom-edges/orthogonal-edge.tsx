@@ -11,11 +11,16 @@ import {
 import type { FlowEdgeData, XYPosition } from '@flowstudio/shared';
 import { getEdgeDashArray } from '@flowstudio/shared';
 import {
+  SEGMENT_MERGE_SNAP_THRESHOLD,
+  findNearestNodeBorderAnchor,
   getPointAtPolylineRatio,
   getSegmentAxis,
+  inferAnchorDirection,
   moveOrthogonalSegment,
   projectPointOntoPolyline,
+  simplifyOrthogonalWaypoints,
   type EdgeAnchorDirection,
+  type ReconnectAnchorHit,
 } from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
 import { usePresentationStore } from '../../presentation';
@@ -96,6 +101,12 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const { screenToFlowPosition } = useReactFlow();
   const dragEndRef = useRef<() => void>(() => {});
   const [dragWaypoints, setDragWaypoints] = useState<XYPosition[] | null>(null);
+  const [endpointDrag, setEndpointDrag] = useState<{
+    end: 'source' | 'target';
+    cursor: XYPosition;
+    snapped: ReconnectAnchorHit | null;
+  } | null>(null);
+  const endpointDragEndRef = useRef<() => void>(() => {});
   const [dragLabelRatio, setDragLabelRatio] = useState<number | null>(null);
   const labelDragEndRef = useRef<() => void>(() => {});
   const editingEdgeLabelId = useFlowStore((s) => s.editingEdgeLabelId);
@@ -119,18 +130,27 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const waypoints = dragWaypoints ?? data?.waypoints;
 
   const edgeStyleData = data?.style;
-  const strokeColor = selected
-    ? 'var(--fs-selection-ring)'
-    : (edgeStyleData?.strokeColor ? String(edgeStyleData.strokeColor) : 'var(--fs-edge-stroke)');
-  const strokeWidth = typeof edgeStyleData?.strokeWidth === 'number' ? edgeStyleData.strokeWidth : 1.5;
+  const incomingStroke = typeof style?.stroke === 'string' ? style.stroke : undefined;
+  const isTransientHighlightStroke =
+    incomingStroke === '#6366f1' || Boolean(incomingStroke?.includes('--fs-selection-ring'));
+  const baseStrokeWidth = typeof edgeStyleData?.strokeWidth === 'number' ? edgeStyleData.strokeWidth : 1.5;
+  const strokeColor =
+    selected && incomingStroke !== '#6366f1'
+      ? 'var(--fs-selection-ring)'
+      : isTransientHighlightStroke
+      ? incomingStroke!
+      : edgeStyleData?.strokeColor
+      ? String(edgeStyleData.strokeColor)
+      : incomingStroke || 'var(--fs-edge-stroke)';
+  const strokeWidth = selected ? Math.max(baseStrokeWidth, 2) : baseStrokeWidth;
   const strokeDasharray = getEdgeDashArray(edgeStyleData?.strokeStyle);
 
   const mergedStyle: React.CSSProperties = {
+    ...style,
     stroke: strokeColor,
     strokeWidth,
     strokeDasharray,
     ...(edgeStyleData?.strokeStyle === 'dotted' ? { strokeLinecap: 'round' as const } : {}),
-    ...style,
   };
 
   const resolvedMarkerEnd = markerEnd
@@ -154,15 +174,32 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       : markerStart
     : undefined;
 
+  const isDraggingSourceEnd = endpointDrag?.end === 'source';
+  const isDraggingTargetEnd = endpointDrag?.end === 'target';
+
+  const activeSourcePos: XYPosition = isDraggingSourceEnd
+    ? endpointDrag.snapped?.position ?? endpointDrag.cursor
+    : { x: sourceX, y: sourceY };
+  const activeTargetPos: XYPosition = isDraggingTargetEnd
+    ? endpointDrag.snapped?.position ?? endpointDrag.cursor
+    : { x: targetX, y: targetY };
+
+  const activeSourceDirection = isDraggingSourceEnd
+    ? (endpointDrag.snapped?.side ?? inferAnchorDirection(activeSourcePos, activeTargetPos))
+    : (sourcePosition as EdgeAnchorDirection);
+  const activeTargetDirection = isDraggingTargetEnd
+    ? (endpointDrag.snapped?.side ?? inferAnchorDirection(activeTargetPos, activeSourcePos))
+    : (targetPosition as EdgeAnchorDirection);
+
   const hasMarkerEnd = Boolean(resolvedMarkerEnd);
   const dockTarget = hasMarkerEnd
-    ? getDockingEndpoint(targetX, targetY, targetPosition, TERMINAL_ARROW_DOCKING_GAP)
-    : { x: targetX, y: targetY };
+    ? getDockingEndpoint(activeTargetPos.x, activeTargetPos.y, activeTargetDirection, TERMINAL_ARROW_DOCKING_GAP)
+    : activeTargetPos;
 
   const hasMarkerStart = Boolean(resolvedMarkerStart);
   const dockSource = hasMarkerStart
-    ? getDockingEndpoint(sourceX, sourceY, sourcePosition, TERMINAL_ARROW_DOCKING_GAP)
-    : { x: sourceX, y: sourceY };
+    ? getDockingEndpoint(activeSourcePos.x, activeSourcePos.y, activeSourceDirection, TERMINAL_ARROW_DOCKING_GAP)
+    : activeSourcePos;
 
   const manager = EdgeRoutingManager.getInstance();
   if (manager.getObstacles().length === 0) {
@@ -171,6 +208,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   }
 
   const isStraight = type === 'straight' || data?.routingType === 'straight';
+  const effectiveSourceNodeId = isDraggingSourceEnd ? endpointDrag.snapped?.nodeId : source;
+  const effectiveTargetNodeId = isDraggingTargetEnd ? endpointDrag.snapped?.nodeId : target;
+  const routeManualWaypoints = endpointDrag ? undefined : waypoints;
 
   const computedRoute = useMemo(() => {
     if (isStraight) {
@@ -187,11 +227,11 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       id,
       source: dockSource,
       target: dockTarget,
-      sourcePosition: sourcePosition as EdgeAnchorDirection,
-      targetPosition: targetPosition as EdgeAnchorDirection,
-      sourceNodeId: source,
-      targetNodeId: target,
-      manualWaypoints: waypoints,
+      sourcePosition: activeSourceDirection,
+      targetPosition: activeTargetDirection,
+      sourceNodeId: effectiveSourceNodeId,
+      targetNodeId: effectiveTargetNodeId,
+      manualWaypoints: routeManualWaypoints,
       label: data?.label,
     });
   }, [
@@ -201,11 +241,11 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     dockSource.y,
     dockTarget.x,
     dockTarget.y,
-    sourcePosition,
-    targetPosition,
-    source,
-    target,
-    waypoints,
+    activeSourceDirection,
+    activeTargetDirection,
+    effectiveSourceNodeId,
+    effectiveTargetNodeId,
+    routeManualWaypoints,
     data?.label,
   ]);
 
@@ -307,8 +347,16 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       const onPointerMove = (moveEvent: PointerEvent) => {
         const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
         const offset = axis === 'h' ? cur.y - start.y : cur.x - start.x;
-        latest = moveOrthogonalSegment(src, tgt, base, index, offset);
-        setDragWaypoints(latest);
+        const zoom = useFlowStore.getState().viewportZoom || 1;
+        const snapThreshold = moveEvent.altKey
+          ? 0
+          : Math.min(12, Math.max(5, SEGMENT_MERGE_SNAP_THRESHOLD / Math.max(0.25, zoom)));
+        latest = moveOrthogonalSegment(src, tgt, base, index, offset, snapThreshold);
+        const preview =
+          latest.length === 0 && (Math.abs(src.x - tgt.x) < 1 || Math.abs(src.y - tgt.y) < 1)
+            ? [{ x: (src.x + tgt.x) / 2, y: (src.y + tgt.y) / 2 }]
+            : latest;
+        setDragWaypoints(preview);
       };
 
       let detach = () => {};
@@ -316,7 +364,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         detach();
         setDragWaypoints(null);
         if (latest === base) return;
-        const next = latest.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+        const next = simplifyOrthogonalWaypoints(src, tgt, latest);
         useFlowStore.getState().updateEdgeData(id, { waypoints: next.length ? next : undefined });
       };
 
@@ -337,6 +385,68 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     [isPanOrLocked, dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints, screenToFlowPosition, id]
   );
 
+  const handleEndpointPointerDown = useCallback(
+    (end: 'source' | 'target', e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || isPanOrLocked) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const oppositeNodeId = end === 'source' ? target : source;
+      const startFlow = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      let latestHit: ReconnectAnchorHit | null = findNearestNodeBorderAnchor(
+        startFlow,
+        useFlowStore.getState().nodes,
+        oppositeNodeId,
+        { disableBorderSnap: e.altKey }
+      );
+
+      useFlowStore.getState().setReconnectingEdge(true);
+      setEndpointDrag({ end, cursor: startFlow, snapped: latestHit });
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
+        latestHit = findNearestNodeBorderAnchor(cur, useFlowStore.getState().nodes, oppositeNodeId, {
+          disableBorderSnap: moveEvent.altKey,
+        });
+        setEndpointDrag({ end, cursor: cur, snapped: latestHit });
+      };
+
+      let detach = () => {};
+      const cleanup = () => {
+        detach();
+        setEndpointDrag(null);
+        useFlowStore.getState().setReconnectingEdge(false);
+      };
+
+      const finish = () => {
+        const hit = latestHit;
+        cleanup();
+        if (!hit) return;
+        const store = useFlowStore.getState();
+        const currentEdge = store.edges.find((item) => item.id === id);
+        if (!currentEdge) return;
+        store.reconnectEdge(currentEdge, {
+          source: end === 'source' ? hit.nodeId : currentEdge.source,
+          target: end === 'target' ? hit.nodeId : currentEdge.target,
+          sourceHandle: end === 'source' ? hit.handleId : (currentEdge.sourceHandle ?? null),
+          targetHandle: end === 'target' ? hit.handleId : (currentEdge.targetHandle ?? null),
+        });
+      };
+
+      detach = () => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', cleanup);
+      };
+      endpointDragEndRef.current = cleanup;
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', cleanup);
+    },
+    [isPanOrLocked, source, target, screenToFlowPosition, id]
+  );
+
   const handleResetWaypoints = useCallback(
     (e: React.MouseEvent | React.PointerEvent) => {
       if (isPanOrLocked) return;
@@ -351,12 +461,14 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     if (isPanOrLocked) {
       dragEndRef.current();
       labelDragEndRef.current();
+      endpointDragEndRef.current();
     }
   }, [isPanOrLocked]);
 
   useEffect(() => () => {
     dragEndRef.current();
     labelDragEndRef.current();
+    endpointDragEndRef.current();
     manager.unregisterEdge(id);
   }, [id]);
 
@@ -437,35 +549,82 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
         {selected && !isEditingLabel && !isPanOrLocked && (
           <>
-            {segmentHandles.map((seg) => {
-              const nearLabel = Math.hypot(seg.x - labelX, seg.y - labelY) < 28;
-              const hx = nearLabel ? seg.qx : seg.x;
-              const hy = nearLabel ? seg.qy : seg.y;
-              return (
-                <div
-                  key={`seg-${seg.index}`}
-                  onPointerDown={(e) => handleSegmentPointerDown(seg.index, seg.axis, e)}
-                  onDoubleClick={handleResetWaypoints}
-                  title={seg.axis === 'h' ? '按住上下拖动线段，双击恢复自动走线' : '按住左右拖动线段，双击恢复自动走线'}
-                  style={{
-                    position: 'absolute',
-                    width: seg.axis === 'h' ? 26 : 14,
-                    height: seg.axis === 'h' ? 14 : 26,
-                    transform: `translate(-50%, -50%) translate(${hx}px,${hy}px)`,
-                    pointerEvents: 'all',
-                  }}
-                  className={`nodrag nopan touch-none flex items-center justify-center select-none z-20 ${
-                    seg.axis === 'h' ? 'cursor-ns-resize' : 'cursor-ew-resize'
-                  }`}
-                >
-                  <span
-                    className={`rounded-full bg-[var(--fs-selection-ring)] opacity-80 hover:opacity-100 shadow-sm ${
-                      seg.axis === 'h' ? 'w-4 h-1.5' : 'w-1.5 h-4'
+            <div
+              role="button"
+              aria-label="拖动连线起点"
+              title="按住拖动连线起点到任意元素边框"
+              onPointerDown={(e) => handleEndpointPointerDown('source', e)}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                width: 22,
+                height: 22,
+                transform: `translate(-50%, -50%) translate(${activeSourcePos.x}px,${activeSourcePos.y}px)`,
+                pointerEvents: 'all',
+              }}
+              className="nodrag nopan touch-none flex items-center justify-center cursor-crosshair select-none z-40 group/end"
+            >
+              <span
+                className={`rounded-full border-2 border-[var(--fs-selection-ring)] shadow-sm transition-transform ${
+                  isDraggingSourceEnd
+                    ? 'w-3.5 h-3.5 bg-[var(--fs-selection-ring)] scale-110'
+                    : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] group-hover/end:scale-125 group-hover/end:bg-[var(--fs-selection-ring)]'
+                }`}
+              />
+            </div>
+            <div
+              role="button"
+              aria-label="拖动连线终点"
+              title="按住拖动连线终点到任意元素边框"
+              onPointerDown={(e) => handleEndpointPointerDown('target', e)}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                width: 22,
+                height: 22,
+                transform: `translate(-50%, -50%) translate(${activeTargetPos.x}px,${activeTargetPos.y}px)`,
+                pointerEvents: 'all',
+              }}
+              className="nodrag nopan touch-none flex items-center justify-center cursor-crosshair select-none z-40 group/end"
+            >
+              <span
+                className={`rounded-full border-2 border-[var(--fs-selection-ring)] shadow-sm transition-transform ${
+                  isDraggingTargetEnd
+                    ? 'w-3.5 h-3.5 bg-[var(--fs-selection-ring)] scale-110'
+                    : 'w-2.5 h-2.5 bg-[var(--fs-surface,#ffffff)] group-hover/end:scale-125 group-hover/end:bg-[var(--fs-selection-ring)]'
+                }`}
+              />
+            </div>
+            {!endpointDrag &&
+              segmentHandles.map((seg) => {
+                const nearLabel = Math.hypot(seg.x - labelX, seg.y - labelY) < 28;
+                const hx = nearLabel ? seg.qx : seg.x;
+                const hy = nearLabel ? seg.qy : seg.y;
+                return (
+                  <div
+                    key={`seg-${seg.index}`}
+                    onPointerDown={(e) => handleSegmentPointerDown(seg.index, seg.axis, e)}
+                    onDoubleClick={handleResetWaypoints}
+                    title={seg.axis === 'h' ? '按住上下拖动线段，双击恢复自动走线' : '按住左右拖动线段，双击恢复自动走线'}
+                    style={{
+                      position: 'absolute',
+                      width: seg.axis === 'h' ? 26 : 14,
+                      height: seg.axis === 'h' ? 14 : 26,
+                      transform: `translate(-50%, -50%) translate(${hx}px,${hy}px)`,
+                      pointerEvents: 'all',
+                    }}
+                    className={`nodrag nopan touch-none flex items-center justify-center select-none z-20 ${
+                      seg.axis === 'h' ? 'cursor-ns-resize' : 'cursor-ew-resize'
                     }`}
-                  />
-                </div>
-              );
-            })}
+                  >
+                    <span
+                      className={`rounded-full bg-[var(--fs-selection-ring)] opacity-80 hover:opacity-100 shadow-sm ${
+                        seg.axis === 'h' ? 'w-4 h-1.5' : 'w-1.5 h-4'
+                      }`}
+                    />
+                  </div>
+                );
+              })}
           </>
         )}
       </EdgeLabelRenderer>

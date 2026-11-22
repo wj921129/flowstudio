@@ -21,6 +21,7 @@
   --fs-node-text: #0f172a;
   --fs-edge-stroke: #94a3b8;
   --fs-selection-ring: #3b82f6;
+  --xy-edge-stroke-selected: var(--fs-selection-ring);
   --fs-note-bg: #fef9c3;
   --fs-note-border: #facc15;
   --fs-align-guide: #f43f5e;
