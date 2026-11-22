@@ -9,6 +9,7 @@ import type { FlowNodeData } from '@flowstudio/shared';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 
 export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const isFrame = Boolean(props.data.isFrame);
@@ -22,6 +23,9 @@ export const GroupNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   }, [props.data.label, isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
+    const { activeTool, isSpacePanning } = useFlowStore.getState();
+    const { isReadOnly } = usePresentationStore.getState();
+    if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
     e.stopPropagation();
     setIsEditing(true);
   };

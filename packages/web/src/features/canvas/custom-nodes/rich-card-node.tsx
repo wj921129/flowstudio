@@ -3,6 +3,7 @@ import type { NodeProps, Node } from '@xyflow/react';
 import type { FlowNodeData, RichCardStatus } from '@flowstudio/shared';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { useFlowStore } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 
 const STATUS_META: Record<RichCardStatus, { label: string; cls: string }> = {
   draft: { label: 'Draft', cls: 'bg-slate-400/20 text-slate-500 border-slate-400/40' },
@@ -112,6 +113,9 @@ export const RichCardNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => 
       <div
         className="w-full h-full flex flex-col min-h-0"
         onDoubleClick={(e) => {
+          const { activeTool, isSpacePanning } = useFlowStore.getState();
+          const { isReadOnly } = usePresentationStore.getState();
+          if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
           e.stopPropagation();
           setEditing(true);
         }}

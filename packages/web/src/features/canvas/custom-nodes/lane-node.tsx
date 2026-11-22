@@ -12,10 +12,15 @@ import { Trash2, AlertTriangle } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore, selectNodeById } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 import { isNodeLocked } from '../utils/node-lock-manager';
 
 export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected, parentId } = props;
+  const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isPanOrLocked = isSpacePanning || isReadOnly || activeTool === 'pan';
   const isHorizontal = useFlowStore((s) => {
     if (!parentId) return true;
     const parentPool = selectNodeById(s.nodes, parentId);
@@ -49,6 +54,7 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   }, [data.laneTitle, data.label, isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     setIsEditing(true);
   };
@@ -83,6 +89,7 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
   // 删除当前泳道
   const handleDeleteLane = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     const st = useFlowStore.getState();
 
@@ -116,7 +123,7 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         isHorizontal ? 'flex-row border-b-2' : 'flex-col border-r-2'
       } ${selected ? 'ring-2 ring-[var(--fs-selection-ring)]/50 !border-[var(--fs-selection-ring)]/60' : ''}`}
     >
-      {selected && !isNodeLocked(props as any, 'position') && (
+      {selected && !isPanOrLocked && activeTool === 'select' && !isNodeLocked(props as any, 'position') && (
         <NodeResizer
           minWidth={isHorizontal ? 400 : 160}
           minHeight={isHorizontal ? 120 : 300}
@@ -162,13 +169,15 @@ export const LaneNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         )}
 
         {/* 悬浮微交互：快捷删除泳道 */}
-        <button
-          onClick={handleDeleteLane}
-          title="删除此泳道及其内容"
-          className="nodrag opacity-0 group-hover:opacity-100 p-1 text-[var(--fs-text-muted)] hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {!isPanOrLocked && (
+          <button
+            onClick={handleDeleteLane}
+            title="删除此泳道及其内容"
+            className="nodrag opacity-0 group-hover:opacity-100 p-1 text-[var(--fs-text-muted)] hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* 泳道内部落子活动区 */}

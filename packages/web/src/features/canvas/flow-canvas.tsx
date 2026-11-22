@@ -43,6 +43,7 @@ import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldP
 import { computePathSpotlight, computeGlobalPathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { isNodeLocked } from './utils/node-lock-manager';
 import { deriveDisplayNodes, type DisplayNodeCacheEntry } from './utils/display-nodes';
+import { computeCanvasTranslateExtent } from './utils/canvas-bounds';
 import { TEMPLATES_REGISTRY, instantiateTemplate } from '../sidebar/templates';
 import { useSidebarStore } from '../sidebar/sidebar-store';
 import { getThemePreset } from '../sidebar/styles/theme-presets';
@@ -300,7 +301,10 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
-      if (isReadOnly) return;
+      if (isReadOnly || isSpacePanning || activeTool === 'pan') {
+        setHoveredEdgeForInsert(null);
+        return;
+      }
       e.preventDefault();
       const types = Array.from(e.dataTransfer.types);
       if (types.includes('application/flowstudio-template-id')) {
@@ -324,7 +328,7 @@ export const FlowCanvas: React.FC = () => {
         setHoveredEdgeForInsert(null);
       }
     },
-    [screenToFlowPosition]
+    [screenToFlowPosition, isReadOnly, isSpacePanning, activeTool]
   );
 
   /**
@@ -333,7 +337,7 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      if (isReadOnly) return;
+      if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -477,6 +481,9 @@ export const FlowCanvas: React.FC = () => {
       applyIncrementalUpdate,
       setSelectedNodes,
       setSelectedEdge,
+      isReadOnly,
+      isSpacePanning,
+      activeTool,
     ]
   );
 
@@ -486,6 +493,7 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleEdgeClick = useCallback(
     (event: React.MouseEvent, edge: { id: string }) => {
+      if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
       setSelectedNodes([]);
       setSelectedEdge(edge.id);
       setConnectSourceNodeId(null);
@@ -495,7 +503,7 @@ export const FlowCanvas: React.FC = () => {
         setSpotlightTarget(edge.id, 'all');
       }
     },
-    [setSelectedNodes, setSelectedEdge, toggleSpotlightMode, setSpotlightTarget]
+    [isReadOnly, isSpacePanning, activeTool, setSelectedNodes, setSelectedEdge, toggleSpotlightMode, setSpotlightTarget]
   );
 
   const handleSelectionChange = useCallback(
@@ -539,6 +547,7 @@ export const FlowCanvas: React.FC = () => {
    */
   const handleNodeClick = useCallback(
     (event: React.MouseEvent, node: { id: string }) => {
+      if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
       setSelectedEdge(null);
 
       if (event.altKey) {
@@ -571,6 +580,8 @@ export const FlowCanvas: React.FC = () => {
       }
     },
     [
+      isReadOnly,
+      isSpacePanning,
       activeTool,
       connectSourceNodeId,
       onConnect,
@@ -729,12 +740,29 @@ export const FlowCanvas: React.FC = () => {
         /Mac|iPod|iPhone|iPad/.test(navigator.platform);
       const modKey = isMac ? e.metaKey : e.ctrlKey;
 
-      if (isReadOnly) {
+      const { isSpacePanning: spacePanningNow, activeTool: activeToolNow } = useFlowStore.getState();
+      const isInteractionLocked = isReadOnly || spacePanningNow || activeToolNow === 'pan';
+
+      if (isInteractionLocked) {
         if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault();
           return;
         }
-        if (modKey && (e.key === 'v' || e.key === 'V' || e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y' || e.key === 'g' || e.key === 'G')) {
+        if (
+          modKey &&
+          (e.key === 'a' ||
+            e.key === 'A' ||
+            e.key === 'l' ||
+            e.key === 'L' ||
+            e.key === 'v' ||
+            e.key === 'V' ||
+            e.key === 'z' ||
+            e.key === 'Z' ||
+            e.key === 'y' ||
+            e.key === 'Y' ||
+            e.key === 'g' ||
+            e.key === 'G')
+        ) {
           e.preventDefault();
           return;
         }
@@ -927,7 +955,8 @@ export const FlowCanvas: React.FC = () => {
 
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
-      if (isReadOnly) return;
+      const { isSpacePanning: spacePanningNow, activeTool: activeToolNow } = useFlowStore.getState();
+      if (isReadOnly || spacePanningNow || activeToolNow === 'pan') return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('input, textarea, [contenteditable="true"]'))) return;
       const text = e.clipboardData?.getData('text/plain')?.trim();
@@ -972,6 +1001,7 @@ export const FlowCanvas: React.FC = () => {
     return () => window.removeEventListener('paste', handlePaste);
   }, [isReadOnly]);
 
+  const translateExtent = useMemo(() => computeCanvasTranslateExtent(nodes), [nodes]);
   const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
   const effectiveConnectMode = isShiftPressed
     ? edgeConnectMode === 'orthogonal'
@@ -1088,7 +1118,7 @@ export const FlowCanvas: React.FC = () => {
         edgesReconnectable={!isSpacePanning && !isReadOnly && activeTool !== 'pan'}
         onEdgeClick={handleEdgeClick}
         onEdgeDoubleClick={(_e, edge) => {
-          if (isReadOnly) return;
+          if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
           setSelectedNodes([]);
           setSelectedEdge(edge.id);
           useFlowStore.getState().setEditingEdgeLabelId(edge.id);
@@ -1127,6 +1157,7 @@ export const FlowCanvas: React.FC = () => {
           markerEnd: { type: MarkerType.ArrowClosed },
         }}
         elevateEdgesOnSelect={false}
+        translateExtent={translateExtent}
         fitView
         minZoom={0.1}
         maxZoom={2.5}
@@ -1166,7 +1197,7 @@ export const FlowCanvas: React.FC = () => {
         {!isPresenting && !isReadOnly && <AlignmentGuides />}
 
         {/* 多选与组合悬浮操作条 */}
-        {!isPresenting && !isReadOnly && <ContextualActionBar />}
+        {!isPresenting && !effectivePanMode && <ContextualActionBar />}
 
         {/* 左下角视口辅助缩放与小地图控件 */}
         {!isPresenting && <CanvasControls />}

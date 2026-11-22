@@ -21,6 +21,7 @@ import {
   selectNodeSemanticRole,
 } from '../../../stores/flow-store';
 import { useRemoteNodeSelector } from '../../collaboration/remote-users-store';
+import { usePresentationStore } from '../../presentation';
 import { InlineTextEditor } from './inline-text-editor';
 
 
@@ -142,9 +143,11 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   } | null>(null);
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isPanOrLocked = isSpacePanning || isReadOnly || activeTool === 'pan';
   const semanticRole = useFlowStore((s) => selectNodeSemanticRole(s.edges, id, data.type, data.label));
-  const showHandles = isConnecting || activeTool === 'connect' || selected;
-  const showResize = selected && activeTool === 'select' && !CONTAINER_NODE_TYPES.includes(data.type);
+  const showHandles = !isPanOrLocked && (isConnecting || activeTool === 'connect' || selected);
+  const showResize = selected && activeTool === 'select' && !isPanOrLocked && !CONTAINER_NODE_TYPES.includes(data.type);
 
   const incomingHandleKeys = useFlowStore((s) => selectIncomingHandleKeys(s.nodes, s.edges, id));
   const incomingHandles = React.useMemo(
@@ -162,6 +165,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const isFullLocked = data.lockMode === 'full';
 
   const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     // 完全锁定 (full) 节点禁止双击进入内联文本编辑
     if (isFullLocked) {
@@ -212,7 +216,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const computeHoverAnchor = useCallback(
     (clientX: number, clientY: number, disableSnap: boolean) => {
       const el = wrapperRef.current;
-      if (!el || baseHandles.length === 0 || isSpacePanning) {
+      if (!el || baseHandles.length === 0 || isPanOrLocked) {
         setHoverAnchor(null);
         return;
       }
@@ -253,8 +257,12 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         prev && prev.id === hid ? prev : { id: hid, side: proj.side, offset: proj.offset }
       );
     },
-    [baseHandles.length, isSpacePanning, data.type]
+    [baseHandles.length, isPanOrLocked, data.type]
   );
+
+  useEffect(() => {
+    if (isPanOrLocked) setHoverAnchor(null);
+  }, [isPanOrLocked]);
 
   useEffect(() => {
     if (!isConnecting) return;
@@ -315,7 +323,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       style={mergedStyle}
       onDoubleClick={handleDoubleClick}
       onPointerMove={(e) => {
-        if (!isConnecting) computeHoverAnchor(e.clientX, e.clientY, e.altKey);
+        if (!isConnecting && !isPanOrLocked) computeHoverAnchor(e.clientX, e.clientY, e.altKey);
       }}
       onPointerLeave={() => {
         if (!isConnecting) setHoverAnchor(null);
@@ -380,9 +388,9 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               type="target"
               position={pos}
               id={handle.id}
-              isConnectable={true}
+              isConnectable={!isPanOrLocked}
               style={anchorStyle}
-              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-0 ${
+              className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag pointer-events-auto'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] z-0 ${
                 showHandles ? '!opacity-100' : 'opacity-0'
               }`}
             />
@@ -390,9 +398,9 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               type="source"
               position={pos}
               id={handle.id}
-              isConnectable={true}
+              isConnectable={!isPanOrLocked}
               style={anchorStyle}
-              className={`nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] cursor-crosshair group/handle !pointer-events-auto ${
+              className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag !pointer-events-auto cursor-crosshair'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] group/handle ${
                 hasIncomingEdge ? 'z-0' : 'z-10'
               } transition-opacity duration-150 ${
                 showHandles ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -427,17 +435,17 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
               type="target"
               position={pos}
               id={ch.id}
-              isConnectable={true}
+              isConnectable={!isPanOrLocked}
               style={anchorStyle}
-              className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] pointer-events-auto z-0"
+              className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag pointer-events-auto'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] z-0`}
             />
             <Handle
               type="source"
               position={pos}
               id={ch.id}
-              isConnectable={true}
+              isConnectable={!isPanOrLocked}
               style={anchorStyle}
-              className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] cursor-crosshair group/handle !pointer-events-auto z-10"
+              className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag !pointer-events-auto cursor-crosshair'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[9px] before:content-[''] group/handle z-10`}
             >
               {showHandles && (
                 <span className="fs-handle-dot w-2.5 h-2.5 bg-blue-500 border-2 border-white shadow-[0_0_0_2px_rgba(59,130,246,0.45)] pointer-events-none" />
@@ -467,17 +475,17 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
                 type="target"
                 position={pos}
                 id={hoverAnchor.id}
-                isConnectable={true}
+                isConnectable={!isPanOrLocked}
                 style={anchorStyle}
-                className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] pointer-events-auto z-20"
+                className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag pointer-events-auto'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] z-20`}
               />
               <Handle
                 type="source"
                 position={pos}
                 id={hoverAnchor.id}
-                isConnectable={true}
+                isConnectable={!isPanOrLocked}
                 style={anchorStyle}
-                className="nodrag !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] cursor-crosshair !pointer-events-auto z-30"
+                className={`${isPanOrLocked ? '!pointer-events-none' : 'nodrag !pointer-events-auto cursor-crosshair'} !w-1.5 !h-1.5 !bg-transparent !border-0 before:absolute before:-inset-[10px] before:content-[''] z-30`}
               >
                 <span className="fs-handle-dot w-3 h-3 bg-blue-600 border-2 border-white shadow-[0_0_0_3px_rgba(37,99,235,0.35)] pointer-events-none" />
               </Handle>

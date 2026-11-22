@@ -11,6 +11,7 @@ import { Columns3, Rows3, Plus, ArrowLeftRight } from 'lucide-react';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 import { isNodeLocked } from '../utils/node-lock-manager';
 import { reorderPoolOrientation } from '../utils/lane-nesting-manager';
 
@@ -18,6 +19,10 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected } = props;
   const orientation = data.orientation ?? 'horizontal';
   const isHorizontal = orientation === 'horizontal';
+  const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isPanOrLocked = isSpacePanning || isReadOnly || activeTool === 'pan';
 
   const [isEditing, setIsEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(data.label || '泳道池');
@@ -29,6 +34,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   }, [data.label, isEditing]);
 
   const handleHeaderDoubleClick = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     setIsEditing(true);
   };
@@ -44,6 +50,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
   // 添加新泳道
   const handleAddLane = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     const store = useFlowStore.getState();
     const existingLanes = store.nodes.filter((n) => n.type === 'lane' && n.parentId === id);
@@ -112,6 +119,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
 
   // 切换横向与纵向方向
   const handleToggleOrientation = (e: React.MouseEvent) => {
+    if (isPanOrLocked) return;
     e.stopPropagation();
     const nextOrientation = isHorizontal ? 'vertical' : 'horizontal';
     const store = useFlowStore.getState();
@@ -131,7 +139,7 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         selected ? 'ring-2 ring-[var(--fs-selection-ring)] shadow-md' : 'hover:border-[var(--fs-border)]'
       }`}
     >
-      {selected && !isNodeLocked(props as any, 'position') && (
+      {selected && !isPanOrLocked && activeTool === 'select' && !isNodeLocked(props as any, 'position') && (
         <NodeResizer
           minWidth={500}
           minHeight={300}
@@ -175,24 +183,26 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
         </div>
 
         {/* 快捷操作区 */}
-        <div className="flex items-center gap-1 opacity-80 hover:opacity-100 transition-opacity">
-          <button
-            onClick={handleAddLane}
-            title="追加一条新泳道"
-            className="nodrag flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-[var(--fs-selection-ring)] bg-[var(--fs-selection-ring)]/10 hover:bg-[var(--fs-selection-ring)]/20 rounded-md transition-colors"
-          >
-            <Plus className="w-3 h-3" />
-            <span>加泳道</span>
-          </button>
+        {!isPanOrLocked && (
+          <div className="flex items-center gap-1 opacity-80 hover:opacity-100 transition-opacity">
+            <button
+              onClick={handleAddLane}
+              title="追加一条新泳道"
+              className="nodrag flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-[var(--fs-selection-ring)] bg-[var(--fs-selection-ring)]/10 hover:bg-[var(--fs-selection-ring)]/20 rounded-md transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              <span>加泳道</span>
+            </button>
 
-          <button
-            onClick={handleToggleOrientation}
-            title="切换横向 / 纵向方向"
-            className="nodrag p-1 text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-border)]/40 rounded-md transition-colors"
-          >
-            <ArrowLeftRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
+            <button
+              onClick={handleToggleOrientation}
+              title="切换横向 / 纵向方向"
+              className="nodrag p-1 text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-border)]/40 rounded-md transition-colors"
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 内部泳道承载区 */}

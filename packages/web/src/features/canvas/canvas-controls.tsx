@@ -1,17 +1,49 @@
 /**
  * @fileoverview 画布辅助控制组件 (CanvasControls)
- * @description 位于画布左下角，提供缩放、自适应视口以及小地图 MiniMap 显隐控制
+ * @description 位于画布左下角与右上角，提供缩放、自适应视口以及小地图 MiniMap 导航定位控制
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Panel, useReactFlow, MiniMap } from '@xyflow/react';
 import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessageSquare, MessagesSquare } from 'lucide-react';
 import { useCommentsStore } from '../comments';
 import { usePresentationStore } from '../presentation';
+import { useFlowStore } from '../../stores/flow-store';
+import {
+  computeCanvasTranslateExtent,
+  resolveMiniMapFlowPosition,
+  type MiniMapRectLike,
+  type MiniMapViewBoxLike,
+} from './utils/canvas-bounds';
+
+function readMiniMapSvgMetrics(
+  container: HTMLElement
+): { rect: MiniMapRectLike; viewBox: MiniMapViewBoxLike } | null {
+  const svg = container.querySelector('.react-flow__minimap-svg') as SVGSVGElement | null;
+  if (!svg) return null;
+  const rect = svg.getBoundingClientRect();
+  const baseVal = svg.viewBox?.baseVal;
+  if (baseVal && baseVal.width > 0 && baseVal.height > 0) {
+    return {
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      viewBox: { x: baseVal.x, y: baseVal.y, width: baseVal.width, height: baseVal.height },
+    };
+  }
+  const rawViewBox = svg.getAttribute('viewBox');
+  if (!rawViewBox) return null;
+  const parts = rawViewBox.trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+  return {
+    rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    viewBox: { x: parts[0], y: parts[1], width: parts[2], height: parts[3] },
+  };
+}
 
 export const CanvasControls: React.FC = () => {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const [showMiniMap, setShowMiniMap] = useState(false);
+  const { zoomIn, zoomOut, fitView, setCenter, getZoom } = useReactFlow();
+  const [showMiniMap, setShowMiniMap] = useState(true);
+  const miniMapContainerRef = useRef<HTMLDivElement>(null);
+  const miniMapDragCleanupRef = useRef<() => void>(() => {});
   const isCommentMode = useCommentsStore((s) => s.isCommentMode);
   const setCommentMode = useCommentsStore((s) => s.setCommentMode);
   const isReviewDrawerOpen = useCommentsStore((s) => s.isReviewDrawerOpen);
@@ -19,21 +51,85 @@ export const CanvasControls: React.FC = () => {
   const commentsCount = useCommentsStore((s) => s.comments.length);
   const isReadOnly = usePresentationStore((s) => s.isReadOnly);
 
+  useEffect(() => () => miniMapDragCleanupRef.current(), []);
+  useEffect(() => {
+    if (!showMiniMap) miniMapDragCleanupRef.current();
+  }, [showMiniMap]);
+
+  const handleMiniMapPointerDownCapture = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const container = miniMapContainerRef.current;
+      if (!container) return;
+      const metrics = readMiniMapSvgMetrics(container);
+      if (!metrics) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const { rect, viewBox } = metrics;
+      const storeState = useFlowStore.getState();
+      if (storeState.followingUserId) {
+        storeState.setFollowingUser(null);
+      }
+      const extent = computeCanvasTranslateExtent(storeState.nodes);
+
+      const panToClient = (clientX: number, clientY: number) => {
+        const target = resolveMiniMapFlowPosition(clientX, clientY, rect, viewBox, extent);
+        setCenter(target.x, target.y, { zoom: getZoom(), duration: 0 });
+      };
+
+      panToClient(e.clientX, e.clientY);
+
+      const onMove = (moveEvent: PointerEvent) => {
+        panToClient(moveEvent.clientX, moveEvent.clientY);
+      };
+
+      const detach = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', detach);
+        window.removeEventListener('pointercancel', detach);
+        miniMapDragCleanupRef.current = () => {};
+      };
+
+      miniMapDragCleanupRef.current();
+      miniMapDragCleanupRef.current = detach;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', detach);
+      window.addEventListener('pointercancel', detach);
+    },
+    [setCenter, getZoom]
+  );
+
   return (
     <>
-      {/* 小地图浮层（悬浮在左下方控制条上方） */}
       {showMiniMap && (
-        <Panel position="bottom-left" className="!mb-14 !ml-3">
-          <div className="p-1 rounded-xl bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-lg overflow-hidden">
+        <Panel
+          position="top-right"
+          className={
+            isReviewDrawerOpen
+              ? '!mt-14 !mr-[340px] transition-all duration-200'
+              : '!mt-3 !mr-3 transition-all duration-200'
+          }
+        >
+          <div
+            ref={miniMapContainerRef}
+            onPointerDownCapture={handleMiniMapPointerDownCapture}
+            onMouseDownCapture={(e) => e.stopPropagation()}
+            title="点击或拖动缩略图快速定位画布视角"
+            className="nodrag nopan touch-none p-1 rounded-xl bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-lg overflow-hidden cursor-pointer"
+          >
             <MiniMap
               className="!relative !m-0 !w-44 !h-32 rounded-lg"
               nodeColor="var(--fs-node-border)"
               maskColor="var(--fs-canvas-dot)"
               style={{
+                width: 176,
+                height: 128,
                 backgroundColor: 'var(--fs-canvas-bg)',
               }}
               zoomable
-              pannable
+              pannable={false}
             />
           </div>
         </Panel>

@@ -4,6 +4,7 @@ import type { FlowNodeData, UmlMessageKind } from '@flowstudio/shared';
 import { BaseNodeWrapper } from './base-node-wrapper';
 import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 
 const useHeaderEditor = (id: string, label: string, textClassName: string) => {
   const [editing, setEditing] = useState(false);
@@ -30,11 +31,18 @@ const useHeaderEditor = (id: string, label: string, textClassName: string) => {
       className={textClassName}
     />
   ) : null;
-  return { editing, setEditing, editor };
+  const startEditing = (e: React.MouseEvent) => {
+    const { activeTool, isSpacePanning } = useFlowStore.getState();
+    const { isReadOnly } = usePresentationStore.getState();
+    if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
+    e.stopPropagation();
+    setEditing(true);
+  };
+  return { editing, startEditing, editor };
 };
 
 export const UmlLifelineNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
-  const { editing, setEditing, editor } = useHeaderEditor(
+  const { editing, startEditing, editor } = useHeaderEditor(
     props.id,
     props.data.label || '',
     'text-xs font-semibold text-[var(--fs-node-text)] text-center'
@@ -43,10 +51,7 @@ export const UmlLifelineNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) 
     <BaseNodeWrapper {...props} customContent className="!bg-transparent !border-transparent">
       <div className="w-full h-full flex flex-col items-center">
         <div
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditing(true);
-          }}
+          onDoubleClick={startEditing}
           className="w-full max-w-[150px] px-3 py-1.5 rounded-md border border-[var(--fs-node-border)] bg-[var(--fs-node-bg)] shadow-xs flex items-center justify-center min-h-8"
         >
           {editing ? (
@@ -78,7 +83,7 @@ const MESSAGE_ARROW_MAP: Record<UmlMessageKind, { dash?: string; open: boolean }
 export const UmlMessageNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const kind: UmlMessageKind = props.data.messageKind ?? 'sync';
   const arrow = MESSAGE_ARROW_MAP[kind];
-  const { editing, setEditing, editor } = useHeaderEditor(
+  const { editing, startEditing, editor } = useHeaderEditor(
     props.id,
     props.data.label || '',
     'text-[11px] leading-none text-center text-[var(--fs-node-text)]'
@@ -88,10 +93,7 @@ export const UmlMessageNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) =
     <BaseNodeWrapper {...props} customContent className="!bg-transparent !border-transparent">
       <div className="w-full h-full flex flex-col justify-center px-1">
         <div
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditing(true);
-          }}
+          onDoubleClick={startEditing}
           className="w-full text-center text-[11px] leading-none mb-0.5 text-[var(--fs-node-text)] truncate cursor-text"
         >
           {editing ? (

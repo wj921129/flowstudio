@@ -19,6 +19,7 @@ import {
   type EdgeAnchorDirection,
 } from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
+import { usePresentationStore } from '../../presentation';
 import { EdgeRoutingManager } from './edge-routing-manager';
 import { InlineTextEditor } from '../custom-nodes/inline-text-editor';
 
@@ -111,6 +112,10 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const setEditingEdgeLabelId = useFlowStore((s) => s.setEditingEdgeLabelId);
   const selectedEdgeLabelId = useFlowStore((s) => s.selectedEdgeLabelId);
   const setSelectedEdgeLabelId = useFlowStore((s) => s.setSelectedEdgeLabelId);
+  const activeTool = useFlowStore((s) => s.activeTool);
+  const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const isPanOrLocked = isSpacePanning || isReadOnly || activeTool === 'pan';
   const isEditingLabel = editingEdgeLabelId === id;
   const isLabelSelected = selectedEdgeLabelId === id;
   const [labelDraft, setLabelDraft] = useState(data?.label || '');
@@ -244,8 +249,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
   const handleLabelPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0 || isEditingLabel) return;
+      if (e.button !== 0 || isEditingLabel || isPanOrLocked) return;
       e.stopPropagation();
+      setSelectedEdgeLabelId(id);
       const startClient = { x: e.clientX, y: e.clientY };
       let moved = false;
       let latestRatio: number | null = null;
@@ -267,9 +273,8 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         setDragLabelRatio(null);
         if (moved && latestRatio !== null) {
           useFlowStore.getState().updateEdgeData(id, { labelRatio: latestRatio });
-        } else if (!moved) {
-          setSelectedEdgeLabelId(id);
         }
+        setSelectedEdgeLabelId(id);
       };
 
       detach = () => {
@@ -286,7 +291,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', finish);
     },
-    [isEditingLabel, screenToFlowPosition, polylinePoints, id, setSelectedEdgeLabelId]
+    [isEditingLabel, isPanOrLocked, screenToFlowPosition, polylinePoints, id, setSelectedEdgeLabelId]
   );
 
   const segmentHandles = useMemo(() => {
@@ -301,7 +306,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
   const handleSegmentPointerDown = useCallback(
     (index: number, axis: 'h' | 'v', e: React.PointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || isPanOrLocked) return;
       e.stopPropagation();
       const src = { ...dockSource };
       const tgt = { ...dockTarget };
@@ -339,20 +344,22 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', finish);
     },
-    [dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints, screenToFlowPosition, id]
+    [isPanOrLocked, dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints, screenToFlowPosition, id]
   );
 
   const handleResetWaypoints = useCallback(
     (e: React.MouseEvent | React.PointerEvent) => {
+      if (isPanOrLocked) return;
       e.stopPropagation();
       dragEndRef.current();
       useFlowStore.getState().updateEdgeData(id, { waypoints: undefined });
     },
-    [id]
+    [id, isPanOrLocked]
   );
 
   const handleWaypointPointerDown = useCallback(
     (index: number, e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || isPanOrLocked) return;
       e.stopPropagation();
       if (!storedWaypoints) return;
 
@@ -409,8 +416,15 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', finish);
     },
-    [storedWaypoints, screenToFlowPosition, id]
+    [isPanOrLocked, storedWaypoints, screenToFlowPosition, id]
   );
+
+  useEffect(() => {
+    if (isPanOrLocked) {
+      dragEndRef.current();
+      labelDragEndRef.current();
+    }
+  }, [isPanOrLocked]);
 
   useEffect(() => () => {
     dragEndRef.current();
@@ -452,29 +466,48 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         ) : data?.label ? (
           <div
             onPointerDown={handleLabelPointerDown}
+            onClick={(e) => {
+              if (!isPanOrLocked) e.stopPropagation();
+            }}
             onDoubleClick={(e) => {
+              if (isPanOrLocked) return;
               e.stopPropagation();
               setEditingEdgeLabelId(id);
             }}
-            title="按住沿连线拖动位置，双击编辑标签"
+            title={isPanOrLocked ? undefined : '按住沿连线拖动位置，双击编辑标签'}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className={`nodrag nopan whitespace-pre-wrap text-center px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border text-[var(--fs-text)] shadow-xs select-none touch-none ${
-              dragLabelRatio !== null
-                ? 'cursor-grabbing border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)]'
-                : isLabelSelected
-                  ? 'cursor-grab border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)] shadow-md'
-                  : 'cursor-grab border-[var(--fs-border)] hover:border-[var(--fs-selection-ring)]'
+            className={`fs-edge-label ${isPanOrLocked ? '' : 'nodrag nopan '}relative whitespace-pre-wrap text-center px-1.5 py-0.5 rounded text-xs bg-[var(--fs-surface)] border text-[var(--fs-text)] shadow-xs select-none touch-none ${
+              dragLabelRatio !== null || (isLabelSelected && !isPanOrLocked)
+                ? 'border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)] shadow-md'
+                : isPanOrLocked
+                  ? 'border-[var(--fs-border)]'
+                  : 'border-[var(--fs-border)] hover:border-[var(--fs-selection-ring)]'
             }`}
           >
             {data.label}
+            {isLabelSelected && !isEditingLabel && !isPanOrLocked && (
+              <button
+                type="button"
+                aria-label="删除连线标签"
+                title="删除连线标签 (Delete)"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useFlowStore.getState().deleteEdgeLabel(id);
+                }}
+                className="nodrag nopan absolute -top-2 -right-2 w-4 h-4 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-[10px] leading-none flex items-center justify-center shadow-sm cursor-pointer z-30"
+              >
+                ×
+              </button>
+            )}
           </div>
         ) : null}
 
-        {selected && !isEditingLabel && (
+        {selected && !isEditingLabel && !isPanOrLocked && (
           <>
             {segmentHandles.map((seg) => {
               const nearLabel = Math.hypot(seg.x - labelX, seg.y - labelY) < 28;

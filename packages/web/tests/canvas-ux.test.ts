@@ -12,6 +12,11 @@ import {
   deriveDisplayNodes,
   type DisplayNodeCacheEntry,
 } from '../src/features/canvas/utils/display-nodes';
+import {
+  CANVAS_BASE_EXTENT,
+  computeCanvasTranslateExtent,
+  resolveMiniMapFlowPosition,
+} from '../src/features/canvas/utils/canvas-bounds';
 import { resolveNodeSemanticRole } from '../src/features/canvas/custom-nodes/base-node-wrapper';
 import {
   getPointAtPolylineRatio,
@@ -348,5 +353,117 @@ describe('画布交互体验与视觉改造回归测试', () => {
     const created = useFlowStore.getState().edges[0];
     expect(created.type).toBe('straight');
     expect(created.data?.style?.strokeStyle).toBe('dashed');
+  });
+
+  it('连线标签复用当前模式光标，支持单独选中与角标删除，并在平移模式下全量封锁交互', () => {
+    const tokensCss = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/theme/tokens.css'),
+      'utf-8'
+    );
+    expect(tokensCss).toContain('.react-flow:not(.fs-cursor-pan):not(.fs-cursor-connect) .fs-edge-label');
+    expect(tokensCss).toContain(':root.dark .react-flow:not(.fs-cursor-pan):not(.fs-cursor-connect) .fs-edge-label');
+
+    const edgeCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
+      'utf-8'
+    );
+    expect(edgeCode).toContain('fs-edge-label');
+    expect(edgeCode).not.toContain('cursor-grab');
+    expect(edgeCode).not.toContain('cursor-grabbing');
+    expect(edgeCode).toContain('isPanOrLocked = isSpacePanning || isReadOnly || activeTool === \'pan\'');
+    expect(edgeCode).toContain('if (!isPanOrLocked) e.stopPropagation()');
+    expect(edgeCode).toContain('aria-label="删除连线标签"');
+    expect(edgeCode).toContain('deleteEdgeLabel(id)');
+
+    const wrapperCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/base-node-wrapper.tsx'),
+      'utf-8'
+    );
+    expect(wrapperCode).toContain('isConnectable={!isPanOrLocked}');
+
+    const poolCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/pool-node.tsx'),
+      'utf-8'
+    );
+    expect(poolCode).toContain('if (isPanOrLocked) return;');
+
+    const laneCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/lane-node.tsx'),
+      'utf-8'
+    );
+    expect(laneCode).toContain('if (isPanOrLocked) return;');
+
+    const canvasCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+      'utf-8'
+    );
+    expect(canvasCode).toContain('isInteractionLocked = isReadOnly || spacePanningNow || activeToolNow === \'pan\'');
+    expect(canvasCode).toContain('{!isPresenting && !effectivePanMode && <ContextualActionBar />}');
+  });
+
+  it('画布移动边界按基准与图元包围盒动态延展，右上角缩略图准确换算点击定位坐标', () => {
+    expect(CANVAS_BASE_EXTENT).toEqual([
+      [-4000, -4000],
+      [6000, 6000],
+    ]);
+    expect(computeCanvasTranslateExtent([])).toEqual(CANVAS_BASE_EXTENT);
+
+    const extent = computeCanvasTranslateExtent([
+      {
+        id: 'pool-1',
+        type: 'pool',
+        position: { x: 5500, y: -3500 },
+        width: 400,
+        height: 200,
+        data: { label: 'P', type: 'pool' },
+      },
+      {
+        id: 'child-1',
+        type: 'process',
+        parentId: 'pool-1',
+        position: { x: 300, y: 50 },
+        width: 160,
+        height: 80,
+        data: { label: 'C', type: 'process' },
+      },
+    ]);
+    expect(extent).toEqual([
+      [-4000, -5500],
+      [7960, 6000],
+    ]);
+
+    const mapped = resolveMiniMapFlowPosition(
+      188,
+      64,
+      { left: 100, top: 0, width: 176, height: 128 },
+      { x: 0, y: 0, width: 880, height: 640 },
+      CANVAS_BASE_EXTENT
+    );
+    expect(mapped).toEqual({ x: 440, y: 320 });
+
+    const clamped = resolveMiniMapFlowPosition(
+      99999,
+      -99999,
+      { left: 100, top: 0, width: 176, height: 128 },
+      { x: 0, y: 0, width: 880, height: 640 },
+      CANVAS_BASE_EXTENT
+    );
+    expect(clamped).toEqual({ x: 6000, y: -4000 });
+
+    const controlsCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/canvas-controls.tsx'),
+      'utf-8'
+    );
+    expect(controlsCode).toContain('useState(true)');
+    expect(controlsCode).toContain('position="top-right"');
+    expect(controlsCode).toContain('!mr-[340px]');
+    expect(controlsCode).toContain('pannable={false}');
+    expect(controlsCode).toContain('setCenter(target.x, target.y');
+
+    const canvasCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+      'utf-8'
+    );
+    expect(canvasCode).toContain('translateExtent={translateExtent}');
   });
 });
