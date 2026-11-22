@@ -80,18 +80,18 @@ export const StylesPanel: React.FC<StylesPanelProps> = ({ onApplyThemeToCanvas }
                 <div className="flex items-center gap-1">
                   <span
                     className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs"
+                    style={{ backgroundColor: tokens.startBorder }}
+                    title={`开始色: ${tokens.startBorder}`}
+                  />
+                  <span
+                    className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs"
                     style={{ backgroundColor: tokens.nodeBorder }}
-                    title={`主边框色: ${tokens.nodeBorder}`}
+                    title={`处理色: ${tokens.nodeBorder}`}
                   />
                   <span
                     className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs"
-                    style={{ backgroundColor: tokens.nodeBg }}
-                    title={`底色: ${tokens.nodeBg}`}
-                  />
-                  <span
-                    className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs"
-                    style={{ backgroundColor: tokens.poolHeaderBg }}
-                    title={`表头色: ${tokens.poolHeaderBg}`}
+                    style={{ backgroundColor: tokens.endBorder }}
+                    title={`结束色: ${tokens.endBorder}`}
                   />
                 </div>
               </div>

@@ -112,6 +112,20 @@ describe('画布交互体验与视觉改造回归测试', () => {
   });
 
   it('6 套元素风格均为开始与结束节点提供独立且可区分的主题配色', () => {
+    const colorDist = (a: string, b: string) => {
+      const parse = (hex: string) => {
+        const clean = hex.replace('#', '');
+        return [
+          parseInt(clean.slice(0, 2), 16),
+          parseInt(clean.slice(2, 4), 16),
+          parseInt(clean.slice(4, 6), 16),
+        ];
+      };
+      const [r1, g1, b1] = parse(a);
+      const [r2, g2, b2] = parse(b);
+      return Math.hypot(r1 - r2, g1 - g2, b1 - b2);
+    };
+
     for (const theme of THEME_PRESETS) {
       const startStyle = resolveNodeStyle('start-end', theme, 'start');
       const processStyle = resolveNodeStyle('process', theme, 'process');
@@ -119,8 +133,11 @@ describe('画布交互体验与视觉改造回归测试', () => {
       expect(startStyle.fillColor).toBeTruthy();
       expect(endStyle.fillColor).toBeTruthy();
       expect(startStyle.fillColor).not.toBe(endStyle.fillColor);
-      expect(startStyle.borderColor).not.toBe(processStyle.borderColor);
-      expect(endStyle.borderColor).not.toBe(processStyle.borderColor);
+      expect(startStyle.fillColor).not.toBe(processStyle.fillColor);
+      expect(endStyle.fillColor).not.toBe(processStyle.fillColor);
+      expect(colorDist(startStyle.borderColor, processStyle.borderColor)).toBeGreaterThanOrEqual(90);
+      expect(colorDist(endStyle.borderColor, processStyle.borderColor)).toBeGreaterThanOrEqual(90);
+      expect(colorDist(startStyle.borderColor, endStyle.borderColor)).toBeGreaterThanOrEqual(90);
     }
   });
 
