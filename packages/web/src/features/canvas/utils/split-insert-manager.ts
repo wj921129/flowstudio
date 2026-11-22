@@ -4,10 +4,11 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
-import { getBorderAnchorWorldPoint } from '@flowstudio/shared';
+import { getBorderAnchorWorldPoint, parseBorderAnchorHandle } from '@flowstudio/shared';
 import { getNodeDimensions } from './group-calculator.js';
 import { generateEdgeId } from '../../../lib/node-utils.js';
 import { isNodeLocked } from './node-lock-manager.js';
+import { deriveDefaultOrthogonalWaypoints } from '../custom-edges/waypoint-path-utils.js';
 
 /**
  * 递归计算节点的世界绝对坐标
@@ -94,19 +95,18 @@ export function getEdgePoints(
   const start = getHandlePoint(src, byId, edge.sourceHandle, 'source');
   const end = getHandlePoint(tgt, byId, edge.targetHandle, 'target');
 
+  if (edge.type === 'straight' || edge.data?.routingType === 'straight') {
+    return [start, end];
+  }
+
   const waypoints = edge.data?.waypoints;
   if (Array.isArray(waypoints) && waypoints.length > 0) {
     return [start, ...waypoints, end];
   }
 
-  // 默认正交中间折点
-  const midX = (start.x + end.x) / 2;
-  return [
-    start,
-    { x: midX, y: start.y },
-    { x: midX, y: end.y },
-    end,
-  ];
+  const sourceSide = parseBorderAnchorHandle(edge.sourceHandle)?.side ?? 'right';
+  const targetSide = parseBorderAnchorHandle(edge.targetHandle)?.side ?? 'left';
+  return [start, ...deriveDefaultOrthogonalWaypoints(start, end, sourceSide, targetSide), end];
 }
 
 /**

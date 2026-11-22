@@ -15,7 +15,6 @@ import {
   getSegmentAxis,
   moveOrthogonalSegment,
   projectPointOntoPolyline,
-  simplifyOrthogonalWaypoints,
   type EdgeAnchorDirection,
 } from './waypoint-path-utils';
 import { useFlowStore } from '../../../stores/flow-store';
@@ -23,7 +22,6 @@ import { usePresentationStore } from '../../presentation';
 import { EdgeRoutingManager } from './edge-routing-manager';
 import { InlineTextEditor } from '../custom-nodes/inline-text-editor';
 
-const WAYPOINT_HIT_SIZE = 22;
 export const TERMINAL_ARROW_DOCKING_GAP = 2.5;
 
 export function getDockingEndpoint(
@@ -77,12 +75,6 @@ export function calcStepOffset(
   return 20;
 }
 
-interface WaypointDragState {
-  index: number;
-  points: XYPosition[];
-  grabOffset: XYPosition;
-}
-
 export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   id,
   type,
@@ -102,8 +94,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   interactionWidth,
 }) => {
   const { screenToFlowPosition } = useReactFlow();
-  const storedWaypoints = data?.waypoints;
-  const dragRef = useRef<WaypointDragState | null>(null);
   const dragEndRef = useRef<() => void>(() => {});
   const [dragWaypoints, setDragWaypoints] = useState<XYPosition[] | null>(null);
   const [dragLabelRatio, setDragLabelRatio] = useState<number | null>(null);
@@ -126,9 +116,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     }
   }, [isEditingLabel, data?.label]);
 
-  const waypoints = dragWaypoints ?? storedWaypoints;
-  const hasWaypoints = Array.isArray(waypoints) && waypoints.length > 0;
-  const isDragging = dragWaypoints !== null;
+  const waypoints = dragWaypoints ?? data?.waypoints;
 
   const edgeStyleData = data?.style;
   const strokeColor = selected
@@ -295,8 +283,10 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   );
 
   const segmentHandles = useMemo(() => {
-    if (isStraight) return [];
+    if (isStraight || polylinePoints.length <= 2) return [];
+    const lastSeg = polylinePoints.length - 2;
     return polylinePoints.slice(0, -1).flatMap((a, i) => {
+      if (i === 0 || i === lastSeg) return [];
       const b = polylinePoints[i + 1];
       const axis = getSegmentAxis(a, b);
       if (!axis || Math.hypot(b.x - a.x, b.y - a.y) < 16) return [];
@@ -326,7 +316,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         detach();
         setDragWaypoints(null);
         if (latest === base) return;
-        const next = simplifyOrthogonalWaypoints(src, tgt, latest);
+        const next = latest.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
         useFlowStore.getState().updateEdgeData(id, { waypoints: next.length ? next : undefined });
       };
 
@@ -355,68 +345,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       useFlowStore.getState().updateEdgeData(id, { waypoints: undefined });
     },
     [id, isPanOrLocked]
-  );
-
-  const handleWaypointPointerDown = useCallback(
-    (index: number, e: React.PointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0 || isPanOrLocked) return;
-      e.stopPropagation();
-      if (!storedWaypoints) return;
-
-      const points = storedWaypoints.map((p) => ({ ...p }));
-      const cursor = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      const grabOffset = { x: cursor.x - points[index].x, y: cursor.y - points[index].y };
-
-      dragRef.current = { index, points, grabOffset };
-      setDragWaypoints(points);
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        const state = dragRef.current;
-        if (!state) return;
-
-        const moved = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
-        const nextPoints = [...state.points];
-        nextPoints[state.index] = {
-          x: moved.x - state.grabOffset.x,
-          y: moved.y - state.grabOffset.y,
-        };
-
-        state.points = nextPoints;
-        setDragWaypoints(nextPoints);
-      };
-
-      let detach = () => {};
-
-      const finish = () => {
-        detach();
-        const state = dragRef.current;
-        dragRef.current = null;
-        setDragWaypoints(null);
-        if (!state) return;
-
-        useFlowStore.getState().updateEdgeData(
-          id,
-          { waypoints: state.points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })) }
-        );
-      };
-
-      detach = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', finish);
-      };
-
-      dragEndRef.current = () => {
-        detach();
-        dragRef.current = null;
-        setDragWaypoints(null);
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', finish);
-    },
-    [isPanOrLocked, storedWaypoints, screenToFlowPosition, id]
   );
 
   useEffect(() => {
@@ -538,48 +466,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
                 </div>
               );
             })}
-            {hasWaypoints &&
-              waypoints.map((wp: XYPosition, idx: number) => (
-                <div
-                  key={`wp-${idx}`}
-                  onPointerDown={(e) => handleWaypointPointerDown(idx, e)}
-                  onDoubleClick={handleResetWaypoints}
-                  title="按住拖拽调整折点，双击恢复自动走线"
-                  style={{
-                    position: 'absolute',
-                    width: WAYPOINT_HIT_SIZE,
-                    height: WAYPOINT_HIT_SIZE,
-                    transform: `translate(-50%, -50%) translate(${wp.x}px,${wp.y}px)`,
-                    pointerEvents: 'all',
-                  }}
-                  className="nodrag nopan touch-none flex items-center justify-center cursor-move select-none z-20"
-                >
-                  <span
-                    className={`rounded-full bg-white dark:bg-zinc-900 border-2 border-[var(--fs-selection-ring)] shadow-sm ${
-                      isDragging
-                        ? 'w-3.5 h-3.5'
-                        : 'w-2.5 h-2.5 hover:w-3.5 hover:h-3.5 transition-[width,height] duration-100'
-                    }`}
-                  />
-                </div>
-              ))}
-            {!data?.label && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditingEdgeLabelId(id);
-                }}
-                title="点击为连线添加中间标签"
-                style={{
-                  position: 'absolute',
-                  transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-                  pointerEvents: 'all',
-                }}
-                className="nodrag nopan px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--fs-surface)] border border-[var(--fs-selection-ring)] text-[var(--fs-selection-ring)] shadow-xs hover:bg-[var(--fs-selection-ring)]/10 cursor-pointer select-none transition-colors z-20"
-              >
-                + 标签
-              </button>
-            )}
           </>
         )}
       </EdgeLabelRenderer>

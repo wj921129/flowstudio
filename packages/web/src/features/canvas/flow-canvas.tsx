@@ -39,7 +39,9 @@ import { AiBatchDiffOverlay } from '../collaboration/ai-batch-diff-overlay';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { useRemoteUsersStore } from '../collaboration/remote-users-store';
 import { handleNodeDragNesting } from './utils/lane-nesting-manager';
-import { findEdgeAtPosition, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
+import { findEdgeAtPosition, getEdgePoints, splitEdgeAndInsertNode, healOnDelete, getNodeWorldPosition } from './utils/split-insert-manager';
+import { projectPointOntoPolyline } from './custom-edges/waypoint-path-utils';
+import { EDGE_LABEL_DRAG_MIME } from '../sidebar/tabs/elements-panel';
 import { computePathSpotlight, computeGlobalPathSpotlight, getDecisionBranches } from './utils/path-spotlight';
 import { isNodeLocked } from './utils/node-lock-manager';
 import { deriveDisplayNodes, type DisplayNodeCacheEntry } from './utils/display-nodes';
@@ -101,10 +103,11 @@ export const FlowCanvas: React.FC = () => {
     EdgeRoutingManager.getInstance().updateNodes(nodes);
   }, [nodes]);
 
-  // 拖拽悬停至连线附近的断键预览态状态
+  // 拖拽悬停至连线附近的预览态状态（插入步骤或放置连线标签）
   const [hoveredEdgeForInsert, setHoveredEdgeForInsert] = useState<{
     edgeId: string;
     point: { x: number; y: number };
+    mode: 'insert' | 'label';
   } | null>(null);
 
   const followingUser = useRemoteUsersStore((s) =>
@@ -307,7 +310,8 @@ export const FlowCanvas: React.FC = () => {
       }
       e.preventDefault();
       const types = Array.from(e.dataTransfer.types);
-      if (types.includes('application/flowstudio-template-id')) {
+      const isLabelDrag = types.includes(EDGE_LABEL_DRAG_MIME);
+      if (isLabelDrag || types.includes('application/flowstudio-template-id')) {
         e.dataTransfer.dropEffect = 'copy';
       } else {
         e.dataTransfer.dropEffect = 'move';
@@ -320,10 +324,19 @@ export const FlowCanvas: React.FC = () => {
 
       const currentEdges = useFlowStore.getState().edges;
       const currentNodes = useFlowStore.getState().nodes;
-      const hitResult = findEdgeAtPosition(currentEdges, currentNodes, flowPosition, 20);
+      const hitResult = findEdgeAtPosition(
+        currentEdges,
+        currentNodes,
+        flowPosition,
+        isLabelDrag ? 28 : 20
+      );
 
       if (hitResult) {
-        setHoveredEdgeForInsert({ edgeId: hitResult.edge.id, point: flowPosition });
+        setHoveredEdgeForInsert({
+          edgeId: hitResult.edge.id,
+          point: hitResult.projection,
+          mode: isLabelDrag ? 'label' : 'insert',
+        });
       } else {
         setHoveredEdgeForInsert(null);
       }
@@ -340,6 +353,33 @@ export const FlowCanvas: React.FC = () => {
       if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
       e.preventDefault();
       e.stopPropagation();
+
+      // 0. 优先识别连线标签拖拽放置
+      if (e.dataTransfer.getData(EDGE_LABEL_DRAG_MIME)) {
+        const flowPosition = screenToFlowPosition({
+          x: e.clientX,
+          y: e.clientY,
+        });
+        const store = useFlowStore.getState();
+        const hitResult = findEdgeAtPosition(store.edges, store.nodes, flowPosition, 28);
+        setHoveredEdgeForInsert(null);
+        if (!hitResult) {
+          store.showToast('请将标签拖放到目标连线上');
+          return;
+        }
+        const byId = new Map(store.nodes.map((n) => [n.id, n]));
+        const pts = getEdgePoints(hitResult.edge, store.nodes, byId);
+        const { ratio } = projectPointOntoPolyline(pts, flowPosition);
+        store.updateEdgeData(hitResult.edge.id, {
+          label: hitResult.edge.data?.label || '标签',
+          labelRatio: ratio,
+        });
+        setSelectedNodes([]);
+        setSelectedEdge(hitResult.edge.id);
+        store.setSelectedEdgeLabelId(hitResult.edge.id);
+        store.setEditingEdgeLabelId(hitResult.edge.id);
+        return;
+      }
 
       // 1. 优先识别业务模板拖拽放置 (Drag Template)
       const templateId = e.dataTransfer.getData('application/flowstudio-template-id');
@@ -1170,7 +1210,7 @@ export const FlowCanvas: React.FC = () => {
           color="var(--fs-canvas-dot)"
         />
 
-        {/* 悬停断键插入浮标 */}
+        {/* 悬停断键插入 / 添加标签浮标 */}
         <ViewportPortal>
           {hoveredEdgeForInsert && (
             <div
@@ -1182,7 +1222,7 @@ export const FlowCanvas: React.FC = () => {
               className="z-50 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-full shadow-lg ring-2 ring-white/40 animate-pulse"
             >
               <span className="text-base font-bold leading-none">+</span>
-              <span>插入步骤</span>
+              <span>{hoveredEdgeForInsert.mode === 'label' ? '放置标签' : '插入步骤'}</span>
             </div>
           )}
         </ViewportPortal>

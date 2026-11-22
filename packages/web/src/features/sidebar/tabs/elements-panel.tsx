@@ -12,6 +12,16 @@ import { getThemePreset } from '../styles/theme-presets';
 import { resolveNodeStyle } from '../styles/style-resolver';
 import { useFlowStore } from '../../../stores/flow-store';
 
+export const EDGE_LABEL_DRAG_MIME = 'application/flowstudio-edge-label';
+
+const EDGE_LABEL_KEYWORDS = ['连线标签', '标签', 'label', '连线文字'];
+
+export function matchesEdgeLabelSearch(keyword: string): boolean {
+  const trimmed = keyword.trim().toLowerCase();
+  if (!trimmed) return true;
+  return EDGE_LABEL_KEYWORDS.some((kw) => kw.includes(trimmed) || trimmed.includes(kw));
+}
+
 export function filterElements(
   elements: NodeRegistryEntry[],
   keyword: string
@@ -195,13 +205,38 @@ export const ElementsPanel: React.FC = () => {
     e.dataTransfer.effectAllowed = 'move';
   };
 
+  const handleEdgeLabelDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    e.dataTransfer.setData(EDGE_LABEL_DRAG_MIME, '1');
+    e.dataTransfer.effectAllowed = 'copyMove';
+  };
+
+  const handleEdgeLabelClick = () => {
+    const store = useFlowStore.getState();
+    const targetEdgeId = store.selectedEdgeId;
+    if (!targetEdgeId) {
+      store.showToast('请将标签拖动到目标连线上添加');
+      return;
+    }
+    const targetEdge = store.edges.find((edge) => edge.id === targetEdgeId);
+    if (!targetEdge) return;
+    if (!targetEdge.data?.label) {
+      store.updateEdgeData(targetEdgeId, { label: '标签' });
+    }
+    store.setSelectedEdgeLabelId(targetEdgeId);
+    store.setEditingEdgeLabelId(targetEdgeId);
+  };
+
+  const showEdgeLabelCard = useMemo(() => matchesEdgeLabelSearch(searchKeyword), [searchKeyword]);
   const allEntries = useMemo(() => getAllNodeRegistryEntries(), []);
   const filtered = useMemo(
     () => filterElements(allEntries, searchKeyword),
     [allEntries, searchKeyword]
   );
   const categorized = useMemo(() => categorizeElements(filtered), [filtered]);
-  const visibleCategories = NODE_CATEGORIES.filter((c) => categorized[c].length > 0);
+  const visibleCategories = NODE_CATEGORIES.filter(
+    (c) => categorized[c].length > 0 || (c === '流程' && showEdgeLabelCard)
+  );
+  const resolvedLabelTheme = useMemo(() => resolveNodeStyle('process', currentTheme), [currentTheme]);
 
   const renderGrid = (cat: NodeCategory) => (
     <div className="px-2 pb-1.5 grid grid-cols-4 gap-1">
@@ -238,6 +273,25 @@ export const ElementsPanel: React.FC = () => {
           );
         });
       })}
+      {cat === '流程' && showEdgeLabelCard && (
+        <div
+          key="edge-label"
+          draggable
+          onDragStart={handleEdgeLabelDragStart}
+          onClick={handleEdgeLabelClick}
+          className="group relative flex items-center justify-center h-10 rounded-md border border-fs-border/70 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-grab active:cursor-grabbing select-none"
+          title="连线标签：拖动到目标连线上添加文字说明"
+          aria-label="连线标签"
+        >
+          <div className="flex items-center justify-center scale-90 group-hover:scale-100 transition-transform">
+            <svg className="w-9 h-6" viewBox="0 0 36 24">
+              <line x1="2" y1="12" x2="34" y2="12" stroke={resolvedLabelTheme.borderColor} strokeWidth="1.5" strokeDasharray="2.5,2" />
+              <rect x="8" y="6" width="20" height="12" rx="4" fill={resolvedLabelTheme.fillColor} stroke={resolvedLabelTheme.borderColor} strokeWidth="1.4" />
+              <line x1="12.5" y1="12" x2="23.5" y2="12" stroke={resolvedLabelTheme.borderColor} strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -273,7 +327,9 @@ export const ElementsPanel: React.FC = () => {
             <div key={cat} className="border-b border-fs-border/50 last:border-b-0 py-1">
               <div className="px-2.5 py-1 text-[11px] font-medium text-fs-text-muted flex items-center justify-between">
                 <span>{cat}</span>
-                <span className="text-[10px] font-mono opacity-75">{categorized[cat].length}</span>
+                <span className="text-[10px] font-mono opacity-75">
+                  {categorized[cat].length + (cat === '流程' && showEdgeLabelCard ? 1 : 0)}
+                </span>
               </div>
               {renderGrid(cat)}
             </div>

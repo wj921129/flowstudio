@@ -459,6 +459,22 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(controlsCode).toContain('!mr-[340px]');
     expect(controlsCode).toContain('pannable={false}');
     expect(controlsCode).toContain('setCenter(target.x, target.y');
+    expect(controlsCode).toContain('maskStrokeColor="var(--fs-primary)"');
+    expect(controlsCode).not.toContain('maskColor="var(--fs-canvas-dot)"');
+
+    const edgeCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
+      'utf-8'
+    );
+    expect(edgeCode).not.toContain('+ 标签');
+    expect(edgeCode).not.toContain('handleWaypointPointerDown');
+
+    const elementsPanelCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/sidebar/tabs/elements-panel.tsx'),
+      'utf-8'
+    );
+    expect(elementsPanelCode).toContain('EDGE_LABEL_DRAG_MIME');
+    expect(elementsPanelCode).toContain('aria-label="连线标签"');
 
     const canvasCode = fs.readFileSync(
       path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),

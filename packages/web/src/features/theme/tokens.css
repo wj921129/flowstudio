@@ -24,6 +24,7 @@
   --fs-note-bg: #fef9c3;
   --fs-note-border: #facc15;
   --fs-align-guide: #f43f5e;
+  --fs-minimap-mask: rgba(241, 245, 249, 0.55);
   --fs-node-start-bg: #ecfdf5;
   --fs-node-start-border: #10b981;
   --fs-node-start-text: #065f46;
@@ -66,6 +67,7 @@ html.dark {
   --fs-note-bg: #422006;
   --fs-note-border: #a16207;
   --fs-align-guide: #fb7185;
+  --fs-minimap-mask: rgba(15, 23, 42, 0.62);
   --fs-node-start-bg: #064e3b;
   --fs-node-start-border: #34d399;
   --fs-node-start-text: #d1fae5;
@@ -220,4 +222,19 @@ html.dark .fs-cursor-pan:active * {
 html.dark .fs-cursor-connect,
 html.dark .fs-cursor-connect * {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M12 3v18M3 12h18' stroke='%230f172a' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M12 3v18M3 12h18' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") 10 10, crosshair !important;
+}
+
+.react-flow__minimap {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+}
+
+.react-flow__minimap-svg {
+  display: block;
+}
+
+.react-flow__minimap-mask {
+  transition: fill 0.15s ease, stroke 0.15s ease;
 }

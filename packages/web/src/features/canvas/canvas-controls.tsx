@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Panel, useReactFlow, MiniMap } from '@xyflow/react';
-import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessageSquare, MessagesSquare } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessageSquare, MessagesSquare, X } from 'lucide-react';
 import { useCommentsStore } from '../comments';
 import { usePresentationStore } from '../presentation';
 import { useFlowStore } from '../../stores/flow-store';
@@ -15,6 +15,7 @@ import {
   type MiniMapRectLike,
   type MiniMapViewBoxLike,
 } from './utils/canvas-bounds';
+import type { FlowNodeData } from '@flowstudio/shared';
 
 function readMiniMapSvgMetrics(
   container: HTMLElement
@@ -101,6 +102,31 @@ export const CanvasControls: React.FC = () => {
     [setCenter, getZoom]
   );
 
+  const resolveMiniMapNodeColor = useCallback((node: { type?: string; data?: unknown }) => {
+    const data = (node.data ?? {}) as Partial<FlowNodeData>;
+    switch (node.type) {
+      case 'pool':
+      case 'lane':
+      case 'group':
+        return 'rgba(148, 163, 184, 0.16)';
+      case 'start-end':
+        return data.role === 'end' ? '#f43f5e' : '#10b981';
+      case 'decision':
+        return '#f59e0b';
+      case 'comment':
+        return '#eab308';
+      default:
+        return '#3b82f6';
+    }
+  }, []);
+
+  const resolveMiniMapNodeStrokeColor = useCallback((node: { type?: string }) => {
+    if (node.type === 'pool' || node.type === 'lane' || node.type === 'group') {
+      return 'rgba(148, 163, 184, 0.4)';
+    }
+    return 'transparent';
+  }, []);
+
   return (
     <>
       {showMiniMap && (
@@ -117,16 +143,39 @@ export const CanvasControls: React.FC = () => {
             onPointerDownCapture={handleMiniMapPointerDownCapture}
             onMouseDownCapture={(e) => e.stopPropagation()}
             title="点击或拖动缩略图快速定位画布视角"
-            className="nodrag nopan touch-none p-1 rounded-xl bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-lg overflow-hidden cursor-pointer"
+            className="group relative nodrag nopan touch-none rounded-2xl backdrop-blur-md bg-[var(--fs-surface)]/85 shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.35)] ring-1 ring-black/[0.06] dark:ring-white/[0.08] overflow-hidden cursor-pointer select-none"
           >
+            <div className="pointer-events-none absolute top-1.5 left-2 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--fs-surface)]/75 backdrop-blur-xs text-[10px] font-medium text-[var(--fs-text-muted)]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--fs-primary)]" />
+              <span>导航</span>
+            </div>
+            <button
+              type="button"
+              aria-label="收起小地图"
+              title="收起小地图"
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMiniMap(false);
+              }}
+              className="absolute top-1.5 right-1.5 z-10 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--fs-surface)]/80 text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-bg)] opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
             <MiniMap
-              className="!relative !m-0 !w-44 !h-32 rounded-lg"
-              nodeColor="var(--fs-node-border)"
-              maskColor="var(--fs-canvas-dot)"
+              className="!relative !m-0 !w-[184px] !h-[124px] !bg-transparent !border-0 !shadow-none"
+              nodeColor={resolveMiniMapNodeColor}
+              nodeStrokeColor={resolveMiniMapNodeStrokeColor}
+              nodeStrokeWidth={1}
+              nodeBorderRadius={6}
+              maskColor="var(--fs-minimap-mask)"
+              maskStrokeColor="var(--fs-primary)"
+              maskStrokeWidth={1.5}
               style={{
-                width: 176,
-                height: 128,
-                backgroundColor: 'var(--fs-canvas-bg)',
+                width: 184,
+                height: 124,
+                backgroundColor: 'transparent',
               }}
               zoomable
               pannable={false}

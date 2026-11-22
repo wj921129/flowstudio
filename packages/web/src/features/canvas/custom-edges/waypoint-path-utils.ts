@@ -176,8 +176,6 @@ export function projectPointOntoPolyline(
 
 export type SegmentAxis = 'h' | 'v';
 
-export const SEGMENT_STUB = 16;
-
 export function getSegmentAxis(a: XYPosition, b: XYPosition): SegmentAxis | null {
   if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) >= 0.5) return 'h';
   if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) >= 0.5) return 'v';
@@ -192,33 +190,19 @@ export function moveOrthogonalSegment(
   offset: number
 ): XYPosition[] {
   const pts = [source, ...waypoints, target].map((p) => ({ ...p }));
+  const lastIndex = pts.length - 1;
+  if (pts.length <= 2 || segIndex <= 0 || segIndex >= lastIndex - 1) {
+    return waypoints.map((p) => ({ ...p }));
+  }
   const a = pts[segIndex];
   const b = pts[segIndex + 1];
   const axis = a && b ? getSegmentAxis(a, b) : null;
   if (!axis || offset === 0) return waypoints.map((p) => ({ ...p }));
-  const shift = (p: XYPosition): XYPosition => (axis === 'h' ? { x: p.x, y: p.y + offset } : { x: p.x + offset, y: p.y });
-  const len = Math.abs(axis === 'h' ? b.x - a.x : b.y - a.y);
-  const stub = Math.min(SEGMENT_STUB, len / 3);
-  const toward = (from: XYPosition, to: XYPosition): XYPosition =>
-    axis === 'h'
-      ? { x: from.x + Math.sign(to.x - from.x) * stub, y: from.y }
-      : { x: from.x, y: from.y + Math.sign(to.y - from.y) * stub };
-  const lastIndex = pts.length - 1;
-  const head: XYPosition[] = [];
-  const tail: XYPosition[] = [];
-  if (segIndex === 0) {
-    const s = toward(a, b);
-    head.push(s, shift(s));
-  } else {
-    head.push(shift(a));
-  }
-  if (segIndex + 1 === lastIndex) {
-    const t = toward(b, a);
-    tail.push(shift(t), t);
-  } else {
-    tail.push(shift(b));
-  }
-  return [...pts.slice(1, Math.max(1, segIndex)), ...head, ...tail, ...pts.slice(segIndex + 2, lastIndex)];
+  const shift = (p: XYPosition): XYPosition =>
+    axis === 'h' ? { x: p.x, y: p.y + offset } : { x: p.x + offset, y: p.y };
+  pts[segIndex] = shift(a);
+  pts[segIndex + 1] = shift(b);
+  return pts.slice(1, lastIndex);
 }
 
 export function simplifyOrthogonalWaypoints(

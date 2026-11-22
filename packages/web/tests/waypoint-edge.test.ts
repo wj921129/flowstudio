@@ -18,21 +18,26 @@ describe('waypoint-path-utils: 线段横纵拖动', () => {
   it('中间竖线段只沿 X 平移并保持正交', () => {
     const next = moveOrthogonalSegment(s, t, wps, 1, 30);
     expect(next).toEqual([{ x: 130, y: 0 }, { x: 130, y: 100 }]);
-  });
-
-  it('首段横线段上下拖动时补短桩，端点不动', () => {
-    const next = moveOrthogonalSegment(s, t, wps, 0, -40);
     expect(isOrthogonal([s, ...next, t])).toBe(true);
-    expect(next[0]).toEqual({ x: 16, y: 0 });
-    expect(next[1]).toEqual({ x: 16, y: -40 });
   });
 
-  it('无折点的直通线段两端补桩', () => {
+  it('首尾段与无折点直通线段不新增折线，保持原连线样式', () => {
+    expect(moveOrthogonalSegment(s, t, wps, 0, -40)).toEqual(wps);
+    expect(moveOrthogonalSegment(s, t, wps, 2, 40)).toEqual(wps);
+
     const a = { x: 0, y: 50 };
     const b = { x: 300, y: 50 };
-    const next = moveOrthogonalSegment(a, b, [], 0, 20);
-    expect(next).toEqual([{ x: 16, y: 50 }, { x: 16, y: 70 }, { x: 284, y: 70 }, { x: 284, y: 50 }]);
-    expect(isOrthogonal([a, ...next, b])).toBe(true);
+    expect(moveOrthogonalSegment(a, b, [], 0, 20)).toEqual([]);
+  });
+
+  it('中间横线段只沿 Y 平移并保持原有折点数量与正交性', () => {
+    const src = { x: 0, y: 0 };
+    const tgt = { x: 200, y: 200 };
+    const zWps = [{ x: 0, y: 100 }, { x: 200, y: 100 }];
+    const next = moveOrthogonalSegment(src, tgt, zWps, 1, -25);
+    expect(next).toEqual([{ x: 0, y: 75 }, { x: 200, y: 75 }]);
+    expect(next).toHaveLength(2);
+    expect(isOrthogonal([src, ...next, tgt])).toBe(true);
   });
 
   it('简化时合并共线与重复折点', () => {
