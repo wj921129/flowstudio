@@ -78,7 +78,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const isHistoryOpen = useFlowStore((s) => s.historyDrawerOpen);
+  const setIsHistoryOpen = useFlowStore((s) => s.setHistoryDrawerOpen);
   const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const isReviewDrawerOpen = useCommentsStore((s) => s.isReviewDrawerOpen);

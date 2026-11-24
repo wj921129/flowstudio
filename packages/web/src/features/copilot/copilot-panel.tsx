@@ -14,6 +14,7 @@ import {
   Command,
 } from 'lucide-react';
 import { useFlowStore } from '../../stores/flow-store';
+import { RightPanelTabs } from '../sidebar/right-panel-tabs';
 import { useCollaboration } from '../collaboration/collaboration-provider';
 import { SLASH_COMMANDS } from './copilot-slash-commands';
 import { planFromNaturalLanguage } from './copilot-planner';
@@ -302,7 +303,7 @@ export const CopilotPanel: React.FC = () => {
   return (
     <aside
       aria-label="AI Copilot 面板"
-      className="absolute top-0 right-0 z-40 w-96 h-full flex flex-col bg-fs-surface/95 dark:bg-slate-900/95 backdrop-blur-xl border-l border-fs-border shadow-2xl transition-all duration-200 animate-in slide-in-from-right-4"
+      className="absolute top-0 right-0 z-40 w-96 h-full flex flex-col bg-fs-surface border-l border-fs-border shadow-xl transition-all duration-200 animate-in slide-in-from-right-4"
     >
       <div className="h-12 px-3.5 flex items-center justify-between border-b border-fs-border bg-fs-bg/50 shrink-0">
         <div className="flex items-center gap-2">
@@ -336,6 +337,7 @@ export const CopilotPanel: React.FC = () => {
           </button>
         </div>
       </div>
+      <RightPanelTabs activeTab="copilot" />
 
       <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5 text-xs">
         {messages.length === 0 ? (

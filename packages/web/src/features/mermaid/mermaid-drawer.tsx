@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { diagramToMermaid, diffMermaidToOps } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
+import { RightPanelTabs } from '../sidebar/right-panel-tabs';
 
 export interface MermaidDrawerProps {
   isOpen: boolean;
@@ -152,6 +153,7 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
           <X className="w-4 h-4" />
         </button>
       </div>
+      <RightPanelTabs activeTab="mermaid" />
 
       {/* 语法提示胶囊 */}
       <div className="px-4 py-2 bg-fs-primary/5 border-b border-fs-border text-[11px] text-fs-text flex items-center justify-between">

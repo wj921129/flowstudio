@@ -30,6 +30,7 @@ import {
   type FlowEdge,
 } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
+import { RightPanelTabs } from './right-panel-tabs';
 import { getNodeDimensions } from '../canvas/utils/group-calculator';
 
 /** 图标解析字典：将注册表中的图标字符串映射到对应的 Lucide 图标组件 */
@@ -340,6 +341,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
           </button>
         )}
       </div>
+      <RightPanelTabs activeTab="property" />
 
       {/* 面板内容主滚动区 */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4">

@@ -2,6 +2,7 @@ import React, { useEffect, useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { MessageSquare, Check, ChevronLeft, ChevronRight, X, AlertTriangle, Eye, CheckCircle2 } from 'lucide-react';
 import { useCommentsStore } from './comments-store';
+import { RightPanelTabs } from '../sidebar/right-panel-tabs';
 
 export const ReviewDrawer: React.FC = () => {
   const {
@@ -90,6 +91,7 @@ export const ReviewDrawer: React.FC = () => {
           <X className="w-4 h-4" />
         </button>
       </div>
+      <RightPanelTabs activeTab="review" />
 
       <div className="flex items-center justify-between px-3.5 py-2 bg-fs-bg/60 border-b border-fs-border text-xs">
         <div className="flex items-center gap-1 bg-fs-bg p-0.5 rounded-lg border border-fs-border">

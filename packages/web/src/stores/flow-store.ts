@@ -130,6 +130,7 @@ interface FlowStoreInternalState extends FlowStoreState {
   aiBatchBannerVisible: boolean;
   /** Mermaid 代码抽屉是否展开 */
   mermaidDrawerOpen: boolean;
+  historyDrawerOpen: boolean;
   copilotOpen: boolean;
   isReconnectingEdge: boolean;
   /** 全局浮动轻提示消息 */
@@ -225,6 +226,7 @@ export interface FlowStoreActions {
   setAiBatchBannerVisible: (visible: boolean) => void;
   /** 开关 Mermaid 代码抽屉 */
   setMermaidDrawerOpen: (open: boolean) => void;
+  setHistoryDrawerOpen: (open: boolean) => void;
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   setReconnectingEdge: (reconnecting: boolean) => void;
   /** 应用 Mermaid 增量融合产生的操作集合 */
@@ -478,6 +480,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   dismissedAiBatchIds: new Set<string>(),
   aiBatchBannerVisible: false,
   mermaidDrawerOpen: false,
+  historyDrawerOpen: false,
   copilotOpen: false,
   isReconnectingEdge: false,
   toastMessage: null,
@@ -2162,6 +2165,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       dismissedAiBatchIds: new Set<string>(),
       aiBatchBannerVisible: false,
       mermaidDrawerOpen: false,
+      historyDrawerOpen: false,
       copilotOpen: false,
       toastMessage: null,
     });
@@ -2238,6 +2242,10 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setMermaidDrawerOpen: (open: boolean) => {
     set({ mermaidDrawerOpen: open });
+  },
+
+  setHistoryDrawerOpen: (open: boolean) => {
+    set({ historyDrawerOpen: open });
   },
 
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => {
