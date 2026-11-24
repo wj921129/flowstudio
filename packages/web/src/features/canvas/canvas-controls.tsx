@@ -8,6 +8,7 @@ import { Panel, useReactFlow, useStore, MiniMap, type MiniMapNodeProps } from '@
 import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessagesSquare, X } from 'lucide-react';
 import { useCommentsStore } from '../comments';
 import { useFlowStore } from '../../stores/flow-store';
+import { Tooltip } from '../../components/tooltip';
 import {
   computeCanvasTranslateExtent,
   resolveMiniMapFlowPosition,
@@ -243,65 +244,77 @@ export const CanvasControls: React.FC = () => {
       {/* 底部快捷缩放控制栏 */}
       <Panel position="bottom-left" className="!mb-3 !ml-3">
         <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--fs-surface)] border border-[var(--fs-border)] shadow-md select-none text-[var(--fs-text)]">
-          <button
-            type="button"
-            title="放大视口"
-            onClick={() => zoomIn({ duration: 200 })}
-            className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            title="缩小视口"
-            onClick={() => zoomOut({ duration: 200 })}
-            className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            title="重置为 100%"
-            onClick={() => zoomTo(1, { duration: 200 })}
-            className="min-w-[44px] px-1 py-1 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] text-xs font-medium tabular-nums transition-colors cursor-pointer"
-          >
-            {Math.round(zoom * 100)}%
-          </button>
+          <Tooltip label="放大视口" placement="top">
+            <button
+              type="button"
+              aria-label="放大视口"
+              onClick={() => zoomIn({ duration: 200 })}
+              className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+          </Tooltip>
+          <Tooltip label="缩小视口" placement="top">
+            <button
+              type="button"
+              aria-label="缩小视口"
+              onClick={() => zoomOut({ duration: 200 })}
+              className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+          </Tooltip>
+          <Tooltip label="重置为 100%" placement="top">
+            <button
+              type="button"
+              aria-label="重置为 100%"
+              onClick={() => zoomTo(1, { duration: 200 })}
+              className="min-w-[44px] px-1 py-1 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] text-xs font-medium tabular-nums transition-colors cursor-pointer"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+          </Tooltip>
           <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
-          <button
-            type="button"
-            title="自适应画布全部内容"
-            onClick={() => fitView({ padding: 0.2, duration: 250 })}
-            className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
-          >
-            <Maximize2 className="w-4 h-4" />
-          </button>
+          <Tooltip label="自适应画布" placement="top">
+            <button
+              type="button"
+              aria-label="自适应画布全部内容"
+              onClick={() => fitView({ padding: 0.2, duration: 250 })}
+              className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+          </Tooltip>
           <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
-          <button
-            type="button"
-            title={showMiniMap ? '收起小地图' : '展开小地图'}
-            onClick={() => setShowMiniMap((v) => !v)}
-            className={`p-1.5 rounded-lg transition-colors ${
-              showMiniMap
-                ? 'bg-[var(--fs-primary)] text-white'
-                : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
-            }`}
-          >
-            <MapIcon className="w-4 h-4" />
-          </button>
+          <Tooltip label={showMiniMap ? '收起小地图' : '展开小地图'} placement="top">
+            <button
+              type="button"
+              aria-label={showMiniMap ? '收起小地图' : '展开小地图'}
+              onClick={() => setShowMiniMap((v) => !v)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                showMiniMap
+                  ? 'bg-[var(--fs-primary)] text-white'
+                  : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
+              }`}
+            >
+              <MapIcon className="w-4 h-4" />
+            </button>
+          </Tooltip>
           <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
-          <button
-            type="button"
-            title={isReviewDrawerOpen ? '收起评审抽屉' : '展开批注评审抽屉'}
-            onClick={() => setReviewDrawerOpen(!isReviewDrawerOpen)}
-            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-              isReviewDrawerOpen
-                ? 'bg-fs-bg text-fs-text'
-                : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
-            }`}
-          >
-            <MessagesSquare className="w-4 h-4" />
-          </button>
+          <Tooltip label={isReviewDrawerOpen ? '收起评审抽屉' : '展开批注评审抽屉'} placement="top">
+            <button
+              type="button"
+              aria-label={isReviewDrawerOpen ? '收起评审抽屉' : '展开批注评审抽屉'}
+              onClick={() => setReviewDrawerOpen(!isReviewDrawerOpen)}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                isReviewDrawerOpen
+                  ? 'bg-fs-bg text-fs-text'
+                  : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
+              }`}
+            >
+              <MessagesSquare className="w-4 h-4" />
+            </button>
+          </Tooltip>
         </div>
       </Panel>
     </>

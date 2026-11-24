@@ -37,6 +37,7 @@ export const ContextualActionBar: React.FC = () => {
   const deleteSelected = useFlowStore((s) => s.deleteSelected);
   const batchUpdateNodeData = useFlowStore((s) => s.batchUpdateNodeData);
   const toggleSelectedLockMode = useFlowStore((s) => s.toggleSelectedLockMode);
+  const aiBatchBannerVisible = useFlowStore((s) => s.aiBatchBannerVisible);
 
   const selectedSet = new Set(selectedNodeIds);
   const targetNodes = nodes.filter((n) => selectedSet.has(n.id) || n.selected);
@@ -73,7 +74,9 @@ export const ContextualActionBar: React.FC = () => {
   return (
     <div
       data-testid="contextual-action-bar"
-      className="nodrag nopan absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 px-2 py-1.5 rounded-xl bg-[var(--fs-surface)]/95 backdrop-blur-md border border-[var(--fs-border)] shadow-lg select-none text-[var(--fs-text)]"
+      className={`nodrag nopan absolute ${
+        aiBatchBannerVisible ? 'top-16 left-1/2 -translate-x-1/2' : 'top-4 left-1/2 -translate-x-1/2'
+      } z-40 flex items-center gap-1 px-2 py-1.5 rounded-xl bg-[var(--fs-surface)]/95 backdrop-blur-md border border-[var(--fs-border)] shadow-lg select-none text-[var(--fs-text)]`}
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >

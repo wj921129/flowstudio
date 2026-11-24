@@ -12,6 +12,12 @@
   --fs-primary: #2563eb;
   --fs-accent: #3b82f6;
   --fs-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --fs-radius-sm: 6px;
+  --fs-radius-md: 10px;
+  --fs-radius-lg: 14px;
+  --fs-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+  --fs-shadow-md: 0 6px 18px rgb(0 0 0 / 0.08);
+  --fs-shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14);
 
   /* 画布专用令牌 (浅色模式) */
   --fs-canvas-bg: #f8fafc;
@@ -56,6 +62,9 @@ html.dark {
   --fs-primary: #3b82f6;
   --fs-accent: #60a5fa;
   --fs-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.5);
+  --fs-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
+  --fs-shadow-md: 0 6px 18px rgb(0 0 0 / 0.35);
+  --fs-shadow-lg: 0 12px 32px rgb(0 0 0 / 0.45);
 
   /* 画布专用令牌 (深色模式) */
   --fs-canvas-bg: #0b0f19;
@@ -238,4 +247,27 @@ html.dark .fs-cursor-connect * {
 
 .react-flow__minimap-mask {
   transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--fs-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--fs-border);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fs-text-muted);
 }

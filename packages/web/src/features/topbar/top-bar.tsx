@@ -32,6 +32,7 @@ import { useFlowStore } from '../../stores/flow-store';
 import { useCommentsStore } from '../comments';
 import { usePresentationStore } from '../presentation';
 import { ThemeToggle } from '../theme/theme-toggle';
+import { Tooltip } from '../../components/tooltip';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
 import { CollaboratorAvatars } from '../collaboration/collaborator-avatars';
 import { apiClient } from '../../lib/api-client';
@@ -407,16 +408,18 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         <CollaboratorAvatars />
 
         <div className="relative" ref={shareDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setIsShareOpen(!isShareOpen)}
-            title="分享协作或只读链接"
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border bg-fs-primary text-white border-fs-primary hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-          >
-            <Share2 className="w-3.5 h-3.5 text-white" />
-            <span className="hidden sm:inline">分享</span>
-            <ChevronDown className={`w-3 h-3 text-white/80 transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
-          </button>
+          <Tooltip label="分享协作或只读链接" placement="bottom">
+            <button
+              type="button"
+              onClick={() => setIsShareOpen(!isShareOpen)}
+              aria-label="分享协作或只读链接"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border bg-fs-primary text-white border-fs-primary hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+            >
+              <Share2 className="w-3.5 h-3.5 text-white" />
+              <span className="hidden sm:inline">分享</span>
+              <ChevronDown className={`w-3 h-3 text-white/80 transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </Tooltip>
 
           {isShareOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-fs-border bg-fs-surface shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 select-text">
@@ -449,50 +452,57 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => startPresentation(nodes)}
-          disabled={nodes.length === 0}
-          title="开启全屏演讲演示模式 (Space/方向键镜头平滑推进)"
-          className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-        >
-          <Tv className="w-3.5 h-3.5 text-fs-text-muted" />
-          <span className="hidden lg:inline">演示</span>
-        </button>
-
-        {!isReadOnly && (
+        <Tooltip label="全屏演讲演示" placement="bottom">
           <button
             type="button"
-            onClick={() => setCopilotOpen(!copilotOpen)}
-            title="打开画布内置 AI Copilot 对话交互面板 (Cmd/Ctrl+J)"
-            className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-              copilotOpen
-                ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
-                : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
-            }`}
+            onClick={() => startPresentation(nodes)}
+            disabled={nodes.length === 0}
+            aria-label="开启全屏演讲演示模式"
+            className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs disabled:opacity-50"
           >
-            <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-fs-text-muted'}`} />
-            <span className="hidden xl:inline">AI Copilot</span>
+            <Tv className="w-3.5 h-3.5 text-fs-text-muted" />
+            <span className="hidden lg:inline">演示</span>
           </button>
+        </Tooltip>
+
+        {!isReadOnly && (
+          <Tooltip label="AI Copilot" shortcut="Ctrl+J" placement="bottom">
+            <button
+              type="button"
+              onClick={() => setCopilotOpen(!copilotOpen)}
+              aria-label="打开画布内置 AI Copilot 对话交互面板"
+              className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
+                copilotOpen
+                  ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
+                  : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
+              }`}
+            >
+              <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-fs-text-muted'}`} />
+              <span className="hidden xl:inline">AI Copilot</span>
+            </button>
+          </Tooltip>
         )}
 
         {/* 导出菜单 */}
         <div className="relative" ref={exportDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setIsExportOpen(!isExportOpen)}
-            aria-expanded={isExportOpen}
-            aria-haspopup="true"
-            className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
-          >
-            <Download className="w-3.5 h-3.5 text-fs-text-muted" />
-            <span className="hidden sm:inline">导出</span>
-            <ChevronDown
-              className={`w-3 h-3 text-fs-text-muted transition-transform duration-150 ${
-                isExportOpen ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
+          <Tooltip label="导出或导入图表" placement="bottom">
+            <button
+              type="button"
+              onClick={() => setIsExportOpen(!isExportOpen)}
+              aria-expanded={isExportOpen}
+              aria-haspopup="true"
+              aria-label="导出或导入图表"
+              className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
+            >
+              <Download className="w-3.5 h-3.5 text-fs-text-muted" />
+              <span className="hidden sm:inline">导出</span>
+              <ChevronDown
+                className={`w-3 h-3 text-fs-text-muted transition-transform duration-150 ${
+                  isExportOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+          </Tooltip>
 
           {isExportOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-48 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
@@ -589,20 +599,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         />
 
         <div className="relative" ref={moreDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setIsMoreOpen(!isMoreOpen)}
-            aria-label="更多功能"
-            aria-expanded={isMoreOpen}
-            aria-haspopup="true"
-            title="更多功能"
-            className="relative inline-flex items-center justify-center p-1.5 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-            {(spotlightActive || isWatermarkEnabled || mermaidDrawerOpen || isHistoryOpen) && (
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-fs-primary" />
-            )}
-          </button>
+          <Tooltip label="更多功能" placement="bottom">
+            <button
+              type="button"
+              onClick={() => setIsMoreOpen(!isMoreOpen)}
+              aria-label="更多功能"
+              aria-expanded={isMoreOpen}
+              aria-haspopup="true"
+              className="relative inline-flex items-center justify-center p-1.5 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+              {(spotlightActive || isWatermarkEnabled || mermaidDrawerOpen || isHistoryOpen) && (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-fs-primary" />
+              )}
+            </button>
+          </Tooltip>
 
           {isMoreOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
@@ -710,8 +721,9 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
         <div className="h-4 w-px bg-fs-border" />
 
-        {/* 主题切换开关 */}
-        <ThemeToggle />
+        <Tooltip label="切换亮/暗主题" placement="bottom">
+          <ThemeToggle />
+        </Tooltip>
       </div>
 
       {/* 悬浮 Toast 提示 */}

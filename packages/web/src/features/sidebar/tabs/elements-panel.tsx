@@ -84,7 +84,8 @@ const ARCH_THUMBS: Record<string, { icon: string }> = {
   'arch-docker': { icon: 'M6 13 H30 M8 13 V9 H12 V13 M12 13 V9 H16 V13 M16 13 V9 H20 V13 M20 13 V9 H24 V13 M24 13 V10 H28 V13' },
 };
 
-const renderShapeThumbnail = (type: FlowNodeType, fill: string, stroke: string, poolHeaderBg: string) => {
+const renderShapeThumbnail = (type: FlowNodeType, _fill: string, stroke: string, poolHeaderBg: string) => {
+  const fill = 'var(--fs-node-bg)';
   const arch = ARCH_THUMBS[type];
   if (arch) {
     return (
@@ -150,8 +151,8 @@ const renderShapeThumbnail = (type: FlowNodeType, fill: string, stroke: string, 
     case 'comment':
       return (
         <svg className="w-9 h-6" viewBox="0 0 36 24">
-          <path d="M 3 2 L 27 2 L 33 8 L 33 22 L 3 22 Z" fill="#fef9c3" stroke="#ca8a04" strokeWidth="1.5" />
-          <polyline points="27,2 27,8 33,8" fill="none" stroke="#ca8a04" strokeWidth="1.5" />
+          <path d="M 3 2 L 27 2 L 33 8 L 33 22 L 3 22 Z" fill="var(--fs-note-bg)" stroke="var(--fs-note-border)" strokeWidth="1.5" />
+          <polyline points="27,2 27,8 33,8" fill="none" stroke="var(--fs-note-border)" strokeWidth="1.5" />
         </svg>
       );
     case 'pool':
@@ -165,7 +166,7 @@ const renderShapeThumbnail = (type: FlowNodeType, fill: string, stroke: string, 
     case 'lane':
       return (
         <svg className="w-9 h-6" viewBox="0 0 36 24">
-          <rect x="2" y="3" width="32" height="18" fill="rgba(255,255,255,0.4)" stroke={stroke} strokeWidth="1.5" strokeDasharray="3,2" />
+          <rect x="2" y="3" width="32" height="18" fill="var(--fs-bg)" stroke={stroke} strokeWidth="1.5" strokeDasharray="3,2" />
         </svg>
       );
     default:
@@ -286,7 +287,7 @@ export const ElementsPanel: React.FC = () => {
           <div className="flex items-center justify-center scale-90 group-hover:scale-100 transition-transform">
             <svg className="w-9 h-6" viewBox="0 0 36 24">
               <line x1="2" y1="12" x2="34" y2="12" stroke={resolvedLabelTheme.borderColor} strokeWidth="1.5" strokeDasharray="2.5,2" />
-              <rect x="8" y="6" width="20" height="12" rx="4" fill={resolvedLabelTheme.fillColor} stroke={resolvedLabelTheme.borderColor} strokeWidth="1.4" />
+              <rect x="8" y="6" width="20" height="12" rx="4" fill="var(--fs-node-bg)" stroke={resolvedLabelTheme.borderColor} strokeWidth="1.4" />
               <line x1="12.5" y1="12" x2="23.5" y2="12" stroke={resolvedLabelTheme.borderColor} strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </div>

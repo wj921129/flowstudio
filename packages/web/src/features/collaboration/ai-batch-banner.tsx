@@ -35,6 +35,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   const clearAiAcceptedEntities = useFlowStore((s) => s.clearAiAcceptedEntities);
   const dismissedAiBatchIds = useFlowStore((s) => s.dismissedAiBatchIds);
   const dismissAiBatch = useFlowStore((s) => s.dismissAiBatch);
+  const setAiBatchBannerVisible = useFlowStore((s) => s.setAiBatchBannerVisible);
 
   const triggerToast = useCallback(
     (msg: string) => {
@@ -169,7 +170,14 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
     }
   };
 
-  if (!activeBatch || dismissedAiBatchIds.has(activeBatch.batchId)) {
+  const isBannerVisible = Boolean(activeBatch && !dismissedAiBatchIds.has(activeBatch.batchId));
+
+  useEffect(() => {
+    setAiBatchBannerVisible(isBannerVisible);
+    return () => setAiBatchBannerVisible(false);
+  }, [isBannerVisible, setAiBatchBannerVisible]);
+
+  if (!isBannerVisible || !activeBatch) {
     return null;
   }
 
