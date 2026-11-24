@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE, parseDrawioXml, parseBpmnXml, diagramToBpmnXml } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
+import { useCommentsStore } from '../comments';
 import { usePresentationStore } from '../presentation';
 import { ThemeToggle } from '../theme/theme-toggle';
 import { sanitizeNodes, sanitizeEdges } from '../../lib/storage';
@@ -77,6 +78,36 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const isReviewDrawerOpen = useCommentsStore((s) => s.isReviewDrawerOpen);
+  const setReviewDrawerOpen = useCommentsStore((s) => s.setReviewDrawerOpen);
+
+  useEffect(() => {
+    if (!copilotOpen) return;
+    setMermaidDrawerOpen(false);
+    setIsHistoryOpen(false);
+    setReviewDrawerOpen(false);
+  }, [copilotOpen, setMermaidDrawerOpen, setReviewDrawerOpen]);
+
+  useEffect(() => {
+    if (!mermaidDrawerOpen) return;
+    setCopilotOpen(false);
+    setIsHistoryOpen(false);
+    setReviewDrawerOpen(false);
+  }, [mermaidDrawerOpen, setCopilotOpen, setReviewDrawerOpen]);
+
+  useEffect(() => {
+    if (!isHistoryOpen) return;
+    setCopilotOpen(false);
+    setMermaidDrawerOpen(false);
+    setReviewDrawerOpen(false);
+  }, [isHistoryOpen, setCopilotOpen, setMermaidDrawerOpen, setReviewDrawerOpen]);
+
+  useEffect(() => {
+    if (!isReviewDrawerOpen) return;
+    setCopilotOpen(false);
+    setMermaidDrawerOpen(false);
+    setIsHistoryOpen(false);
+  }, [isReviewDrawerOpen, setCopilotOpen, setMermaidDrawerOpen]);
 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const shareDropdownRef = useRef<HTMLDivElement>(null);

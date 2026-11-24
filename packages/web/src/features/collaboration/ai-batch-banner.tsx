@@ -174,7 +174,7 @@ export const AiBatchBanner: React.FC<AiBatchBannerProps> = ({ diagramId, onToast
   }
 
   return (
-    <div className="absolute top-4 right-4 z-30 animate-in fade-in slide-in-from-top-2 duration-200 select-none">
+    <div className="absolute top-3 left-3 z-30 animate-in fade-in slide-in-from-top-2 duration-200 select-none">
       <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl border border-purple-500/40 bg-purple-50/90 dark:bg-purple-950/80 backdrop-blur-md shadow-xl text-xs text-purple-950 dark:text-purple-100">
         <div className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-600 dark:text-purple-300 shrink-0">
           <Bot className="w-3.5 h-3.5 animate-pulse" />

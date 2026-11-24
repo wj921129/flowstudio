@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Copy,
@@ -126,9 +127,9 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <aside
-      className="fixed inset-y-0 right-0 w-full sm:w-[500px] z-50 bg-fs-surface border-l border-fs-border shadow-2xl flex flex-col select-none animate-in slide-in-from-right duration-200"
+      className="fixed top-12 bottom-0 right-0 w-full sm:w-[480px] z-40 bg-fs-surface border-l border-fs-border shadow-2xl flex flex-col select-none animate-in slide-in-from-right duration-200"
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* 抽屉头部 */}
@@ -225,9 +226,10 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
           className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-semibold shadow-md hover:shadow-lg transition-all cursor-pointer"
         >
           <Zap className="w-3.5 h-3.5 fill-current" />
-          <span>⚡ 增量同步至画布</span>
+          <span>增量同步至画布</span>
         </button>
       </div>
-    </aside>
+    </aside>,
+    document.body
   );
 };

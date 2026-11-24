@@ -36,7 +36,7 @@ export const CommentsLayer: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-      if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey) {
+      if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (isReadOnly) return;
         e.preventDefault();
         setCommentMode(!isCommentMode);

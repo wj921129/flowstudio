@@ -456,7 +456,7 @@ describe('画布交互体验与视觉改造回归测试', () => {
     );
     expect(controlsCode).toContain('useState(true)');
     expect(controlsCode).toContain('position="top-right"');
-    expect(controlsCode).toContain('!mr-[340px]');
+    expect(controlsCode).toContain('!mr-[332px]');
     expect(controlsCode).toContain('pannable={false}');
     expect(controlsCode).toContain('setCenter(target.x, target.y');
     expect(controlsCode).toContain('maskStrokeColor="transparent"');

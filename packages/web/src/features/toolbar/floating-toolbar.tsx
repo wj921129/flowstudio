@@ -15,6 +15,7 @@ import {
   Redo2,
   Trash2,
   Check,
+  MessageSquare,
 } from 'lucide-react';
 import {
   EDGE_STROKE_STYLES,
@@ -24,6 +25,7 @@ import {
   type EdgeStrokeStyle,
 } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
+import { useCommentsStore } from '../comments';
 import { ToolbarButton } from './toolbar-button';
 
 const LINE_STYLE_ICONS = Object.fromEntries(
@@ -168,6 +170,9 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   const addNode = useFlowStore((s) => s.addNode);
   const setSelectedNodes = useFlowStore((s) => s.setSelectedNodes);
   const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
+  const isCommentMode = useCommentsStore((s) => s.isCommentMode);
+  const setCommentMode = useCommentsStore((s) => s.setCommentMode);
+  const commentsCount = useCommentsStore((s) => s.comments.length);
 
   const { screenToFlowPosition } = useReactFlow();
 
@@ -316,6 +321,20 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           shortcut="T"
           onClick={handleAddNote}
         />
+        <div className="relative flex items-center justify-center">
+          <ToolbarButton
+            icon={MessageSquare}
+            label="画布批注"
+            shortcut="M"
+            active={isCommentMode}
+            onClick={() => setCommentMode(!isCommentMode)}
+          />
+          {commentsCount > 0 && (
+            <span className="pointer-events-none absolute -top-1 -right-1 px-1 py-0.2 bg-fs-primary text-white rounded-full text-[8px] font-bold">
+              {commentsCount}
+            </span>
+          )}
+        </div>
 
         {/* 分隔线 */}
         <div className="w-px h-5 bg-fs-border mx-1 shrink-0" />
