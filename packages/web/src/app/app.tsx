@@ -15,7 +15,7 @@ import { apiClient, generateMiniSvgThumbnail } from '../lib/api-client';
 import { useFlowStore } from '../stores/flow-store';
 import { useSidebarStore } from '../features/sidebar/sidebar-store';
 import { getThemePreset, type ThemePreset } from '../features/sidebar/styles/theme-presets';
-import { instantiateTemplate, type DiagramTemplate } from '../features/sidebar/templates';
+import { instantiateTemplate, TEMPLATES_REGISTRY, type DiagramTemplate } from '../features/sidebar/templates';
 import { TemplateConfirmModal } from '../features/sidebar/components/template-confirm-modal';
 import { CopilotPanel } from '../features/copilot/copilot-panel';
 import { usePresentationStore, parseReadOnlyFromLocation } from '../features/presentation';
@@ -32,6 +32,7 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
 
   const [pendingTemplate, setPendingTemplate] = useState<DiagramTemplate | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const appliedUrlTemplateRef = useRef(false);
 
   // 节点变化防抖上报缩略图至服务端（含清空画布时清空陈旧缩略图）
   const isSynced = collab?.isSynced ?? false;
@@ -72,6 +73,25 @@ const EditorWorkspace: React.FC<{ diagramId: string }> = ({ diagramId }) => {
       setIsConfirmOpen(true);
     }
   };
+
+  useEffect(() => {
+    if (!isSynced || appliedUrlTemplateRef.current) return;
+    const hash = window.location.hash;
+    const qIdx = hash.indexOf('?');
+    if (qIdx === -1) return;
+    const params = new URLSearchParams(hash.slice(qIdx + 1));
+    const templateId = params.get('template');
+    if (!templateId) return;
+    appliedUrlTemplateRef.current = true;
+    const matched = TEMPLATES_REGISTRY.find((t) => t.id === templateId);
+    if (matched && useFlowStore.getState().nodes.length === 0) {
+      handleApplyTemplate(matched);
+    }
+    params.delete('template');
+    const qs = params.toString();
+    const nextHash = qs ? `${hash.slice(0, qIdx)}?${qs}` : hash.slice(0, qIdx);
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${nextHash}`);
+  }, [isSynced, diagramId]);
 
   const handleConfirmOverwrite = async () => {
     if (!pendingTemplate) return;
