@@ -106,7 +106,7 @@ export const DashboardPage: React.FC = () => {
         }}
       >
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-md bg-linear-to-br from-indigo-500 to-indigo-700">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-md bg-fs-primary">
             <GitFork className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div>
@@ -124,7 +124,7 @@ export const DashboardPage: React.FC = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索流程图标题..."
-            className="w-full pl-8 sm:pl-9 pr-7 sm:pr-8 py-1 sm:py-1.5 rounded-lg border text-xs sm:text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-500/20"
+            className="w-full pl-8 sm:pl-9 pr-7 sm:pr-8 py-1 sm:py-1.5 rounded-lg border text-xs sm:text-sm outline-none transition-all focus:ring-2 focus:ring-fs-primary/20"
             style={{
               backgroundColor: 'var(--fs-bg)',
               borderColor: 'var(--fs-border)',
@@ -175,7 +175,7 @@ export const DashboardPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setCreateModalOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium text-white shadow-sm transition-transform active:scale-95 cursor-pointer bg-indigo-600 hover:bg-indigo-700"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium text-white shadow-sm transition-transform active:scale-95 cursor-pointer bg-fs-primary hover:opacity-90"
           >
             <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span className="hidden sm:inline">新建流程图</span>
@@ -200,7 +200,7 @@ export const DashboardPage: React.FC = () => {
             className="rounded-2xl border border-dashed p-12 text-center flex flex-col items-center justify-center"
             style={{ borderColor: 'var(--fs-border)' }}
           >
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 mb-4">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-fs-primary/10 text-fs-primary mb-4">
               <GitFork className="w-6 h-6" />
             </div>
             <h3 className="text-base font-semibold mb-1">
@@ -228,7 +228,7 @@ export const DashboardPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCreateModalOpen(true)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm bg-fs-primary hover:opacity-90 transition-opacity cursor-pointer"
               >
                 创建第一个流程图
               </button>

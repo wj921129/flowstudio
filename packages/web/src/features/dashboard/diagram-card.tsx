@@ -122,7 +122,7 @@ export const DiagramCard: React.FC<DiagramCardProps> = ({
       >
         {safeThumbnail ? (
           <div
-            className="w-full h-full flex items-center justify-center [&>svg]:max-w-full [&>svg]:max-h-full"
+            className="w-full h-full flex items-center justify-center [&>svg]:max-w-full [&>svg]:max-h-full dark:opacity-75 dark:saturate-50"
             dangerouslySetInnerHTML={{ __html: safeThumbnail }}
           />
         ) : (

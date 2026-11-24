@@ -164,13 +164,13 @@ export const CanvasControls: React.FC = () => {
       case 'group':
         return 'rgba(148, 163, 184, 0.16)';
       case 'start-end':
-        return data.role === 'end' ? '#f43f5e' : '#10b981';
+        return data.role === 'end' ? 'var(--fs-palette-4)' : 'var(--fs-palette-2)';
       case 'decision':
-        return '#f59e0b';
+        return 'var(--fs-palette-3)';
       case 'comment':
-        return '#eab308';
+        return 'var(--fs-note-border)';
       default:
-        return '#3b82f6';
+        return 'var(--fs-palette-1)';
     }
   }, []);
 

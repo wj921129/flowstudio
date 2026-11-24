@@ -220,7 +220,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
       >
         <div className="h-12 px-4 border-b border-[var(--fs-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            <History className="w-4 h-4 text-fs-primary" />
             <span className="text-xs font-semibold text-[var(--fs-text)] tracking-wide">
               历史版本与 Visual Diff
             </span>
@@ -261,7 +261,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 : 'text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
             }`}
           >
-            <GitCompare className="w-3.5 h-3.5 text-purple-500" />
+            <GitCompare className="w-3.5 h-3.5 text-fs-primary" />
             <span>差异比对 (Diff)</span>
           </button>
         </div>
@@ -274,12 +274,12 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 value={newLabel}
                 onChange={(e) => setNewLabel(e.target.value)}
                 placeholder="快照说明 (如: 评审前定稿)"
-                className="flex-1 px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-purple-500 transition-colors"
+                className="flex-1 px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-fs-primary transition-colors"
               />
               <button
                 type="submit"
                 disabled={isCreating}
-                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center gap-1 disabled:opacity-50 transition-colors cursor-pointer"
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-fs-primary hover:opacity-90 text-white shadow-xs flex items-center gap-1 disabled:opacity-50 transition-opacity cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>创建</span>
@@ -363,7 +363,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                             type="button"
                             onClick={() => handleRestore(snap.id, snap.label)}
                             disabled={Boolean(revertingId)}
-                            className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition-all cursor-pointer disabled:opacity-50"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-fs-primary hover:bg-fs-primary/10 transition-all cursor-pointer disabled:opacity-50"
                           >
                             <RotateCcw className={`w-3 h-3 ${revertingId === snap.id ? 'animate-spin' : ''}`} />
                             <span>{revertingId === snap.id ? '恢复中' : '恢复'}</span>
@@ -384,7 +384,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 <select
                   value={diffBaseId}
                   onChange={(e) => setDiffBaseId(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-purple-500"
+                  className="w-full px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-fs-primary"
                 >
                   {snapshots.map((s) => (
                     <option key={`base-${s.id}`} value={s.id}>
@@ -394,7 +394,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 </select>
               </div>
 
-              <div className="flex justify-center -my-1 text-purple-500">
+              <div className="flex justify-center -my-1 text-fs-primary">
                 <ArrowRight className="w-4 h-4 rotate-90" />
               </div>
 
@@ -403,7 +403,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 <select
                   value={diffTargetId}
                   onChange={(e) => setDiffTargetId(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-purple-500"
+                  className="w-full px-2.5 py-1.5 text-xs bg-[var(--fs-surface)] border border-[var(--fs-border)] rounded-lg text-[var(--fs-text)] outline-none focus:border-fs-primary"
                 >
                   <option value="live">⚡ 当前画布 (实时最新)</option>
                   {snapshots.map((s) => (
@@ -418,7 +418,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                 type="button"
                 onClick={handleCompareTwo}
                 disabled={isDiffing || snapshots.length === 0}
-                className="w-full py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                className="w-full py-2 text-xs font-semibold rounded-lg bg-fs-primary hover:opacity-90 text-white shadow-xs flex items-center justify-center gap-1.5 transition-opacity cursor-pointer disabled:opacity-50"
               >
                 <GitCompare className={`w-3.5 h-3.5 ${isDiffing ? 'animate-spin' : ''}`} />
                 <span>{isDiffing ? '计算差异中...' : '开始 Visual Diff 可视化比对'}</span>
@@ -496,7 +496,7 @@ export const SnapshotDrawer: React.FC<SnapshotDrawerProps> = ({
                     setConfirmRestoreSnap(null);
                     executeRestore(target.id, target.label);
                   }}
-                  className="px-4 py-2 rounded-lg text-xs font-medium text-white shadow-xs bg-purple-600 hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg text-xs font-medium text-white shadow-xs bg-fs-primary hover:opacity-90 transition-opacity cursor-pointer flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>确认恢复 (Enter)</span>

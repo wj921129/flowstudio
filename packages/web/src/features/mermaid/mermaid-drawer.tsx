@@ -135,7 +135,7 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
       {/* 抽屉头部 */}
       <div className="h-12 border-b border-fs-border px-4 flex items-center justify-between shrink-0 bg-fs-surface/80 backdrop-blur-md">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="p-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+          <div className="p-1 rounded-md bg-fs-primary/10 text-fs-primary">
             <Code2 className="w-4 h-4" />
           </div>
           <span className="font-semibold text-xs sm:text-sm text-fs-text truncate">
@@ -154,16 +154,16 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
       </div>
 
       {/* 语法提示胶囊 */}
-      <div className="px-4 py-2 bg-indigo-50/60 dark:bg-indigo-950/30 border-b border-indigo-100 dark:border-indigo-900/40 text-[11px] text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
+      <div className="px-4 py-2 bg-fs-primary/5 border-b border-fs-border text-[11px] text-fs-text flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+          <Sparkles className="w-3.5 h-3.5 text-fs-primary shrink-0" />
           <span>双向无损同频：修改代码后同步，既有同名节点坐标与样式 100% 保持不动</span>
         </div>
         <button
           type="button"
           onClick={handleResetFromCanvas}
           title="重新抓取当前画布代码"
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200/50 dark:hover:bg-indigo-900/50 transition-colors cursor-pointer shrink-0"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-fs-primary hover:bg-fs-primary/10 transition-colors cursor-pointer shrink-0"
         >
           <RefreshCw className="w-3 h-3" />
           <span>重新抓取</span>
@@ -196,7 +196,7 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
             setIsDirty(true);
           }}
           spellCheck={false}
-          className="w-full flex-1 p-3 font-mono text-xs leading-relaxed rounded-xl border border-fs-border bg-fs-surface text-fs-text focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none shadow-inner"
+          className="w-full flex-1 p-3 font-mono text-xs leading-relaxed rounded-xl border border-fs-border bg-fs-surface text-fs-text focus:outline-none focus:ring-2 focus:ring-fs-primary/50 resize-none shadow-inner"
           placeholder="flowchart LR&#10;  A[开始] --> B[处理]&#10;  B --> C{是否通过}&#10;  C -->|是| D[(数据库)]"
         />
       </div>
@@ -223,7 +223,7 @@ export const MermaidDrawer: React.FC<MermaidDrawerProps> = ({ isOpen, onClose })
         <button
           type="button"
           onClick={handleSyncToCanvas}
-          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-semibold shadow-md hover:shadow-lg transition-all cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-fs-primary hover:opacity-90 text-white text-xs font-semibold shadow-md hover:shadow-lg transition-all cursor-pointer"
         >
           <Zap className="w-3.5 h-3.5 fill-current" />
           <span>增量同步至画布</span>
