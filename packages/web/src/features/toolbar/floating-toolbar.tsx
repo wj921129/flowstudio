@@ -16,6 +16,8 @@ import {
   Trash2,
   Check,
   MessageSquare,
+  Square,
+  Diamond,
 } from 'lucide-react';
 import {
   EDGE_STROKE_STYLES,
@@ -23,6 +25,7 @@ import {
   getDefaultNodeSize,
   getEdgeDashArray,
   type EdgeStrokeStyle,
+  type FlowNodeType,
 } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
 import { useCommentsStore } from '../comments';
@@ -179,34 +182,37 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   // 是否有图元被选中（用于判断删除按钮状态）
   const hasSelection = selectedNodeIds.length > 0 || Boolean(selectedEdgeId) || Boolean(selectedEdgeLabelId);
 
-  /**
-   * 快速在当前视口中心添加便签节点 (comment)
-   */
-  const handleAddNote = useCallback(() => {
-    // 优先以 React Flow 主画布容器中心为锚点，降级采用窗口物理中心
-    const canvasEl = document.querySelector('.react-flow');
-    let screenCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    if (canvasEl) {
-      const rect = canvasEl.getBoundingClientRect();
-      screenCenter = {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
+  const addNodeAtCenter = useCallback(
+    (type: FlowNodeType) => {
+      const canvasEl = document.querySelector('.react-flow');
+      let screenCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      if (canvasEl) {
+        const rect = canvasEl.getBoundingClientRect();
+        screenCenter = {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+        };
+      }
+
+      const flowPos = screenToFlowPosition(screenCenter);
+      const defaultSize = getDefaultNodeSize(type);
+      const centeredPos = {
+        x: flowPos.x - defaultSize.width / 2,
+        y: flowPos.y - defaultSize.height / 2,
       };
-    }
 
-    const flowPos = screenToFlowPosition(screenCenter);
-    const defaultSize = getDefaultNodeSize('comment');
-    const centeredPos = {
-      x: flowPos.x - defaultSize.width / 2,
-      y: flowPos.y - defaultSize.height / 2,
-    };
+      const newNode = addNode(type, centeredPos);
+      if (newNode?.id) {
+        setSelectedNodes([newNode.id]);
+        setSelectedEdge(null);
+      }
+    },
+    [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]
+  );
 
-    const newNode = addNode('comment', centeredPos);
-    if (newNode?.id) {
-      setSelectedNodes([newNode.id]);
-      setSelectedEdge(null);
-    }
-  }, [screenToFlowPosition, addNode, setSelectedNodes, setSelectedEdge]);
+  const handleAddNote = useCallback(() => {
+    addNodeAtCenter('comment');
+  }, [addNodeAtCenter]);
 
   const handleActivateConnectTool = useCallback(() => {
     setActiveTool('connect');
@@ -314,6 +320,16 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           selectedValue={displayLineStyle}
           options={LINE_STYLE_OPTIONS}
           onSelect={handleSelectLineStyle}
+        />
+        <ToolbarButton
+          icon={Square}
+          label="矩形节点"
+          onClick={() => addNodeAtCenter('process')}
+        />
+        <ToolbarButton
+          icon={Diamond}
+          label="判断节点"
+          onClick={() => addNodeAtCenter('decision')}
         />
         <ToolbarButton
           icon={StickyNote}

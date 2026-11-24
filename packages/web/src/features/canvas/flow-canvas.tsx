@@ -1184,6 +1184,7 @@ export const FlowCanvas: React.FC = () => {
         edges={displayEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

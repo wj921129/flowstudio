@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Panel, useReactFlow, MiniMap, type MiniMapNodeProps } from '@xyflow/react';
+import { Panel, useReactFlow, useStore, MiniMap, type MiniMapNodeProps } from '@xyflow/react';
 import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessagesSquare, X } from 'lucide-react';
 import { useCommentsStore } from '../comments';
 import { useFlowStore } from '../../stores/flow-store';
@@ -99,7 +99,8 @@ const MiniMapFocusNode = React.memo<MiniMapNodeProps>(
 );
 
 export const CanvasControls: React.FC = () => {
-  const { zoomIn, zoomOut, fitView, setCenter, getZoom } = useReactFlow();
+  const { zoomIn, zoomOut, zoomTo, fitView, setCenter, getZoom } = useReactFlow();
+  const zoom = useStore((s) => s.transform[2]);
   const [showMiniMap, setShowMiniMap] = useState(true);
   const miniMapContainerRef = useRef<HTMLDivElement>(null);
   const miniMapDragCleanupRef = useRef<() => void>(() => {});
@@ -257,6 +258,14 @@ export const CanvasControls: React.FC = () => {
             className="p-1.5 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] transition-colors"
           >
             <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            title="重置为 100%"
+            onClick={() => zoomTo(1, { duration: 200 })}
+            className="min-w-[44px] px-1 py-1 rounded-lg hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] text-xs font-medium tabular-nums transition-colors cursor-pointer"
+          >
+            {Math.round(zoom * 100)}%
           </button>
           <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
           <button

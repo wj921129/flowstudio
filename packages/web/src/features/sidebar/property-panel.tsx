@@ -145,7 +145,7 @@ const PaletteColorPicker: React.FC<PaletteColorPickerProps> = ({
       </div>
 
       {/* 预设色块网格 */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="grid grid-cols-10 gap-1 justify-items-center">
         {presets.map((preset) => {
           const isSelected = activeValue === preset.value;
           const isTransparent = preset.value === 'transparent';
@@ -160,7 +160,7 @@ const PaletteColorPicker: React.FC<PaletteColorPickerProps> = ({
               type="button"
               title={preset.label}
               onClick={() => onChange(preset.value)}
-              className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer shrink-0 relative ${
+              className={`w-[18px] h-[18px] rounded-md border flex items-center justify-center transition-all cursor-pointer shrink-0 relative ${
                 isSelected
                   ? 'border-[var(--fs-selection-ring)] ring-2 ring-[var(--fs-selection-ring)] ring-offset-1 ring-offset-[var(--fs-surface)] scale-110 shadow-sm z-10'
                   : isWhiteLike
