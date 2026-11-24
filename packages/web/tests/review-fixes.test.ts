@@ -1386,12 +1386,10 @@ describe('前端审查整改全量用例 (Review Fixes F1 - F6)', () => {
         'utf-8'
       );
       expect(topbarCode).toMatch(/<header[^>]*z-50/);
-      expect(topbarCode).toContain('onClick={() => setIsHistoryOpen(!isHistoryOpen)}');
+      expect(topbarCode).toContain('setIsHistoryOpen(!isHistoryOpen)');
       expect(topbarCode).toContain('aria-expanded={isHistoryOpen}');
       expect(topbarCode).toContain('aria-label="历史版本"');
-      expect(topbarCode).toContain('bg-purple-600 text-white border-purple-600 shadow-purple-500/20');
-      expect(topbarCode).toContain("isHistoryOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'");
-      expect(topbarCode).toContain('<span className="hidden lg:inline">版本</span>');
+      expect(topbarCode).toContain('aria-label="更多功能"');
     });
   });
 });

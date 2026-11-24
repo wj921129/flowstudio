@@ -25,6 +25,7 @@ import {
   Shield,
   Lock,
   Copy,
+  MoreHorizontal,
 } from 'lucide-react';
 import { DEFAULT_DIAGRAM_TITLE, parseDrawioXml, parseBpmnXml, diagramToBpmnXml } from '@flowstudio/shared';
 import { useFlowStore } from '../../stores/flow-store';
@@ -75,6 +76,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const [editingTitle, setEditingTitle] = useState(storeTitle);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLayouting, setIsLayouting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -111,6 +113,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const shareDropdownRef = useRef<HTMLDivElement>(null);
+  const moreDropdownRef = useRef<HTMLDivElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
@@ -293,16 +296,22 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
       ) {
         setIsShareOpen(false);
       }
+      if (
+        moreDropdownRef.current &&
+        !moreDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsMoreOpen(false);
+      }
     };
 
-    if (isExportOpen || isShareOpen) {
+    if (isExportOpen || isShareOpen || isMoreOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isExportOpen, isShareOpen]);
+  }, [isExportOpen, isShareOpen, isMoreOpen]);
 
   useEffect(() => {
     return () => {
@@ -373,7 +382,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
             onKeyDown={handleTitleKeyDown}
             aria-label="图表标题"
             placeholder={DEFAULT_DIAGRAM_TITLE}
-            className={`px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent max-w-[80px] sm:max-w-[100px] md:max-w-[120px] lg:max-w-[180px] truncate transition-colors ${
+            className={`px-2 py-0.5 text-xs sm:text-sm font-medium rounded-md bg-transparent max-w-[80px] sm:max-w-[140px] md:max-w-[180px] lg:max-w-[260px] truncate transition-colors ${
               isReadOnly
                 ? 'cursor-default text-fs-text opacity-90 border border-transparent'
                 : 'hover:bg-fs-bg/60 focus:bg-fs-surface border border-transparent hover:border-fs-border focus:border-fs-primary focus:outline-none focus:ring-1 focus:ring-fs-primary text-fs-text'
@@ -394,22 +403,19 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
         </div>
       </div>
 
-      {/* 右侧：在线头像 + 分享链接 + 节点统计 + 导出 + 主题切换 */}
       <div className="flex items-center gap-1.5 lg:gap-2 xl:gap-2.5 shrink-0">
-        {/* 协作者在线头像 */}
         <CollaboratorAvatars />
 
-        {/* 分享链接下拉菜单 */}
         <div className="relative" ref={shareDropdownRef}>
           <button
             type="button"
             onClick={() => setIsShareOpen(!isShareOpen)}
             title="分享协作或只读链接"
-            className="inline-flex items-center gap-1 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border bg-fs-primary text-white border-fs-primary hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
           >
-            <Share2 className="w-3.5 h-3.5 text-fs-primary" />
-            <span className="hidden lg:inline">分享</span>
-            <ChevronDown className={`w-3 h-3 text-fs-text-muted transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
+            <Share2 className="w-3.5 h-3.5 text-white" />
+            <span className="hidden sm:inline">分享</span>
+            <ChevronDown className={`w-3 h-3 text-white/80 transition-transform duration-150 ${isShareOpen ? 'rotate-180' : ''}`} />
           </button>
 
           {isShareOpen && (
@@ -443,74 +449,17 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           )}
         </div>
 
-        {/* 全屏演讲演示按钮 */}
         <button
           type="button"
           onClick={() => startPresentation(nodes)}
           disabled={nodes.length === 0}
           title="开启全屏演讲演示模式 (Space/方向键镜头平滑推进)"
-          className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-emerald-500/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs disabled:opacity-50"
         >
-          <Tv className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="hidden xl:inline">演示</span>
+          <Tv className="w-3.5 h-3.5 text-fs-text-muted" />
+          <span className="hidden lg:inline">演示</span>
         </button>
 
-        {/* 动态安全防泄密水印开关 */}
-        <button
-          type="button"
-          onClick={toggleWatermark}
-          title="切换动态安全防泄密水印"
-          className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-            isWatermarkEnabled
-              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-semibold'
-              : 'border-fs-border bg-fs-surface text-fs-text-muted hover:bg-fs-bg'
-          }`}
-        >
-          <Shield className={`w-3.5 h-3.5 ${isWatermarkEnabled ? 'text-amber-500' : 'text-zinc-400'}`} />
-          <span className="hidden 2xl:inline">{isWatermarkEnabled ? '水印开' : '水印'}</span>
-        </button>
-
-        {/* 节点与连线统计徽标 */}
-        <div
-          className="hidden 2xl:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-fs-bg border border-fs-border text-fs-text-muted select-none font-medium"
-          title={`画布包含 ${nodes.length} 个节点，${edges.length} 条连线`}
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-fs-primary animate-pulse" />
-          <span>
-            {nodes.length} 节点 · {edges.length} 连线
-          </span>
-        </div>
-
-        {/* 全局链路走查聚光灯开关 */}
-        <button
-          type="button"
-          onClick={() => toggleSpotlightMode()}
-          title="全局链路走查（高亮全图连通链路；选中单个元素自动走查其上下游）"
-          className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-            spotlightActive
-              ? 'bg-blue-600 text-white border-blue-600 shadow-blue-500/20'
-              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-blue-500/50'
-          }`}
-        >
-          <Compass className={`w-3.5 h-3.5 ${spotlightActive ? 'text-white' : 'text-blue-500'}`} />
-          <span className="hidden 2xl:inline">{spotlightActive ? '全局走查中' : '链路走查'}</span>
-        </button>
-
-        {/* 一键自动排版 */}
-        {!isReadOnly && (
-          <button
-            type="button"
-            onClick={handleAutoLayout}
-            disabled={isLayouting || nodes.length === 0}
-            title="基于 elkjs 执行一键整图/泳道自动正交排版"
-            className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-fs-primary/50 transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Sparkles className={`w-3.5 h-3.5 text-fs-primary ${isLayouting ? 'animate-spin' : ''}`} />
-            <span className="hidden 2xl:inline">{isLayouting ? '排版中...' : '自动排版'}</span>
-          </button>
-        )}
-
-        {/* AI Copilot 交互面板开关 */}
         {!isReadOnly && (
           <button
             type="button"
@@ -522,42 +471,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
                 : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
             }`}
           >
-            <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
-            <span className="hidden 2xl:inline">AI Copilot</span>
-          </button>
-        )}
-
-        {/* </> Mermaid 双向同频抽屉开关 */}
-        <button
-          type="button"
-          onClick={() => setMermaidDrawerOpen(!mermaidDrawerOpen)}
-          title="打开 Mermaid 代码双向同频抽屉（支持实时导出与增量融合上屏）"
-          className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-            mermaidDrawerOpen
-              ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-500/20'
-              : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-indigo-500/50'
-          }`}
-        >
-          <Code2 className={`w-3.5 h-3.5 ${mermaidDrawerOpen ? 'text-white' : 'text-indigo-500'}`} />
-          <span className="hidden lg:inline">Mermaid</span>
-        </button>
-
-        {/* 历史版本快照 */}
-        {!isReadOnly && (
-          <button
-            type="button"
-            onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-            aria-expanded={isHistoryOpen}
-            aria-label="历史版本"
-            title="查看历史版本快照与无损差异恢复"
-            className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors cursor-pointer shadow-xs ${
-              isHistoryOpen
-                ? 'bg-purple-600 text-white border-purple-600 shadow-purple-500/20'
-                : 'border-fs-border bg-fs-surface text-fs-text hover:bg-fs-bg hover:border-purple-500/50'
-            }`}
-          >
-            <History className={`w-3.5 h-3.5 ${isHistoryOpen ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
-            <span className="hidden lg:inline">版本</span>
+            <Bot className={`w-3.5 h-3.5 ${copilotOpen ? 'text-white' : 'text-fs-text-muted'}`} />
+            <span className="hidden xl:inline">AI Copilot</span>
           </button>
         )}
 
@@ -672,6 +587,126 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           className="hidden"
           onChange={handleImportFile}
         />
+
+        <div className="relative" ref={moreDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setIsMoreOpen(!isMoreOpen)}
+            aria-label="更多功能"
+            aria-expanded={isMoreOpen}
+            aria-haspopup="true"
+            title="更多功能"
+            className="relative inline-flex items-center justify-center p-1.5 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+            {(spotlightActive || isWatermarkEnabled || mermaidDrawerOpen || isHistoryOpen) && (
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-fs-primary" />
+            )}
+          </button>
+
+          {isMoreOpen && (
+            <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+              <button
+                type="button"
+                onClick={() => {
+                  toggleSpotlightMode();
+                  setIsMoreOpen(false);
+                }}
+                className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Compass className="w-4 h-4 text-fs-text-muted shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-medium">链路走查</span>
+                    <span className="text-[10px] text-fs-text-muted truncate">高亮连通链路与上下游</span>
+                  </div>
+                </div>
+                {spotlightActive && <Check className="w-3.5 h-3.5 text-fs-primary shrink-0" />}
+              </button>
+
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    handleAutoLayout();
+                  }}
+                  disabled={isLayouting || nodes.length === 0}
+                  className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Sparkles className={`w-4 h-4 text-fs-text-muted shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
+                  <div className="flex flex-col">
+                    <span className="font-medium">{isLayouting ? '排版中...' : '自动排版'}</span>
+                    <span className="text-[10px] text-fs-text-muted">整图与泳道自动正交排版</span>
+                  </div>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMermaidDrawerOpen(!mermaidDrawerOpen);
+                  setIsMoreOpen(false);
+                }}
+                className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Code2 className="w-4 h-4 text-fs-text-muted shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-medium">Mermaid 代码</span>
+                    <span className="text-[10px] text-fs-text-muted truncate">语义双向同频编辑</span>
+                  </div>
+                </div>
+                {mermaidDrawerOpen && <Check className="w-3.5 h-3.5 text-fs-primary shrink-0" />}
+              </button>
+
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsHistoryOpen(!isHistoryOpen);
+                    setIsMoreOpen(false);
+                  }}
+                  aria-expanded={isHistoryOpen}
+                  aria-label="历史版本"
+                  className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <History className="w-4 h-4 text-fs-text-muted shrink-0" />
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-medium">历史版本</span>
+                      <span className="text-[10px] text-fs-text-muted truncate">快照与无损差异恢复</span>
+                    </div>
+                  </div>
+                  {isHistoryOpen && <Check className="w-3.5 h-3.5 text-fs-primary shrink-0" />}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  toggleWatermark();
+                  setIsMoreOpen(false);
+                }}
+                className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Shield className="w-4 h-4 text-fs-text-muted shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-medium">防泄密水印</span>
+                    <span className="text-[10px] text-fs-text-muted truncate">画布动态安全水印</span>
+                  </div>
+                </div>
+                {isWatermarkEnabled && <Check className="w-3.5 h-3.5 text-fs-primary shrink-0" />}
+              </button>
+
+              <div className="h-px bg-fs-border my-1" />
+              <div className="px-3 py-1.5 text-[11px] text-fs-text-muted select-none">
+                {nodes.length} 节点 · {edges.length} 连线
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="h-4 w-px bg-fs-border" />
 
