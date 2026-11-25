@@ -67,7 +67,9 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     name: 'scaffold_diagram',
     description:
       '以 DiagramSpec 语义规范生成或重渲染图表（vertical-flow / timeline-annotated / swimlane / tiered-dag / tree 五范式确定性排版：' +
-      'vertical-flow 无分支主干恒距、有分支按块留白、分支网格同行右置、回环上方侧路、分支通过结果 loop 回归源主干（横向侧路）、附注连续左列；其余范式保持主干恒距、附注右列；pool→lane→节点层级），与现状差量写入并生成前置备份快照',
+      'vertical-flow 无分支主干恒距、有分支按块留白、分支网格同行右置、回环上方侧路、分支通过结果 loop 回归源主干（横向侧路）、附注连续左列；其余范式保持主干恒距、附注右列；pool→lane→节点层级），与现状差量写入并生成前置备份快照；' +
+      '同节点同侧多条连线与双向边会自动均匀分摊端口防重叠（常规无需手算 sourceHandle/targetHandle，必要时可传 top/right/bottom/left 或 side@0.04~0.96 精调）；' +
+      'edges 支持 strokeStyle（solid 实线 / dashed 虚线用于异步、可选旁路或回调 / dotted 点线用于弱依赖参考；annotate 附注边默认 dashed）',
     inputSchema: {
       type: 'object',
       properties: {
@@ -85,16 +87,16 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       '以原子事务批量执行增量编辑操作（add_node / update_node / delete_node / connect / disconnect / ' +
       'move_node / move_to_lane / update_edge / add_lane / insert_between），自动触发前置快照、' +
       '记录实体级 Diff 账本并遵守节点锚定锁；支持 atomic 模式在失败时整体回滚并给出自纠建议；' +
-      'connect 支持 kind（next/branch/loop/jump/annotate/tree），' +
+      'connect 支持 kind（next/branch/loop/jump/annotate/tree），留空 sourceHandle/targetHandle 时自动推断最优侧向并避开同侧已有连线防重叠（传纯方向如 right 仍自动选空位，传 side@0.04~0.96 精确保留）；' +
       'jump 表示主干跨段旁路（跳过中段直达下游主干，不改变节点角色），' +
       'loop 支持分支通过结果回归源主干节点（双重判断回归，横向侧路），' +
       'add_node 支持 role/attachTo 语义字段；' +
-      'connect / update_edge 的 style 支持 strokeStyle（solid 实线 / dashed 虚线 / dotted 点线）、strokeColor、strokeWidth',
+      'connect / update_edge / insert_between 支持 strokeStyle（solid 实线 / dashed 虚线 / dotted 点线，annotate 默认 dashed）及 style.strokeColor / strokeWidth',
     inputSchema: z.toJSONSchema(applyOpsInputSchema) as any,
   },
   {
     name: 'auto_layout',
-    description: '对指定图表执行服务端分层正交自动排版',
+    description: '对指定图表执行服务端分层正交自动排版，并自动刷新未锁定、未人工手调的连线端口分布以消除同点重叠',
     inputSchema: {
       type: 'object',
       properties: {

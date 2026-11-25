@@ -69,7 +69,19 @@ export function diffRendered(
     if (same(ex.type) !== same(re.type)) patch.type = re.type;
     if (same(ex.sourceHandle) !== same(re.sourceHandle)) patch.sourceHandle = re.sourceHandle;
     if (same(ex.targetHandle) !== same(re.targetHandle)) patch.targetHandle = re.targetHandle;
-    const data = { ...(ex.data as object), ...(re.data as object) };
+    const exData = (ex.data as Record<string, unknown> | undefined) ?? {};
+    const reData = (re.data as Record<string, unknown> | undefined) ?? {};
+    const data: Record<string, unknown> = { ...exData, ...reData };
+    const exStyle = exData.style && typeof exData.style === 'object' ? (exData.style as Record<string, unknown>) : undefined;
+    const reStyle = reData.style && typeof reData.style === 'object' ? (reData.style as Record<string, unknown>) : undefined;
+    if (exStyle || reStyle) {
+      const nextStyle: Record<string, unknown> = { ...(exStyle ?? {}), ...(reStyle ?? {}) };
+      if (!reStyle || !('strokeStyle' in reStyle)) delete nextStyle.strokeStyle;
+      if (Object.keys(nextStyle).length > 0) data.style = nextStyle;
+      else delete data.style;
+    }
+    if (!('autoSourceHandle' in reData)) delete data.autoSourceHandle;
+    if (!('autoTargetHandle' in reData)) delete data.autoTargetHandle;
     if (same(ex.data) !== same(data)) patch.data = data as FlowEdge['data'];
     if (Object.keys(patch).length > 0) updateEdges.push({ id: ex.id, patch });
   }

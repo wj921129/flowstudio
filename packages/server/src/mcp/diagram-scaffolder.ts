@@ -89,7 +89,8 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
         }),
       );
       const existingPool = existing.nodes.find((n) => n.type === 'pool' && n.id === 'pool');
-      const rendered = renderSpec(input.spec, { fixed, laneSizes, poolPosition: existingPool?.position, obstacles });
+      const protectedEdges = existing.edges.filter((e) => protectedIds.has(e.source) || protectedIds.has(e.target));
+      const rendered = renderSpec(input.spec, { fixed, laneSizes, poolPosition: existingPool?.position, obstacles, protectedEdges });
       const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none');
       const mainOrder = normalizeSpec(input.spec).mainOrder;
 

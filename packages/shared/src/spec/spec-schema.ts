@@ -1,5 +1,16 @@
 import { z } from 'zod';
+import { EDGE_STROKE_STYLES } from '../constants.js';
 import { FLOW_NODE_TYPES, type FlowNodeType } from '../types.js';
+
+export const borderHandleSchema = z
+  .string()
+  .regex(/^(top|right|bottom|left)(@(\d+(?:\.\d+)?))?$/, '连接桩格式须为 top|right|bottom|left 或 side@0.04~0.96')
+  .refine((val) => {
+    const idx = val.indexOf('@');
+    if (idx === -1) return true;
+    const num = Number.parseFloat(val.slice(idx + 1));
+    return Number.isFinite(num) && num >= 0.04 && num <= 0.96;
+  }, '连接桩偏移量必须在 0.04~0.96 之间');
 
 const specNodeTypeSchema = z.enum(
   FLOW_NODE_TYPES.filter((t) => t !== 'pool' && t !== 'lane') as unknown as [FlowNodeType, ...FlowNodeType[]],
@@ -20,6 +31,9 @@ export const specEdgeSchema = z.object({
   to: z.string().min(1),
   kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
   label: z.string().optional(),
+  strokeStyle: z.enum(EDGE_STROKE_STYLES).optional(),
+  sourceHandle: borderHandleSchema.optional(),
+  targetHandle: borderHandleSchema.optional(),
 });
 
 export const diagramSpecSchema = z.object({

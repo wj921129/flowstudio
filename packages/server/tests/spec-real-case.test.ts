@@ -91,8 +91,8 @@ describe('真实案例闭环：SVN 时间线 15 步 + 25 附注', () => {
     expect(jumps.map((e) => `${e.source}->${e.target}`).sort()).toEqual(['d4->d8', 'd9->d11']);
     const maxRight = Math.max(...nodes.map((n) => n.position.x + n.width!));
     for (const j of jumps) {
-      expect(j.sourceHandle).toBe('right');
-      expect(j.targetHandle).toBe('right');
+      expect(j.sourceHandle).toMatch(/^right(@|$)/);
+      expect(j.targetHandle).toMatch(/^right(@|$)/);
       const waypoints = j.data!.waypoints!;
       expect(waypoints.length).toBe(2);
       expect(waypoints.every((p) => p.x > maxRight)).toBe(true);

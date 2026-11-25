@@ -7,7 +7,7 @@
 
 import * as Y from 'yjs';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import type { DiagramSpec } from '@flowstudio/shared';
+import type { DiagramSpec, EdgeStrokeStyle } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import { DocumentWriter } from '../collaboration/document-writer.js';
@@ -120,6 +120,12 @@ export class AiCollaborator {
       const targetHandle = (edgeMap.get('targetHandle') as string | undefined) || undefined;
       const data = (edgeMap.get('data') as Record<string, unknown>) || {};
       const label = (data.label as string) || undefined;
+      const styleObj = data.style as Record<string, unknown> | undefined;
+      const rawStrokeStyle = styleObj?.strokeStyle;
+      const strokeStyle: EdgeStrokeStyle | undefined =
+        rawStrokeStyle === 'solid' || rawStrokeStyle === 'dashed' || rawStrokeStyle === 'dotted'
+          ? rawStrokeStyle
+          : undefined;
       if (source && target) {
         edges.push({
           id,
@@ -129,6 +135,7 @@ export class AiCollaborator {
           ...(targetHandle ? { targetHandle } : {}),
           label,
           kind: data.kind as CompactDiagram['edges'][number]['kind'],
+          ...(strokeStyle ? { strokeStyle } : {}),
         });
       }
     });

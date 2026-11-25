@@ -1,5 +1,15 @@
 import * as Y from 'yjs';
-import type { AiBatchEntityDiff } from '@flowstudio/shared';
+import {
+  type AiBatchEntityDiff,
+  alignWaypointsToAnchors,
+  type EdgeStrokeStyle,
+  type FlowEdge,
+  type FlowNode,
+  hasExplicitBorderOffset,
+  pickEdgePortsForConnect,
+  resolveNodeWorldBoxes,
+  type XYPosition,
+} from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import type { DocumentWriter } from '../collaboration/document-writer.js';
@@ -192,6 +202,8 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree',
           sourceHandle?: string,
           targetHandle?: string,
+          autoSourceHandle?: string,
+          autoTargetHandle?: string,
         ) => {
           const edgeId = ctx.newEntityId('edge');
           const edgeMap = new Y.Map<unknown>();
@@ -201,10 +213,61 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           if (sourceHandle) edgeMap.set('sourceHandle', sourceHandle);
           if (targetHandle) edgeMap.set('targetHandle', targetHandle);
           edgeMap.set('type', 'orthogonal');
-          edgeMap.set('data', { label, ...(kind ? { kind } : {}), ...(style ? { style } : {}) });
+          edgeMap.set('data', {
+            ...(label !== undefined ? { label } : {}),
+            ...(kind ? { kind } : {}),
+            ...(style && Object.keys(style).length > 0 ? { style } : {}),
+            ...(autoSourceHandle ? { autoSourceHandle } : {}),
+            ...(autoTargetHandle ? { autoTargetHandle } : {}),
+          });
           edgesMap.set(edgeId, edgeMap);
           recordAdd('edge', edgeId, edgeMap);
           return edgeId;
+        };
+
+        const snapshotGraphForPorts = (): { nodes: FlowNode[]; edges: FlowEdge[] } => {
+          const nodes: FlowNode[] = [];
+          const edges: FlowEdge[] = [];
+          nodesMap.forEach((m, id) => {
+            nodes.push({
+              id,
+              type: (m.get('type') as FlowNode['type']) || 'process',
+              position: (m.get('position') as XYPosition) || { x: 0, y: 0 },
+              parentId: m.get('parentId') as string | undefined,
+              width: m.get('width') as number | undefined,
+              height: m.get('height') as number | undefined,
+              data: (m.get('data') as FlowNode['data']) || { label: id, type: 'process' },
+            });
+          });
+          edgesMap.forEach((m, id) => {
+            const source = m.get('source') as string;
+            const target = m.get('target') as string;
+            if (!source || !target) return;
+            edges.push({
+              id,
+              source,
+              target,
+              sourceHandle: m.get('sourceHandle') as string | undefined,
+              targetHandle: m.get('targetHandle') as string | undefined,
+              data: m.get('data') as FlowEdge['data'],
+            });
+          });
+          return { nodes, edges };
+        };
+
+        const mergeEdgeStyle = (
+          baseStyle: Record<string, unknown> | undefined,
+          topStrokeStyle: EdgeStrokeStyle | undefined,
+          kind?: string,
+        ): Record<string, unknown> | undefined => {
+          const resolvedStroke =
+            topStrokeStyle
+            ?? (baseStyle?.strokeStyle as EdgeStrokeStyle | undefined)
+            ?? (kind === 'annotate' ? 'dashed' : undefined);
+          if (!baseStyle && !resolvedStroke) return undefined;
+          const next = { ...(baseStyle ?? {}) };
+          if (resolvedStroke) next.strokeStyle = resolvedStroke;
+          return Object.keys(next).length > 0 ? next : undefined;
         };
 
         const findAddNodePosition = (laneId: string | undefined): LayoutPoint => {
@@ -352,7 +415,25 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 warnings.push(`连线端点不存在 (${op.source} -> ${op.target})，跳过`);
                 break;
               }
-              createEdgeMap(op.source, op.target, op.label, op.style, op.kind, op.sourceHandle, op.targetHandle);
+              const graph = snapshotGraphForPorts();
+              const picked = pickEdgePortsForConnect(graph.nodes, graph.edges, {
+                sourceId: op.source,
+                targetId: op.target,
+                sourceHandle: op.sourceHandle,
+                targetHandle: op.targetHandle,
+              });
+              const edgeStyle = mergeEdgeStyle(op.style, op.strokeStyle, op.kind);
+              createEdgeMap(
+                op.source,
+                op.target,
+                op.label,
+                edgeStyle,
+                op.kind,
+                picked.sourceHandle,
+                picked.targetHandle,
+                picked.sourceAuto ? picked.sourceHandle : undefined,
+                picked.targetAuto ? picked.targetHandle : undefined,
+              );
               appliedCount++;
               break;
             }
@@ -440,15 +521,51 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
               }
               const before = snapshotMap(edgeMap);
               const data = (edgeMap.get('data') as Record<string, unknown>) || {};
-              const nextData = { ...data };
+              const nextData: Record<string, unknown> = { ...data };
               if (op.label !== undefined) nextData.label = op.label;
-              if (op.sourceHandle !== undefined) edgeMap.set('sourceHandle', op.sourceHandle);
-              if (op.targetHandle !== undefined) edgeMap.set('targetHandle', op.targetHandle);
-              if (op.style) {
-                nextData.style = {
+              if (op.sourceHandle !== undefined) {
+                edgeMap.set('sourceHandle', op.sourceHandle);
+                if (hasExplicitBorderOffset(op.sourceHandle) || op.sourceHandle.includes('@')) {
+                  delete nextData.autoSourceHandle;
+                } else {
+                  nextData.autoSourceHandle = op.sourceHandle;
+                }
+              }
+              if (op.targetHandle !== undefined) {
+                edgeMap.set('targetHandle', op.targetHandle);
+                if (hasExplicitBorderOffset(op.targetHandle) || op.targetHandle.includes('@')) {
+                  delete nextData.autoTargetHandle;
+                } else {
+                  nextData.autoTargetHandle = op.targetHandle;
+                }
+              }
+              if (op.style || op.strokeStyle !== undefined) {
+                const mergedStyle = {
                   ...((nextData.style as Record<string, unknown>) || {}),
-                  ...op.style,
+                  ...(op.style ?? {}),
+                  ...(op.strokeStyle !== undefined ? { strokeStyle: op.strokeStyle } : {}),
                 };
+                nextData.style = mergedStyle;
+              }
+              if (
+                (op.sourceHandle !== undefined || op.targetHandle !== undefined)
+                && Array.isArray(nextData.waypoints)
+                && nextData.waypoints.length > 0
+              ) {
+                const sourceId = edgeMap.get('source') as string;
+                const targetId = edgeMap.get('target') as string;
+                const boxes = resolveNodeWorldBoxes(snapshotGraphForPorts().nodes);
+                const sBox = boxes.get(sourceId);
+                const tBox = boxes.get(targetId);
+                if (sBox && tBox) {
+                  nextData.waypoints = alignWaypointsToAnchors(
+                    nextData.waypoints as XYPosition[],
+                    sBox,
+                    edgeMap.get('sourceHandle') as string | undefined,
+                    tBox,
+                    edgeMap.get('targetHandle') as string | undefined,
+                  );
+                }
               }
               edgeMap.set('data', nextData);
               recordUpdate('edge', op.id, before, snapshotMap(edgeMap));
@@ -580,14 +697,17 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
               });
 
               let inheritedLabel: string | undefined;
+              let inheritedStyle: Record<string, unknown> | undefined;
               for (const edgeId of originalEdgeIds) {
                 const edgeMap = edgesMap.get(edgeId);
                 if (!edgeMap) continue;
                 const data = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
                 const raw = data.label ?? edgeMap.get('label');
-                if (typeof raw === 'string' && raw.trim()) {
+                if (!inheritedLabel && typeof raw === 'string' && raw.trim()) {
                   inheritedLabel = raw;
-                  break;
+                }
+                if (!inheritedStyle && data.style && typeof data.style === 'object') {
+                  inheritedStyle = { ...(data.style as Record<string, unknown>) };
                 }
               }
 
@@ -599,15 +719,44 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 }
               }
 
+              const betweenStyle = mergeEdgeStyle(inheritedStyle, op.strokeStyle);
+              const preferredSourceSide = direction === 'DOWN' ? 'bottom' : 'right';
+              const preferredTargetSide = direction === 'DOWN' ? 'top' : 'left';
+
+              const upGraph = snapshotGraphForPorts();
+              const upPorts = pickEdgePortsForConnect(upGraph.nodes, upGraph.edges, {
+                sourceId: op.source,
+                targetId: nodeId,
+                sourceHandle: preferredSourceSide,
+                targetHandle: preferredTargetSide,
+              });
               createEdgeMap(
                 op.source,
                 nodeId,
                 op.upstreamLabel ?? op.edgeLabel ?? inheritedLabel,
+                betweenStyle,
+                undefined,
+                upPorts.sourceHandle,
+                upPorts.targetHandle,
+                upPorts.sourceAuto ? upPorts.sourceHandle : undefined,
+                upPorts.targetAuto ? upPorts.targetHandle : undefined,
               );
+
+              const downGraph = snapshotGraphForPorts();
+              const downPorts = pickEdgePortsForConnect(downGraph.nodes, downGraph.edges, {
+                sourceId: nodeId,
+                targetId: op.target,
+              });
               createEdgeMap(
                 nodeId,
                 op.target,
                 op.downstreamLabel ?? op.edgeLabel,
+                betweenStyle,
+                undefined,
+                downPorts.sourceHandle,
+                downPorts.targetHandle,
+                downPorts.sourceAuto ? downPorts.sourceHandle : undefined,
+                downPorts.targetAuto ? downPorts.targetHandle : undefined,
               );
 
               const outgoing = new Map<string, string[]>();

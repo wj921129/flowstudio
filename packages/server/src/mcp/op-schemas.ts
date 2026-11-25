@@ -4,15 +4,22 @@
  */
 
 import { z } from 'zod';
-import { FLOW_NODE_TYPES, diagramSpecSchema } from '@flowstudio/shared';
+import { borderHandleSchema, EDGE_STROKE_STYLES, FLOW_NODE_TYPES, diagramSpecSchema } from '@flowstudio/shared';
 
 const positionSchema = z.object({ x: z.number(), y: z.number() });
 
 const styleSchema = z.record(z.string(), z.unknown());
 
-const flowNodeTypeSchema = z.enum([...FLOW_NODE_TYPES]);
+const edgeStyleSchema = z.object({
+  strokeColor: z.string().optional(),
+  strokeWidth: z.number().positive().max(20).optional(),
+  strokeStyle: z.enum(EDGE_STROKE_STYLES).optional(),
+  animated: z.boolean().optional(),
+}).passthrough();
 
-const borderHandleSchema = z.string().regex(/^(top|right|bottom|left)(@\d+(\.\d+)?)?$/);
+const edgeStrokeStyleSchema = z.enum(EDGE_STROKE_STYLES);
+
+const flowNodeTypeSchema = z.enum([...FLOW_NODE_TYPES]);
 
 export const mcpOpSchema = z.discriminatedUnion('op', [
   z.object({
@@ -43,7 +50,8 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     targetHandle: borderHandleSchema.optional(),
     label: z.string().optional(),
     kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
-    style: styleSchema.optional(),
+    strokeStyle: edgeStrokeStyleSchema.optional(),
+    style: edgeStyleSchema.optional(),
   }),
   z.object({
     op: z.literal('disconnect'),
@@ -73,7 +81,8 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     label: z.string().optional(),
     sourceHandle: borderHandleSchema.optional(),
     targetHandle: borderHandleSchema.optional(),
-    style: styleSchema.optional(),
+    strokeStyle: edgeStrokeStyleSchema.optional(),
+    style: edgeStyleSchema.optional(),
   }),
   z.object({
     op: z.literal('insert_between'),
@@ -90,6 +99,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     upstreamLabel: z.string().optional(),
     downstreamLabel: z.string().optional(),
     direction: z.enum(['RIGHT', 'DOWN']).optional(),
+    strokeStyle: edgeStrokeStyleSchema.optional(),
   }),
 ]);
 

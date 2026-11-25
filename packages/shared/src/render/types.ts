@@ -13,6 +13,7 @@ export interface RenderOptions {
   laneSizes?: Map<string, { width: number; height: number }>;
   poolPosition?: XYPosition;
   obstacles?: Map<string, RenderFixed>;
+  protectedEdges?: ReadonlyArray<FlowEdge>;
 }
 
 export interface RenderContext {

@@ -241,6 +241,10 @@ export interface FlowEdgeData {
   waypoints?: XYPosition[];
   /** 连线路由策略: orthogonal | bezier | straight */
   routingType?: 'orthogonal' | 'bezier' | 'straight';
+  /** 系统自动分配的源端连接桩指纹（用于识别是否被人工拖动覆盖） */
+  autoSourceHandle?: string;
+  /** 系统自动分配的目标端连接桩指纹（用于识别是否被人工拖动覆盖） */
+  autoTargetHandle?: string;
   /** 扩展属性 */
   [key: string]: unknown;
 }

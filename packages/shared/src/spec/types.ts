@@ -1,4 +1,4 @@
-import type { FlowNodeType } from '../types.js';
+import type { EdgeStrokeStyle, FlowNodeType } from '../types.js';
 
 export type Paradigm = 'vertical-flow' | 'timeline-annotated' | 'swimlane' | 'tiered-dag' | 'tree';
 export type SpecRole = 'main' | 'branch' | 'annotation';
@@ -19,6 +19,9 @@ export interface SpecEdge {
   to: string;
   kind?: SpecEdgeKind;
   label?: string;
+  strokeStyle?: EdgeStrokeStyle;
+  sourceHandle?: string;
+  targetHandle?: string;
 }
 
 export interface DiagramSpec {

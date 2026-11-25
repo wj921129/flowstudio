@@ -61,6 +61,8 @@ export const flowEdgeDataSchema = z.object({
   waypoints: z.array(xyPositionSchema).optional(),
   routingType: z.enum(['orthogonal', 'bezier', 'straight']).optional(),
   kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
+  autoSourceHandle: z.string().optional(),
+  autoTargetHandle: z.string().optional(),
 }).passthrough().optional();
 
 export const flowEdgeSchema = z.object({

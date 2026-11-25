@@ -1,6 +1,12 @@
 import * as Y from 'yjs';
 import type ELK from 'elkjs/lib/elk.bundled.js';
-import type { AiBatchEntityDiff } from '@flowstudio/shared';
+import {
+  type AiBatchEntityDiff,
+  distributeEdgePorts,
+  type FlowEdge,
+  type FlowNode,
+  isAutoManagedPort,
+} from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
 import type { DocumentWriter } from '../collaboration/document-writer.js';
@@ -316,6 +322,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
 
       const outcome = await ctx.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
         const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
+        const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
         const diffs: AiBatchEntityDiff[] = [];
         const warnings: string[] = [...planWarnings];
         const { containersWithLockedChild, hasLockedAncestor } = collectLiveLockState(nodesMap);
@@ -402,15 +409,115 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           });
         }
 
-        return { diffs, warnings: Array.from(new Set(warnings)) };
+        const nodeDiffCount = diffs.length;
+        const liveNodes: FlowNode[] = [];
+        const isNodeLockedLive = (id: string): boolean => {
+          const m = nodesMap.get(id);
+          if (!m) return false;
+          return (
+            lockedIds.has(id)
+            || frozenIds.has(id)
+            || getNodeLockMode(m) !== 'none'
+            || hasLockedAncestor(id, frozenLaneIds)
+          );
+        };
+        nodesMap.forEach((m, id) => {
+          liveNodes.push({
+            id,
+            type: (m.get('type') as FlowNode['type']) || 'process',
+            position: (m.get('position') as LayoutPoint) || { x: 0, y: 0 },
+            parentId: m.get('parentId') as string | undefined,
+            width: m.get('width') as number | undefined,
+            height: m.get('height') as number | undefined,
+            data: (m.get('data') as FlowNode['data']) || { label: id, type: 'process' },
+          });
+        });
+
+        const fixedEdgeIds = new Set<string>();
+        const lockedSourceEdgeIds = new Set<string>();
+        const lockedTargetEdgeIds = new Set<string>();
+        const bothAutoEdgeIds = new Set<string>();
+        const liveEdges: FlowEdge[] = [];
+
+        edgesMap.forEach((m, id) => {
+          const source = m.get('source') as string;
+          const target = m.get('target') as string;
+          if (!source || !target) return;
+          const rawData = (m.get('data') as Record<string, unknown> | undefined) ?? {};
+          const sourceHandle = m.get('sourceHandle') as string | undefined;
+          const targetHandle = m.get('targetHandle') as string | undefined;
+          const edgeLocked = isNodeLockedLive(source) || isNodeLockedLive(target);
+          if (edgeLocked) {
+            fixedEdgeIds.add(id);
+            liveEdges.push({
+              id,
+              source,
+              target,
+              sourceHandle,
+              targetHandle,
+              data: rawData as FlowEdge['data'],
+            });
+            return;
+          }
+          const sourceAuto = isAutoManagedPort(sourceHandle, rawData.autoSourceHandle as string | undefined);
+          const targetAuto = isAutoManagedPort(targetHandle, rawData.autoTargetHandle as string | undefined);
+          if (!sourceAuto) lockedSourceEdgeIds.add(id);
+          if (!targetAuto) lockedTargetEdgeIds.add(id);
+          if (sourceAuto && targetAuto) bothAutoEdgeIds.add(id);
+          liveEdges.push({
+            id,
+            source,
+            target,
+            ...(sourceAuto ? {} : { sourceHandle }),
+            ...(targetAuto ? {} : { targetHandle }),
+            data: rawData as FlowEdge['data'],
+          });
+        });
+
+        const distributed = distributeEdgePorts(liveNodes, liveEdges, {
+          fixedEdgeIds,
+          lockedSourceEdgeIds,
+          lockedTargetEdgeIds,
+        });
+
+        for (const nextEdge of distributed) {
+          if (fixedEdgeIds.has(nextEdge.id)) continue;
+          const edgeMap = edgesMap.get(nextEdge.id);
+          if (!edgeMap) continue;
+          const before = snapshotMap(edgeMap);
+          if (nextEdge.sourceHandle) edgeMap.set('sourceHandle', nextEdge.sourceHandle);
+          if (nextEdge.targetHandle) edgeMap.set('targetHandle', nextEdge.targetHandle);
+          const nextData = { ...(nextEdge.data ?? {}) } as Record<string, unknown>;
+          if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
+            delete nextData.waypoints;
+          }
+          edgeMap.set('data', nextData);
+          const after = snapshotMap(edgeMap);
+          if (!deepEqual(before, after)) {
+            diffs.push({
+              entityId: nextEdge.id,
+              entityType: 'edge',
+              opType: 'update',
+              beforeState: before,
+              afterState: after,
+            });
+          }
+        }
+
+        const edgeDiffCount = diffs.length - nodeDiffCount;
+        return { diffs, nodeDiffCount, edgeDiffCount, warnings: Array.from(new Set(warnings)) };
       });
 
       if (outcome.result.diffs.length > 0) {
+        const { nodeDiffCount, edgeDiffCount } = outcome.result;
+        const summary = edgeDiffCount > 0
+          ? `AI 自动排版调整了 ${nodeDiffCount} 个节点坐标与 ${edgeDiffCount} 条连线端口`
+          : `AI 自动排版调整了 ${nodeDiffCount} 个节点坐标`;
         ctx.batchManager.recordBatch({
           batchId,
           diagramId: input.diagramId,
           agentName: input.agentName,
-          summary: `AI 自动排版调整了 ${outcome.result.diffs.length} 个节点坐标`,
+          summary,
           status: 'active',
           diffs: outcome.result.diffs,
           createdAt: new Date().toISOString(),
