@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { filterElements, categorizeElements } from '../src/features/sidebar/tabs/elements-panel';
 import { NODE_REGISTRY_RECORD, NODE_CATEGORIES } from '@flowstudio/shared';
 
@@ -37,5 +39,15 @@ describe('Sidebar Components Logic', () => {
       ['arch-microservice', 'arch-gateway', 'arch-db-shard', 'arch-cache', 'arch-k8s-pod', 'arch-docker'].sort()
     );
     expect(typesOf(groups['形状'])).toEqual(expect.arrayContaining(['comment', 'group', 'rich-card']));
+  });
+
+  it('elements-panel exposes both horizontal and vertical swimlane pool entries', () => {
+    const code = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/sidebar/tabs/elements-panel.tsx'),
+      'utf-8'
+    );
+    expect(code).toContain('横向泳道池');
+    expect(code).toContain('竖向泳道池');
+    expect(code).toContain('application/flowstudio-pool-orientation');
   });
 });

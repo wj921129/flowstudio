@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as Y from 'yjs';
-import type { DiagramSpec } from '@flowstudio/shared';
+import { DIAGRAM_PRESETS, type DiagramSpec } from '@flowstudio/shared';
 import { buildServer } from '../src/server.js';
 
 type Server = Awaited<ReturnType<typeof buildServer>>;
@@ -222,5 +222,61 @@ describe('MCP 智能连线锚点分摊与虚线扩展全链路', () => {
       ops: [{ op: 'update_node', id: 'b', label: '下游1-改' }],
     });
     expect(addMore.data.warnings.some((w: string) => w.includes('同点连线重叠'))).toBe(true);
+  });
+
+  it('apply_ops 支持 routingType=straight、纵向泳道 add_lane 与 auto_layout tree/纵向池默认 DOWN', async () => {
+    const id = await newDiagram();
+    const res = await callTool(server, 'apply_ops', {
+      diagramId: id,
+      ops: [
+        { op: 'add_node', id: 'root', label: '入口' },
+        { op: 'add_node', id: 'c1', label: '子1' },
+        { op: 'add_node', id: 'c2', label: '子2' },
+        { op: 'add_node', id: 'db', label: '共享库', type: 'database' },
+        { op: 'connect', source: 'root', target: 'c1', routingType: 'straight' },
+        { op: 'connect', source: 'root', target: 'c2', routingType: 'orthogonal' },
+        { op: 'connect', source: 'c1', target: 'db', routingType: 'straight' },
+        { op: 'connect', source: 'c2', target: 'db', routingType: 'straight' },
+      ],
+    });
+    expect(res.isError, res.text).toBe(false);
+
+    const view1 = await callTool(server, 'get_diagram', { diagramId: id });
+    const eRootC2 = view1.data.edges.find((e: any) => e.source === 'root' && e.target === 'c2');
+    expect(eRootC2.routingType).toBe('orthogonal');
+
+    const up = await callTool(server, 'apply_ops', {
+      diagramId: id,
+      ops: [{ op: 'update_edge', id: eRootC2.id, routingType: 'straight' }],
+    });
+    expect(up.isError, up.text).toBe(false);
+
+    const treeLayout = await callTool(server, 'auto_layout', { diagramId: id, mode: 'tree' });
+    expect(treeLayout.isError, treeLayout.text).toBe(false);
+    const afterTree = await callTool(server, 'get_diagram', { diagramId: id });
+    const rootNode = afterTree.data.nodes.find((n: any) => n.id === 'root');
+    const c1Node = afterTree.data.nodes.find((n: any) => n.id === 'c1');
+    const dbNode = afterTree.data.nodes.find((n: any) => n.id === 'db');
+    expect(c1Node.position.y).toBeGreaterThan(rootNode.position.y);
+    expect(dbNode.position.y).toBeGreaterThan(c1Node.position.y);
+    expect(afterTree.data.edges.every((e: any) => e.routingType === 'straight')).toBe(true);
+
+    const vertId = await newDiagram();
+    const vertSpec = DIAGRAM_PRESETS.find((p) => p.id === 'swimlane-vertical-business')!.spec;
+    await callTool(server, 'scaffold_diagram', { diagramId: vertId, spec: vertSpec });
+    const addLaneRes = await callTool(server, 'apply_ops', {
+      diagramId: vertId,
+      ops: [{ op: 'add_lane', id: 'lane-extra', label: '外部渠道', poolId: 'pool' }],
+    });
+    expect(addLaneRes.isError, addLaneRes.text).toBe(false);
+    const vertLayout = await callTool(server, 'auto_layout', { diagramId: vertId });
+    expect(vertLayout.isError, vertLayout.text).toBe(false);
+
+    const extraPos = await server.writer.readDocument(vertId, (doc) => {
+      const m = doc.getMap<Y.Map<unknown>>('nodes').get('lane-extra')!;
+      return m.get('position') as { x: number; y: number };
+    });
+    expect(extraPos.y).toBe(40);
+    expect(extraPos.x).toBeGreaterThan(0);
   });
 });

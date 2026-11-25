@@ -32,12 +32,15 @@ export const specEdgeSchema = z.object({
   kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
   label: z.string().optional(),
   strokeStyle: z.enum(EDGE_STROKE_STYLES).optional(),
+  routingType: z.enum(['orthogonal', 'straight']).optional(),
   sourceHandle: borderHandleSchema.optional(),
   targetHandle: borderHandleSchema.optional(),
 });
 
 export const diagramSpecSchema = z.object({
   paradigm: z.enum(['vertical-flow', 'timeline-annotated', 'swimlane', 'tiered-dag', 'tree']),
+  orientation: z.enum(['horizontal', 'vertical']).optional(),
+  edgeRouting: z.enum(['orthogonal', 'straight']).optional(),
   title: z.string().optional(),
   lanes: z.array(z.object({ id: z.string().min(1), label: z.string().min(1) })).optional(),
   nodes: z.array(specNodeSchema),

@@ -3,7 +3,7 @@
  * @description 处理普通节点拖入/拖出泳道时的父子关系绑定、坐标系转换与容器自动扩容
  */
 
-import type { FlowNode, XYPosition } from '@flowstudio/shared';
+import { distributeEdgePorts, isAutoManagedPort, type FlowEdge, type FlowNode, type XYPosition } from '@flowstudio/shared';
 import { getNodeDimensions } from './group-calculator';
 import { isNodeLocked } from './node-lock-manager';
 
@@ -136,14 +136,17 @@ export function handleNodeDragNesting(
     const isDifferentParent = draggedNode.parentId !== targetLane.id;
 
     if (isDifferentParent) {
-      // 换算并赋予 parentId
+      const targetPool = targetLane.parentId ? currentNodes.find((n) => n.id === targetLane!.parentId) : null;
+      const targetHorizontal = (targetPool?.data?.orientation ?? 'horizontal') === 'horizontal';
+      const minLocalX = targetHorizontal ? 50 : 10;
+      const minLocalY = targetHorizontal ? 10 : 46;
       nextNodes = nextNodes.map((n) => {
         if (n.id === draggedNode.id) {
           return {
             ...n,
             parentId: targetLane!.id,
             extent: undefined,
-            position: { x: Math.max(10, localX), y: Math.max(10, localY) },
+            position: { x: Math.max(minLocalX, localX), y: Math.max(minLocalY, localY) },
           };
         }
         return n;
@@ -197,12 +200,12 @@ export function handleNodeDragNesting(
             );
             poolTotalH = Math.max(poolTotalH, totalLaneHeights + (pool.data?.headerSize ?? 40));
           } else {
-            poolTotalH = Math.max(poolTotalH, neededLaneH);
+            poolTotalH = Math.max(poolTotalH, neededLaneH + (pool.data?.headerSize ?? 40));
             const totalLaneWidths = poolLanes.reduce(
-              (sum, l) => sum + (l.width ?? (l.style?.width as number) ?? 220),
+              (sum, l) => sum + (l.width ?? (l.style?.width as number) ?? 240),
               0
             );
-            poolTotalW = Math.max(poolTotalW, totalLaneWidths + (pool.data?.headerSize ?? 40));
+            poolTotalW = Math.max(poolTotalW, totalLaneWidths);
           }
 
           nextNodes = nextNodes.map((n) => {
@@ -265,15 +268,49 @@ export function reorderPoolOrientation(
   });
 
   const isVertical = targetOrientation === 'vertical';
-  let nextNodes = [...currentNodes];
+  const childPosMap = new Map<string, XYPosition>();
+  const laneDimMap = new Map<string, { x: number; y: number; width: number; height: number }>();
 
   if (isVertical) {
-    const laneW = 240;
-    const laneH = Math.max(450, (pool.height ?? 450) - headerSize);
-    const newPoolW = Math.max(pool.width ?? 600, sortedLanes.length * laneW);
-    const newPoolH = laneH + headerSize;
+    let offsetX = 0;
+    let maxLaneH = Math.max(480, (pool.height ?? 480) - headerSize);
+    const laneWidths = new Map<string, number>();
 
-    nextNodes = nextNodes.map((n) => {
+    for (const lane of sortedLanes) {
+      const children = currentNodes
+        .filter((n) => n.parentId === lane.id)
+        .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
+      let maxChildW = 0;
+      let cursorY = 60;
+      for (const c of children) {
+        const dim = getNodeDimensions(c);
+        maxChildW = Math.max(maxChildW, dim.width);
+        cursorY += dim.height + 50;
+      }
+      const laneW = Math.max(240, maxChildW + 80);
+      laneWidths.set(lane.id, laneW);
+      if (children.length > 0) {
+        maxLaneH = Math.max(maxLaneH, cursorY - 50 + 40);
+      }
+      let y = 60;
+      for (const c of children) {
+        const dim = getNodeDimensions(c);
+        const x = Math.max(40, Math.round((laneW - dim.width) / 2));
+        childPosMap.set(c.id, { x, y });
+        y += dim.height + 50;
+      }
+    }
+
+    for (const lane of sortedLanes) {
+      const w = laneWidths.get(lane.id) ?? 240;
+      laneDimMap.set(lane.id, { x: offsetX, y: headerSize, width: w, height: maxLaneH });
+      offsetX += w;
+    }
+
+    const newPoolW = Math.max(240, offsetX);
+    const newPoolH = headerSize + maxLaneH;
+
+    return currentNodes.map((n) => {
       if (n.id === poolId) {
         return {
           ...n,
@@ -283,47 +320,129 @@ export function reorderPoolOrientation(
           data: { ...n.data, orientation: 'vertical', laneOrder: sortedLanes.map((l) => l.id) },
         };
       }
-      const laneIdx = sortedLanes.findIndex((l) => l.id === n.id);
-      if (laneIdx !== -1) {
+      const frame = laneDimMap.get(n.id);
+      if (frame) {
         return {
           ...n,
-          position: { x: laneIdx * laneW, y: headerSize },
-          width: laneW,
-          height: laneH,
-          style: { ...(n.style || {}), width: laneW, height: laneH },
+          position: { x: frame.x, y: frame.y },
+          width: frame.width,
+          height: frame.height,
+          style: { ...(n.style || {}), width: frame.width, height: frame.height },
         };
       }
-      return n;
-    });
-  } else {
-    const laneH = 200;
-    const laneW = Math.max(700, pool.width ?? 800);
-    const newPoolW = laneW;
-    const newPoolH = headerSize + sortedLanes.length * laneH;
-
-    nextNodes = nextNodes.map((n) => {
-      if (n.id === poolId) {
-        return {
-          ...n,
-          width: newPoolW,
-          height: newPoolH,
-          style: { ...(n.style || {}), width: newPoolW, height: newPoolH },
-          data: { ...n.data, orientation: 'horizontal', laneOrder: sortedLanes.map((l) => l.id) },
-        };
-      }
-      const laneIdx = sortedLanes.findIndex((l) => l.id === n.id);
-      if (laneIdx !== -1) {
-        return {
-          ...n,
-          position: { x: 0, y: headerSize + laneIdx * laneH },
-          width: laneW,
-          height: laneH,
-          style: { ...(n.style || {}), width: laneW, height: laneH },
-        };
+      const cPos = childPosMap.get(n.id);
+      if (cPos) {
+        return { ...n, position: cPos };
       }
       return n;
     });
   }
 
-  return nextNodes;
+  let maxLaneW = Math.max(800, pool.width ?? 800);
+  const laneHeights = new Map<string, number>();
+
+  for (const lane of sortedLanes) {
+    const children = currentNodes
+      .filter((n) => n.parentId === lane.id)
+      .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+    let maxChildH = 0;
+    let cursorX = 64;
+    for (const c of children) {
+      const dim = getNodeDimensions(c);
+      maxChildH = Math.max(maxChildH, dim.height);
+      cursorX += dim.width + 50;
+    }
+    const laneH = Math.max(200, maxChildH + 80);
+    laneHeights.set(lane.id, laneH);
+    if (children.length > 0) {
+      maxLaneW = Math.max(maxLaneW, cursorX - 50 + 40);
+    }
+    let x = 64;
+    for (const c of children) {
+      const dim = getNodeDimensions(c);
+      const y = Math.max(40, Math.round((laneH - dim.height) / 2));
+      childPosMap.set(c.id, { x, y });
+      x += dim.width + 50;
+    }
+  }
+
+  let offsetY = headerSize;
+  for (const lane of sortedLanes) {
+    const h = laneHeights.get(lane.id) ?? 200;
+    laneDimMap.set(lane.id, { x: 0, y: offsetY, width: maxLaneW, height: h });
+    offsetY += h;
+  }
+
+  const newPoolW = maxLaneW;
+  const newPoolH = offsetY;
+
+  return currentNodes.map((n) => {
+    if (n.id === poolId) {
+      return {
+        ...n,
+        width: newPoolW,
+        height: newPoolH,
+        style: { ...(n.style || {}), width: newPoolW, height: newPoolH },
+        data: { ...n.data, orientation: 'horizontal', laneOrder: sortedLanes.map((l) => l.id) },
+      };
+    }
+    const frame = laneDimMap.get(n.id);
+    if (frame) {
+      return {
+        ...n,
+        position: { x: frame.x, y: frame.y },
+        width: frame.width,
+        height: frame.height,
+        style: { ...(n.style || {}), width: frame.width, height: frame.height },
+      };
+    }
+    const cPos = childPosMap.get(n.id);
+    if (cPos) {
+      return { ...n, position: cPos };
+    }
+    return n;
+  });
+}
+
+export function refreshPoolOrientationEdges(
+  poolId: string,
+  nextNodes: FlowNode[],
+  edges: FlowEdge[]
+): FlowEdge[] {
+  const laneIds = new Set(nextNodes.filter((n) => n.parentId === poolId).map((n) => n.id));
+  const memberIds = new Set(
+    nextNodes
+      .filter((n) => n.parentId && laneIds.has(n.parentId))
+      .map((n) => n.id)
+  );
+  if (memberIds.size === 0 || edges.length === 0) return edges;
+
+  const fixedEdgeIds = new Set<string>();
+  const lockedSourceEdgeIds = new Set<string>();
+  const lockedTargetEdgeIds = new Set<string>();
+  const prepared = edges.map((edge) => {
+    const touchesPool = memberIds.has(edge.source) || memberIds.has(edge.target);
+    if (!touchesPool) {
+      fixedEdgeIds.add(edge.id);
+      return edge;
+    }
+    const sourceAuto = isAutoManagedPort(edge.sourceHandle, edge.data?.autoSourceHandle);
+    const targetAuto = isAutoManagedPort(edge.targetHandle, edge.data?.autoTargetHandle);
+    if (!sourceAuto) lockedSourceEdgeIds.add(edge.id);
+    if (!targetAuto) lockedTargetEdgeIds.add(edge.id);
+    const nextData = edge.data ? { ...edge.data } : undefined;
+    if (nextData && 'waypoints' in nextData) delete nextData.waypoints;
+    return {
+      ...edge,
+      ...(sourceAuto ? { sourceHandle: undefined } : {}),
+      ...(targetAuto ? { targetHandle: undefined } : {}),
+      ...(nextData ? { data: nextData } : {}),
+    };
+  });
+
+  return distributeEdgePorts(nextNodes, prepared, {
+    fixedEdgeIds,
+    lockedSourceEdgeIds,
+    lockedTargetEdgeIds,
+  });
 }

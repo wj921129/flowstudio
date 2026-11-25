@@ -62,6 +62,21 @@ describe('多格式数据导入与跨生态互通系统验收', () => {
       expect(html).toContain('id="clear"');
       expect(html).toContain('applySpotlight');
     });
+
+    it('支持嵌套竖向泳道世界坐标转换与 straight 直线边导出', () => {
+      const nodes: FlowNode[] = [
+        { id: 'pool', type: 'pool', position: { x: 50, y: 50 }, width: 480, height: 520, data: { label: '竖向池', type: 'pool', orientation: 'vertical' } },
+        { id: 'lane1', type: 'lane', parentId: 'pool', position: { x: 0, y: 40 }, width: 240, height: 480, data: { label: '客户端', type: 'lane' } },
+        { id: 'n1', type: 'process', parentId: 'lane1', position: { x: 40, y: 60 }, width: 160, height: 80, data: { label: '下单', type: 'process' } },
+        { id: 'n2', type: 'process', parentId: 'lane1', position: { x: 40, y: 190 }, width: 160, height: 80, data: { label: '确认', type: 'process' } },
+      ];
+      const edges: FlowEdge[] = [
+        { id: 'e1', source: 'n1', target: 'n2', type: 'straight', data: { routingType: 'straight', waypoints: [{ x: 999, y: 999 }] } },
+      ];
+      const html = buildStandaloneHtml(nodes, edges, '竖向与直线导出');
+      expect(html).toContain('x=\\"92\\" y=\\"152\\"');
+      expect(html).not.toContain('999 999');
+    });
   });
 
   describe('FlowStore appendSubgraph 增量追加与 ID 防冲突', () => {

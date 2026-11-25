@@ -110,8 +110,8 @@ export function computeSwimlanePlacement(params: {
   const laneFrames: SwimlanePlacement['laneFrames'] = new Map();
   const childPositions: SwimlanePlacement['childPositions'] = new Map();
 
-  let offset = LANE_HEADER_SIZE;
-  let crossExtent = params.horizontal ? 800 : 600;
+  let offset = params.horizontal ? LANE_HEADER_SIZE : 0;
+  let crossExtent = params.horizontal ? 800 : 480;
 
   for (const laneId of params.laneIds) {
     const items = laneChildren.get(laneId)!;
@@ -151,10 +151,10 @@ export function computeSwimlanePlacement(params: {
       offset += height;
       crossExtent = Math.max(crossExtent, width);
     } else {
-      height = Math.max(600, globalMaxY - globalMinY + LAYOUT_PADDING * 2);
-      width = Math.max(220, items.length > 0 ? innerMaxX - innerMinX + LAYOUT_PADDING * 2 : 0);
+      height = Math.max(480, globalMaxY - globalMinY + 60 + LAYOUT_PADDING);
+      width = Math.max(240, items.length > 0 ? innerMaxX - innerMinX + LAYOUT_PADDING * 2 : 0);
       x = offset;
-      y = 0;
+      y = LANE_HEADER_SIZE;
       offset += width;
       crossExtent = Math.max(crossExtent, height);
     }
@@ -166,7 +166,7 @@ export function computeSwimlanePlacement(params: {
         : Math.max(LAYOUT_PADDING, item.pos.x - innerMinX + LAYOUT_PADDING);
       const localY = params.horizontal
         ? Math.max(LAYOUT_PADDING, item.pos.y - innerMinY + LAYOUT_PADDING)
-        : Math.max(LAYOUT_PADDING, item.pos.y - globalMinY + LAYOUT_PADDING);
+        : Math.max(60, item.pos.y - globalMinY + 60);
       childPositions.set(item.id, { x: localX, y: localY });
     }
   }
@@ -174,7 +174,7 @@ export function computeSwimlanePlacement(params: {
   return {
     poolSize: params.horizontal
       ? { width: Math.max(800, crossExtent), height: offset }
-      : { width: offset, height: Math.max(600, crossExtent) },
+      : { width: Math.max(240, offset), height: LANE_HEADER_SIZE + Math.max(480, crossExtent) },
     laneFrames,
     childPositions,
   };

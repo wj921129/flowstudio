@@ -22,5 +22,6 @@ export * from './spec/normalize.js';
 export * from './spec/presets.js';
 export * from './render/types.js';
 export * from './render/constants.js';
+export * from './render/tree-layout.js';
 export * from './render/index.js';
 

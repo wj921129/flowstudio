@@ -202,13 +202,13 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     }
   };
 
-  const handleAutoLayout = async () => {
+  const handleAutoLayout = async (mode: 'layered' | 'tree' = 'layered') => {
     if (nodes.length === 0 || isLayouting) return;
     try {
       setIsLayouting(true);
-      const res = await layoutDiagram(nodes, edges);
+      const res = await layoutDiagram(nodes, edges, { mode });
       setDiagram(res.nodes, res.edges);
-      showToast('自动排版已完成');
+      showToast(mode === 'tree' ? '树状排版已完成' : '自动排版已完成');
     } catch (err) {
       console.error('[TopBar] 自动排版失败:', err);
       showToast('自动排版异常，已保留原样');
@@ -637,21 +637,38 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
               </button>
 
               {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMoreOpen(false);
-                    handleAutoLayout();
-                  }}
-                  disabled={isLayouting || nodes.length === 0}
-                  className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Sparkles className={`w-4 h-4 text-fs-text-muted shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
-                  <div className="flex flex-col">
-                    <span className="font-medium">{isLayouting ? '排版中...' : '自动排版'}</span>
-                    <span className="text-[10px] text-fs-text-muted">整图与泳道自动正交排版</span>
-                  </div>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreOpen(false);
+                      handleAutoLayout('layered');
+                    }}
+                    disabled={isLayouting || nodes.length === 0}
+                    className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles className={`w-4 h-4 text-fs-text-muted shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
+                    <div className="flex flex-col">
+                      <span className="font-medium">{isLayouting ? '排版中...' : '自动排版'}</span>
+                      <span className="text-[10px] text-fs-text-muted">整图与泳道自动正交排版</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreOpen(false);
+                      handleAutoLayout('tree');
+                    }}
+                    disabled={isLayouting || nodes.length === 0}
+                    className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles className={`w-4 h-4 text-fs-text-muted shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
+                    <div className="flex flex-col">
+                      <span className="font-medium">树状排版（自上而下）</span>
+                      <span className="text-[10px] text-fs-text-muted">从上到下对称展开树与汇聚节点</span>
+                    </div>
+                  </button>
+                </>
               )}
 
               <button

@@ -13,7 +13,7 @@ import { InlineTextEditor } from './inline-text-editor';
 import { useFlowStore } from '../../../stores/flow-store';
 import { usePresentationStore } from '../../presentation';
 import { isNodeLocked } from '../utils/node-lock-manager';
-import { reorderPoolOrientation } from '../utils/lane-nesting-manager';
+import { refreshPoolOrientationEdges, reorderPoolOrientation } from '../utils/lane-nesting-manager';
 
 export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
   const { id, data, selected } = props;
@@ -81,16 +81,16 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
       laneW = poolWidth;
       nextPoolHeight = Math.max(poolHeight, laneY + laneH);
     } else {
-      // 纵向：新泳道追加在右侧
       const currentRight = existingLanes.reduce(
-        (max, l) => Math.max(max, l.position.x + (l.width ?? (l.style?.width as number) ?? 220)),
-        headerSize
+        (max, l) => Math.max(max, l.position.x + (l.width ?? (l.style?.width as number) ?? 240)),
+        0
       );
       laneX = currentRight;
-      laneW = 220;
-      laneH = poolHeight - headerSize;
+      laneW = 240;
+      laneH = Math.max(480, poolHeight - headerSize);
       laneY = headerSize;
       nextPoolWidth = Math.max(poolWidth, laneX + laneW);
+      nextPoolHeight = Math.max(poolHeight, headerSize + laneH);
     }
 
     const newLaneNode = {
@@ -117,17 +117,29 @@ export const PoolNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => {
     store.updateNodeDimensions(id, nextPoolWidth, nextPoolHeight);
   };
 
-  // 切换横向与纵向方向
   const handleToggleOrientation = (e: React.MouseEvent) => {
     if (isPanOrLocked) return;
     e.stopPropagation();
-    const nextOrientation = isHorizontal ? 'vertical' : 'horizontal';
     const store = useFlowStore.getState();
-    const prevById = new Map(store.nodes.map((n) => [n.id, n]));
+    const poolLaneIds = new Set(store.nodes.filter((n) => n.parentId === id).map((n) => n.id));
+    const hasLockedMember = store.nodes.some(
+      (n) =>
+        (n.id === id || poolLaneIds.has(n.id) || (n.parentId ? poolLaneIds.has(n.parentId) : false))
+        && (n.data?.lockMode === 'position' || n.data?.lockMode === 'full')
+    );
+    if (hasLockedMember) {
+      store.showToast('泳道池内包含已锁定节点，请先解锁后再切换方向');
+      return;
+    }
+    const nextOrientation = isHorizontal ? 'vertical' : 'horizontal';
+    const prevNodeById = new Map(store.nodes.map((n) => [n.id, n]));
+    const prevEdgeById = new Map(store.edges.map((edge) => [edge.id, edge]));
     const nextNodes = reorderPoolOrientation(id, nextOrientation, store.nodes);
-    const changedNodes = nextNodes.filter((n) => prevById.get(n.id) !== n);
-    if (changedNodes.length > 0) {
-      store.applyIncrementalUpdate({ putNodes: changedNodes });
+    const nextEdges = refreshPoolOrientationEdges(id, nextNodes, store.edges);
+    const changedNodes = nextNodes.filter((n) => prevNodeById.get(n.id) !== n);
+    const changedEdges = nextEdges.filter((edge) => prevEdgeById.get(edge.id) !== edge);
+    if (changedNodes.length > 0 || changedEdges.length > 0) {
+      store.applyIncrementalUpdate({ putNodes: changedNodes, putEdges: changedEdges });
     }
   };
 

@@ -56,6 +56,7 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
       fixedEdgeIds.add(edge.id);
       return {
         ...edge,
+        ...(protectedEdge.type ? { type: protectedEdge.type } : {}),
         ...(protectedEdge.sourceHandle ? { sourceHandle: protectedEdge.sourceHandle } : {}),
         ...(protectedEdge.targetHandle ? { targetHandle: protectedEdge.targetHandle } : {}),
         data: { ...(edge.data ?? {}), ...(protectedEdge.data ?? {}) },
@@ -63,6 +64,7 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
     }
 
     const specEdge = specEdgesByKey.get(key);
+    const routing = specEdge?.routingType ?? n.edgeRouting ?? (edge.type === 'straight' ? 'straight' : 'orthogonal');
     const nextSourceHandle = specEdge?.sourceHandle ?? edge.sourceHandle;
     const nextTargetHandle = specEdge?.targetHandle ?? edge.targetHandle;
     if (specEdge?.sourceHandle && hasExplicitBorderOffset(specEdge.sourceHandle)) {
@@ -75,13 +77,16 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
     const strokeStyle = specEdge?.strokeStyle ?? (specEdge?.kind === 'annotate' ? 'dashed' : undefined);
     const prevStyle = edge.data?.style;
     const nextStyle = strokeStyle ? { ...(prevStyle ?? {}), strokeStyle } : prevStyle;
-    const nextData = nextStyle ? { ...(edge.data ?? {}), style: nextStyle } : edge.data;
+    const baseData: Record<string, unknown> = { ...(edge.data ?? {}), routingType: routing };
+    if (nextStyle) baseData.style = nextStyle;
+    if (routing === 'straight') delete baseData.waypoints;
 
     return {
       ...edge,
+      type: routing,
       ...(nextSourceHandle ? { sourceHandle: nextSourceHandle } : {}),
       ...(nextTargetHandle ? { targetHandle: nextTargetHandle } : {}),
-      ...(nextData ? { data: nextData } : {}),
+      data: baseData as FlowEdge['data'],
     };
   });
 

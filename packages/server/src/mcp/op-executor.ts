@@ -204,18 +204,21 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           targetHandle?: string,
           autoSourceHandle?: string,
           autoTargetHandle?: string,
+          routingType?: 'orthogonal' | 'straight',
         ) => {
           const edgeId = ctx.newEntityId('edge');
           const edgeMap = new Y.Map<unknown>();
+          const resolvedRouting = routingType ?? 'orthogonal';
           edgeMap.set('id', edgeId);
           edgeMap.set('source', source);
           edgeMap.set('target', target);
           if (sourceHandle) edgeMap.set('sourceHandle', sourceHandle);
           if (targetHandle) edgeMap.set('targetHandle', targetHandle);
-          edgeMap.set('type', 'orthogonal');
+          edgeMap.set('type', resolvedRouting);
           edgeMap.set('data', {
             ...(label !== undefined ? { label } : {}),
             ...(kind ? { kind } : {}),
+            ...(routingType ? { routingType } : {}),
             ...(style && Object.keys(style).length > 0 ? { style } : {}),
             ...(autoSourceHandle ? { autoSourceHandle } : {}),
             ...(autoTargetHandle ? { autoTargetHandle } : {}),
@@ -433,6 +436,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 picked.targetHandle,
                 picked.sourceAuto ? picked.sourceHandle : undefined,
                 picked.targetAuto ? picked.targetHandle : undefined,
+                op.routingType,
               );
               appliedCount++;
               break;
@@ -547,6 +551,11 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 };
                 nextData.style = mergedStyle;
               }
+              if (op.routingType !== undefined) {
+                edgeMap.set('type', op.routingType);
+                nextData.routingType = op.routingType;
+                if (op.routingType === 'straight') delete nextData.waypoints;
+              }
               if (
                 (op.sourceHandle !== undefined || op.targetHandle !== undefined)
                 && Array.isArray(nextData.waypoints)
@@ -593,10 +602,42 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                   if (isAtomic) throw new Error(`未找到泳道池 "${op.poolId}"`);
                   warnings.push(`未找到泳道池 ${op.poolId}，泳道将作为独立泳道创建`);
                 } else {
-                  laneMap.set('parentId', op.poolId);
-                  laneMap.set('extent', 'parent');
                   const before = snapshotMap(poolMap);
                   const poolData = (poolMap.get('data') as Record<string, unknown>) || {};
+                  const isVertical = poolData.orientation === 'vertical';
+                  const headerSize = typeof poolData.headerSize === 'number' ? poolData.headerSize : LANE_HEADER_SIZE;
+                  const poolSize = getMapDimensions(poolMap);
+                  let maxBottom = headerSize;
+                  let maxRight = 0;
+                  nodesMap.forEach((m) => {
+                    if (m.get('type') === 'lane' && m.get('parentId') === op.poolId) {
+                      const pos = (m.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+                      const dim = getMapDimensions(m);
+                      maxBottom = Math.max(maxBottom, pos.y + dim.height);
+                      maxRight = Math.max(maxRight, pos.x + dim.width);
+                    }
+                  });
+                  if (isVertical) {
+                    const laneW = 240;
+                    const laneH = Math.max(480, poolSize.height - headerSize);
+                    laneMap.set('position', { x: maxRight, y: headerSize });
+                    laneMap.set('width', laneW);
+                    laneMap.set('height', laneH);
+                    const nextPoolW = Math.max(poolSize.width, maxRight + laneW);
+                    const nextPoolH = Math.max(poolSize.height, headerSize + laneH);
+                    poolMap.set('width', nextPoolW);
+                    poolMap.set('height', nextPoolH);
+                  } else {
+                    const laneW = Math.max(750, poolSize.width);
+                    const laneH = 200;
+                    laneMap.set('position', { x: 0, y: maxBottom });
+                    laneMap.set('width', laneW);
+                    laneMap.set('height', laneH);
+                    poolMap.set('width', laneW);
+                    poolMap.set('height', Math.max(poolSize.height, maxBottom + laneH));
+                  }
+                  laneMap.set('parentId', op.poolId);
+                  laneMap.set('extent', 'parent');
                   poolMap.set('data', {
                     ...poolData,
                     laneOrder: [...((poolData.laneOrder as string[]) || []), laneId],
@@ -698,6 +739,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
 
               let inheritedLabel: string | undefined;
               let inheritedStyle: Record<string, unknown> | undefined;
+              let inheritedRouting: 'orthogonal' | 'straight' | undefined;
               for (const edgeId of originalEdgeIds) {
                 const edgeMap = edgesMap.get(edgeId);
                 if (!edgeMap) continue;
@@ -708,6 +750,10 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 }
                 if (!inheritedStyle && data.style && typeof data.style === 'object') {
                   inheritedStyle = { ...(data.style as Record<string, unknown>) };
+                }
+                if (!inheritedRouting) {
+                  const r = data.routingType ?? edgeMap.get('type');
+                  if (r === 'straight' || r === 'orthogonal') inheritedRouting = r;
                 }
               }
 
@@ -720,6 +766,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
               }
 
               const betweenStyle = mergeEdgeStyle(inheritedStyle, op.strokeStyle);
+              const betweenRouting = op.routingType ?? inheritedRouting;
               const preferredSourceSide = direction === 'DOWN' ? 'bottom' : 'right';
               const preferredTargetSide = direction === 'DOWN' ? 'top' : 'left';
 
@@ -740,6 +787,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 upPorts.targetHandle,
                 upPorts.sourceAuto ? upPorts.sourceHandle : undefined,
                 upPorts.targetAuto ? upPorts.targetHandle : undefined,
+                betweenRouting,
               );
 
               const downGraph = snapshotGraphForPorts();
@@ -757,6 +805,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 downPorts.targetHandle,
                 downPorts.sourceAuto ? downPorts.sourceHandle : undefined,
                 downPorts.targetAuto ? downPorts.targetHandle : undefined,
+                betweenRouting,
               );
 
               const outgoing = new Map<string, string[]>();

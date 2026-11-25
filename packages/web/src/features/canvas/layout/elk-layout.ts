@@ -4,21 +4,26 @@
  */
 
 import ELK from 'elkjs/lib/elk.bundled.js';
-import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
+import {
+  distributeEdgePorts,
+  isAutoManagedPort,
+  layoutTreeGraph,
+  type FlowEdge,
+  type FlowNode,
+  type XYPosition,
+} from '@flowstudio/shared';
 
 export interface LayoutOptions {
-  /** 排版主方向：RIGHT (横向从左往右) | DOWN (纵向从上往下) */
   direction?: 'RIGHT' | 'DOWN';
-  /** 节点同层间距 */
+  mode?: 'layered' | 'tree';
   nodeSpacing?: number;
-  /** 节点跨层间距 */
   layerSpacing?: number;
-  /** 泳道或池内边距 */
   padding?: number;
 }
 
-const defaultOptions: Required<LayoutOptions> = {
+const defaultOptions: Required<Omit<LayoutOptions, 'mode'>> & { mode: 'layered' | 'tree' } = {
   direction: 'RIGHT',
+  mode: 'layered',
   nodeSpacing: 60,
   layerSpacing: 80,
   padding: 40,
@@ -26,9 +31,49 @@ const defaultOptions: Required<LayoutOptions> = {
 
 const elkInstance = new ELK();
 
-/**
- * 执行整图或局部自动排版
- */
+function refreshLayoutEdgePorts(nodes: FlowNode[], edges: FlowEdge[], treeBackKeys?: Set<string>, isTreeMode?: boolean): FlowEdge[] {
+  if (edges.length === 0) return edges;
+  const fixedEdgeIds = new Set<string>();
+  const lockedSourceEdgeIds = new Set<string>();
+  const lockedTargetEdgeIds = new Set<string>();
+  const nodeLocked = new Map<string, boolean>();
+  for (const n of nodes) {
+    nodeLocked.set(n.id, n.data?.lockMode === 'position' || n.data?.lockMode === 'full');
+  }
+  const prepared = edges.map((edge) => {
+    if (nodeLocked.get(edge.source) || nodeLocked.get(edge.target)) {
+      fixedEdgeIds.add(edge.id);
+      return edge;
+    }
+    const sourceAuto = isAutoManagedPort(edge.sourceHandle, edge.data?.autoSourceHandle);
+    const targetAuto = isAutoManagedPort(edge.targetHandle, edge.data?.autoTargetHandle);
+    if (!sourceAuto) lockedSourceEdgeIds.add(edge.id);
+    if (!targetAuto) lockedTargetEdgeIds.add(edge.id);
+    const kind = edge.data?.kind as string | undefined;
+    let seededSource = edge.sourceHandle;
+    let seededTarget = edge.targetHandle;
+    if (isTreeMode) {
+      const isBack = kind === 'loop' || Boolean(treeBackKeys?.has(`${edge.source}|${edge.target}|${kind ?? 'next'}`));
+      if (sourceAuto) seededSource = kind === 'annotate' || isBack ? 'right' : 'bottom';
+      if (targetAuto) seededTarget = kind === 'annotate' ? 'left' : isBack ? 'right' : 'top';
+    }
+    const isStraight = edge.type === 'straight' || edge.data?.routingType === 'straight';
+    const nextData = edge.data ? { ...edge.data } : undefined;
+    if (isStraight && nextData && 'waypoints' in nextData) delete nextData.waypoints;
+    return {
+      ...edge,
+      ...(seededSource ? { sourceHandle: seededSource } : {}),
+      ...(seededTarget ? { targetHandle: seededTarget } : {}),
+      ...(nextData ? { data: nextData } : {}),
+    };
+  });
+  return distributeEdgePorts(nodes, prepared, {
+    fixedEdgeIds,
+    lockedSourceEdgeIds,
+    lockedTargetEdgeIds,
+  });
+}
+
 export async function layoutDiagram(
   nodes: FlowNode[],
   edges: FlowEdge[],
@@ -45,7 +90,48 @@ export async function layoutDiagram(
     return layoutSwimlaneDiagram(nodes, edges, opts);
   }
 
+  if (opts.mode === 'tree') {
+    return layoutTreeDiagram(nodes, edges);
+  }
+
   return layoutStandardFlowchart(nodes, edges, opts);
+}
+
+function layoutTreeDiagram(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const treeRes = layoutTreeGraph(
+    nodes.map((n) => {
+      const w = n.width ?? (n.style?.width as number) ?? 160;
+      const h = n.height ?? (n.style?.height as number) ?? 80;
+      const locked = n.data?.lockMode === 'position' || n.data?.lockMode === 'full';
+      return {
+        id: n.id,
+        width: typeof w === 'number' ? w : 160,
+        height: typeof h === 'number' ? h : 80,
+        role: typeof n.data?.role === 'string' ? n.data.role : undefined,
+        attachTo: typeof n.data?.attachTo === 'string' ? n.data.attachTo : undefined,
+        fixed: locked ? { position: n.position, width: typeof w === 'number' ? w : 160, height: typeof h === 'number' ? h : 80 } : undefined,
+      };
+    }),
+    edges.map((e) => ({
+      from: e.source,
+      to: e.target,
+      kind: typeof e.data?.kind === 'string' ? e.data.kind : undefined,
+    })),
+    { origin: { x: 50, y: 50 } },
+  );
+
+  const nextNodes = nodes.map((n) => {
+    if (n.data?.lockMode === 'position' || n.data?.lockMode === 'full') return n;
+    const box = treeRes.positions.get(n.id);
+    if (!box) return n;
+    return { ...n, position: { x: box.x, y: box.y } };
+  });
+
+  const nextEdges = refreshLayoutEdgePorts(nextNodes, edges, treeRes.backEdgeKeys, true);
+  return { nodes: nextNodes, edges: nextEdges };
 }
 
 /**
@@ -130,6 +216,11 @@ async function layoutStandardFlowchart(
     });
 
     const nextEdges = edges.map((edge) => {
+      if (edge.type === 'straight' || edge.data?.routingType === 'straight') {
+        const nextData = edge.data ? { ...edge.data } : undefined;
+        if (nextData && 'waypoints' in nextData) delete nextData.waypoints;
+        return { ...edge, type: 'straight', ...(nextData ? { data: nextData } : {}) };
+      }
       const wp = waypointsMap.get(edge.id);
       if (!wp || wp.length === 0) return edge;
       return {
@@ -231,13 +322,13 @@ async function layoutSwimlaneDiagram(
     if (globalMinY === Infinity) globalMinY = 0;
     if (globalMaxY === -Infinity) globalMaxY = 400;
 
-    let currentOffset = headerSize;
+    let currentOffset = isHorizontal ? headerSize : 0;
     const laneLayoutInfos = new Map<string, { x: number; y: number; width: number; height: number; innerMinY: number; innerMinX: number }>();
 
     for (const lane of lanes) {
       const b = laneBounds.get(lane.id)!;
-      let laneW = isHorizontal ? Math.max(750, globalMaxX - globalMinX + padding * 2) : 220;
-      let laneH = isHorizontal ? 200 : Math.max(600, globalMaxY - globalMinY + padding * 2);
+      let laneW = isHorizontal ? Math.max(800, globalMaxX - globalMinX + padding * 2) : 240;
+      let laneH = isHorizontal ? 200 : Math.max(480, globalMaxY - globalMinY + 60 + padding);
 
       if (b.count > 0) {
         if (isHorizontal) {
@@ -250,7 +341,7 @@ async function layoutSwimlaneDiagram(
       }
 
       const laneX = isHorizontal ? 0 : currentOffset;
-      const laneY = isHorizontal ? currentOffset : 0;
+      const laneY = isHorizontal ? currentOffset : headerSize;
 
       laneLayoutInfos.set(lane.id, {
         x: laneX,
@@ -266,10 +357,11 @@ async function layoutSwimlaneDiagram(
 
     const totalPoolWidth = isHorizontal
       ? Math.max(800, globalMaxX - globalMinX + padding * 2)
-      : currentOffset;
+      : Math.max(240, currentOffset);
+    const maxVerticalLaneH = Math.max(480, ...Array.from(laneLayoutInfos.values()).map((info) => info.height));
     const totalPoolHeight = isHorizontal
       ? currentOffset
-      : Math.max(600, globalMaxY - globalMinY + padding * 2);
+      : headerSize + maxVerticalLaneH;
 
     // 重新组装所有节点
     const nextNodes = nodes.map((node) => {
@@ -291,7 +383,7 @@ async function layoutSwimlaneDiagram(
       const laneInfo = laneLayoutInfos.get(node.id);
       if (laneInfo) {
         const laneW = isHorizontal ? totalPoolWidth : laneInfo.width;
-        const laneH = isHorizontal ? laneInfo.height : totalPoolHeight;
+        const laneH = isHorizontal ? laneInfo.height : maxVerticalLaneH;
         return {
           ...node,
           position: { x: laneInfo.x, y: laneInfo.y },
@@ -315,15 +407,15 @@ async function layoutSwimlaneDiagram(
         const globalPos = globalPosMap.get(node.id) ?? node.position;
 
         const localX = isHorizontal
-          ? globalPos.x - globalMinX + padding
-          : globalPos.x - laneInfo.innerMinX + padding;
+          ? Math.max(64, globalPos.x - globalMinX + 64)
+          : Math.max(padding, globalPos.x - laneInfo.innerMinX + padding);
         const localY = isHorizontal
-          ? globalPos.y - laneInfo.innerMinY + padding
-          : globalPos.y - globalMinY + padding;
+          ? Math.max(padding, globalPos.y - laneInfo.innerMinY + padding)
+          : Math.max(60, globalPos.y - globalMinY + 60);
 
         return {
           ...node,
-          position: { x: Math.max(padding, localX), y: Math.max(padding, localY) },
+          position: { x: localX, y: localY },
         };
       }
 
@@ -331,7 +423,7 @@ async function layoutSwimlaneDiagram(
       return node;
     });
 
-    return { nodes: nextNodes, edges };
+    return { nodes: nextNodes, edges: refreshLayoutEdgePorts(nextNodes, edges) };
   } catch (error) {
     console.error('[elk-layout] Swimlane layout failed, returning original graph:', error);
     return { nodes, edges };

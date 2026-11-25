@@ -186,18 +186,22 @@ describe('DiagramSpec 语义校验与推断', () => {
     })).toThrow(SpecError);
   });
 
-  it('tree 范式必须含 tree 边', () => {
-    expect(() => normalizeSpec({
+  it('tree 范式兼容 tree/next/branch/annotate/loop 边并支持省略 kind', () => {
+    const n1 = normalizeSpec({
       paradigm: 'tree',
-      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
-      edges: [{ from: 'a', to: 'b' }],
-    })).toThrow(SpecError);
-    const n = normalizeSpec({
+      edgeRouting: 'straight',
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C', attachTo: 'b' }],
+      edges: [{ from: 'a', to: 'b', kind: 'branch', routingType: 'orthogonal' }],
+    });
+    expect(n1.edgeRouting).toBe('straight');
+    expect(n1.edges.some((e) => e.kind === 'branch' && e.routingType === 'orthogonal')).toBe(true);
+    expect(n1.nodes.find((x) => x.id === 'c')!.role).toBe('annotation');
+    const n2 = normalizeSpec({
       paradigm: 'tree',
       nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
       edges: [{ from: 'a', to: 'b', kind: 'tree' }],
     });
-    expect(n.edges[0].kind).toBe('tree');
+    expect(n2.edges[0].kind).toBe('tree');
   });
 
   it('非 tree 范式出现 tree 边记 warning 并忽略', () => {
@@ -216,24 +220,28 @@ describe('DiagramSpec 语义校验与推断', () => {
     expect(n.nodes).toEqual([]);
   });
 
-  it('swimlane 跨泳道 branch 边报 SpecError（不静默丢节点）', () => {
-    expect(() => normalizeSpec({
+  it('swimlane 支持跨泳道 branch 边且支持 orientation', () => {
+    const n = normalizeSpec({
       paradigm: 'swimlane',
+      orientation: 'vertical',
       lanes: [{ id: 'l1', label: 'L1' }, { id: 'l2', label: 'L2' }],
       nodes: [{ id: 'a', label: 'A', laneId: 'l1' }, { id: 'b', label: 'B', laneId: 'l2' }],
       edges: [{ from: 'a', to: 'b', kind: 'branch' }],
-    })).toThrow(SpecError);
+    });
+    expect(n.orientation).toBe('vertical');
+    expect(n.edges[0].kind).toBe('branch');
   });
 
-  it('tree 范式环/自环/多父报 SpecError', () => {
+  it('tree 范式禁止自环但允许环（渲染期破环）与多父汇聚', () => {
     const base = { paradigm: 'tree' as const, nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] };
-    expect(() => normalizeSpec({ ...base, edges: [{ from: 'a', to: 'b', kind: 'tree' }, { from: 'b', to: 'a', kind: 'tree' }] })).toThrow(SpecError);
     expect(() => normalizeSpec({ ...base, edges: [{ from: 'a', to: 'a', kind: 'tree' }] })).toThrow(SpecError);
-    expect(() => normalizeSpec({
+    expect(() => normalizeSpec({ ...base, edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }] })).not.toThrow();
+    const dag = normalizeSpec({
       paradigm: 'tree',
       nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
-      edges: [{ from: 'a', to: 'c', kind: 'tree' }, { from: 'b', to: 'c', kind: 'tree' }],
-    })).toThrow(SpecError);
+      edges: [{ from: 'a', to: 'c' }, { from: 'b', to: 'c' }],
+    });
+    expect(dag.edges.length).toBe(2);
   });
 
   it('zod schema 拒绝非法 paradigm 与空 label', () => {

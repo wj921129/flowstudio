@@ -90,6 +90,7 @@ export class AiCollaborator {
     const nodes: CompactDiagram['nodes'] = [];
     const edges: CompactDiagram['edges'] = [];
 
+    let orientation: 'horizontal' | 'vertical' | undefined;
     nodesMap.forEach((nodeMap, id) => {
       const type = (nodeMap.get('type') as string) || 'process';
       const pos = (nodeMap.get('position') as { x: number; y: number }) || { x: 0, y: 0 };
@@ -97,9 +98,13 @@ export class AiCollaborator {
       const parentId = nodeMap.get('parentId') as string | undefined;
       const label = (data.label as string) || (data.laneTitle as string) || id;
 
-      if (type === 'lane') {
+      if (type === 'pool') {
+        if (!orientation) {
+          orientation = data.orientation === 'vertical' ? 'vertical' : 'horizontal';
+        }
+      } else if (type === 'lane') {
         lanes.push({ id, label });
-      } else if (type !== 'pool') {
+      } else {
         nodes.push({
           id,
           type,
@@ -118,6 +123,7 @@ export class AiCollaborator {
       const target = edgeMap.get('target') as string;
       const sourceHandle = (edgeMap.get('sourceHandle') as string | undefined) || undefined;
       const targetHandle = (edgeMap.get('targetHandle') as string | undefined) || undefined;
+      const edgeType = edgeMap.get('type') as string | undefined;
       const data = (edgeMap.get('data') as Record<string, unknown>) || {};
       const label = (data.label as string) || undefined;
       const styleObj = data.style as Record<string, unknown> | undefined;
@@ -126,6 +132,8 @@ export class AiCollaborator {
         rawStrokeStyle === 'solid' || rawStrokeStyle === 'dashed' || rawStrokeStyle === 'dotted'
           ? rawStrokeStyle
           : undefined;
+      const rawRouting = data.routingType ?? edgeType;
+      const routingType = rawRouting === 'straight' || rawRouting === 'orthogonal' ? rawRouting : undefined;
       if (source && target) {
         edges.push({
           id,
@@ -136,6 +144,7 @@ export class AiCollaborator {
           label,
           kind: data.kind as CompactDiagram['edges'][number]['kind'],
           ...(strokeStyle ? { strokeStyle } : {}),
+          ...(routingType ? { routingType } : {}),
         });
       }
     });
@@ -145,6 +154,7 @@ export class AiCollaborator {
       id: diagramId,
       title,
       paradigm: meta.get('paradigm') as string | undefined,
+      ...(orientation ? { orientation } : {}),
       mainOrder: meta.get('mainOrder') as string[] | undefined,
       lanes,
       nodes,
@@ -262,7 +272,7 @@ export class AiCollaborator {
     );
   }
 
-  async autoLayout(input: { diagramId: string; direction?: 'RIGHT' | 'DOWN'; agentName?: string }) {
+  async autoLayout(input: { diagramId: string; direction?: 'RIGHT' | 'DOWN'; mode?: 'layered' | 'tree'; agentName?: string }) {
     return executeAutoLayout(
       {
         repo: this.repo,

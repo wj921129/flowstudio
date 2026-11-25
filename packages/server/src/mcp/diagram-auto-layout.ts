@@ -6,6 +6,7 @@ import {
   type FlowEdge,
   type FlowNode,
   isAutoManagedPort,
+  layoutTreeGraph,
 } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
@@ -38,6 +39,7 @@ export interface AutoLayoutContext {
 export interface AutoLayoutInput {
   diagramId: string;
   direction?: 'RIGHT' | 'DOWN';
+  mode?: 'layered' | 'tree';
   agentName?: string;
 }
 
@@ -57,6 +59,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       const graph = await ctx.writer.readDocument(input.diagramId, (doc) => {
         const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
         const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+        const paradigm = doc.getMap<unknown>('meta').get('paradigm') as string | undefined;
         const children: Array<{
           id: string;
           parentId?: string;
@@ -64,6 +67,8 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           width: number;
           height: number;
           locked: boolean;
+          role?: string;
+          attachTo?: string;
         }> = [];
         const pools: Array<{
           id: string;
@@ -86,8 +91,8 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
         nodesMap.forEach((nodeMap, id) => {
           const type = nodeMap.get('type') as string;
           const size = getMapDimensions(nodeMap);
+          const data = (nodeMap.get('data') as Record<string, unknown> | undefined) ?? {};
           if (type === 'pool') {
-            const data = (nodeMap.get('data') as Record<string, unknown> | undefined) ?? {};
             pools.push({
               id,
               position: (nodeMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
@@ -117,33 +122,71 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
             width: size.width,
             height: size.height,
             locked: getNodeLockMode(nodeMap) !== 'none',
+            role: typeof data.role === 'string' ? data.role : undefined,
+            attachTo: typeof data.attachTo === 'string' ? data.attachTo : undefined,
           });
         });
 
-        const elkEdges: Array<{ id: string; sources: string[]; targets: string[] }> = [];
+        const elkEdges: Array<{ id: string; sources: string[]; targets: string[]; kind?: string }> = [];
         edgesMap.forEach((edgeMap, id) => {
           const source = edgeMap.get('source') as string;
           const target = edgeMap.get('target') as string;
-          if (source && target) elkEdges.push({ id, sources: [source], targets: [target] });
+          const edgeData = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
+          if (source && target) {
+            elkEdges.push({
+              id,
+              sources: [source],
+              targets: [target],
+              kind: typeof edgeData.kind === 'string' ? edgeData.kind : undefined,
+            });
+          }
         });
-        return { children, pools, lanes, elkEdges };
+        return { paradigm, children, pools, lanes, elkEdges };
       });
 
-      const layoutRes = await ctx.elkInstance.layout({
-        id: 'root',
-        layoutOptions: {
-          'elk.algorithm': 'layered',
-          'elk.direction': input.direction || 'RIGHT',
-          'elk.spacing.nodeNode': '60',
-          'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-        },
-        children: graph.children.map((c) => ({ id: c.id, width: c.width, height: c.height })),
-        edges: graph.elkEdges,
-      });
+      const requestedMode = input.mode ?? (graph.paradigm === 'tree' && graph.pools.length === 0 ? 'tree' : 'layered');
+      const useTreeMode = requestedMode === 'tree' && graph.pools.length === 0;
+      const modeWarnings: string[] = [];
+      if (requestedMode === 'tree' && graph.pools.length > 0) {
+        modeWarnings.push('泳道图暂不支持 tree 模式，已自动回退为泳道排版');
+      }
+      const effectiveDirection = input.direction ?? (graph.pools.some((p) => !p.horizontal) ? 'DOWN' : 'RIGHT');
 
       const globalPositions = new Map<string, LayoutPoint>();
-      for (const child of layoutRes.children ?? []) {
-        globalPositions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
+      let treeBackEdgeKeys = new Set<string>();
+      if (useTreeMode) {
+        const treeRes = layoutTreeGraph(
+          graph.children.map((c) => ({
+            id: c.id,
+            width: c.width,
+            height: c.height,
+            role: c.role,
+            attachTo: c.attachTo,
+            fixed: c.locked ? { position: c.position, width: c.width, height: c.height } : undefined,
+          })),
+          graph.elkEdges.map((e) => ({ from: e.sources[0], to: e.targets[0], kind: e.kind })),
+          { origin: { x: 50, y: 50 } },
+        );
+        modeWarnings.push(...treeRes.warnings);
+        treeBackEdgeKeys = treeRes.backEdgeKeys;
+        for (const [id, box] of treeRes.positions) {
+          globalPositions.set(id, { x: box.x, y: box.y });
+        }
+      } else {
+        const layoutRes = await ctx.elkInstance.layout({
+          id: 'root',
+          layoutOptions: {
+            'elk.algorithm': 'layered',
+            'elk.direction': effectiveDirection,
+            'elk.spacing.nodeNode': '60',
+            'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+          },
+          children: graph.children.map((c) => ({ id: c.id, width: c.width, height: c.height })),
+          edges: graph.elkEdges.map((e) => ({ id: e.id, sources: e.sources, targets: e.targets })),
+        });
+        for (const child of layoutRes.children ?? []) {
+          globalPositions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
+        }
       }
 
       const lockedIds = new Set(graph.children.filter((c) => c.locked).map((c) => c.id));
@@ -204,7 +247,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       const poolUpdates = new Map<string, { width: number; height: number }>();
       const laneUpdates = new Map<string, { x: number; y: number; width: number; height: number }>();
       const childPositions = new Map<string, LayoutPoint>();
-      const planWarnings: string[] = [];
+      const planWarnings: string[] = [...modeWarnings];
       const handledLaneIds = new Set<string>();
 
       for (const pool of graph.pools) {
@@ -464,12 +507,28 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           if (!sourceAuto) lockedSourceEdgeIds.add(id);
           if (!targetAuto) lockedTargetEdgeIds.add(id);
           if (sourceAuto && targetAuto) bothAutoEdgeIds.add(id);
+          const kind = typeof rawData.kind === 'string' ? rawData.kind : undefined;
+          let seededSource: string | undefined;
+          let seededTarget: string | undefined;
+          if (useTreeMode) {
+            const isBack = kind === 'loop' || treeBackEdgeKeys.has(`${source}|${target}|${kind ?? 'next'}`);
+            if (kind === 'annotate') {
+              seededSource = 'right';
+              seededTarget = 'left';
+            } else if (isBack) {
+              seededSource = 'right';
+              seededTarget = 'right';
+            } else {
+              seededSource = 'bottom';
+              seededTarget = 'top';
+            }
+          }
           liveEdges.push({
             id,
             source,
             target,
-            ...(sourceAuto ? {} : { sourceHandle }),
-            ...(targetAuto ? {} : { targetHandle }),
+            ...(sourceAuto ? (seededSource ? { sourceHandle: seededSource } : {}) : { sourceHandle }),
+            ...(targetAuto ? (seededTarget ? { targetHandle: seededTarget } : {}) : { targetHandle }),
             data: rawData as FlowEdge['data'],
           });
         });
@@ -488,7 +547,11 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           if (nextEdge.sourceHandle) edgeMap.set('sourceHandle', nextEdge.sourceHandle);
           if (nextEdge.targetHandle) edgeMap.set('targetHandle', nextEdge.targetHandle);
           const nextData = { ...(nextEdge.data ?? {}) } as Record<string, unknown>;
-          if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
+          const isStraightEdge = edgeMap.get('type') === 'straight' || nextData.routingType === 'straight';
+          if (isStraightEdge) {
+            edgeMap.set('type', 'straight');
+            delete nextData.waypoints;
+          } else if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
             delete nextData.waypoints;
           }
           edgeMap.set('data', nextData);

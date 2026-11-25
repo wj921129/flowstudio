@@ -4,8 +4,8 @@ import { DIAGRAM_PRESETS } from '../src/spec/presets.js';
 import { noOverlap, byId, preset, laneContainsAllChildren } from './helpers/render-asserts.js';
 
 describe('renderSpec 入口与范式预设', () => {
-  it('8 个预设齐全且覆盖 4 个分类', () => {
-    expect(DIAGRAM_PRESETS.length).toBe(8);
+  it('10 个预设齐全且覆盖 4 个分类', () => {
+    expect(DIAGRAM_PRESETS.length).toBe(10);
     expect(new Set(DIAGRAM_PRESETS.map((p) => p.category)).size).toBe(4);
   });
 
@@ -78,5 +78,21 @@ describe('renderSpec 入口与范式预设', () => {
     const fe = byId(r, 'squad-fe');
     expect(be.position.y).toBe(fe.position.y);
     expect(noOverlap(r.nodes)).toBe(true);
+  });
+
+  it('竖向泳道预设与纯直线代码调用树预设语义与几何正常', () => {
+    const vert = renderSpec(preset('swimlane-vertical-business'));
+    const pool = vert.nodes.find((n) => n.type === 'pool')!;
+    expect(pool.data.orientation).toBe('vertical');
+    expect(laneContainsAllChildren(vert)).toBe(true);
+
+    const callTree = renderSpec(preset('flowchart-code-call-tree'));
+    expect(noOverlap(callTree.nodes)).toBe(true);
+    expect(callTree.edges.every((e) => e.type === 'straight' && e.data?.routingType === 'straight' && !e.data?.waypoints)).toBe(true);
+    const dbOrder = byId(callTree, 'db-order');
+    const stepStock = byId(callTree, 'step-stock');
+    const stepSave = byId(callTree, 'step-save');
+    expect(dbOrder.position.y).toBeGreaterThan(stepStock.position.y + stepStock.height!);
+    expect(dbOrder.position.y).toBeGreaterThan(stepSave.position.y + stepSave.height!);
   });
 });

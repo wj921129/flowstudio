@@ -112,4 +112,26 @@ describe('lane-nesting-manager: Swimlane Drag-in / Drag-out & Auto-expand', () =
     expect(lane.width).toBeGreaterThanOrEqual(950);
     expect(pool.width).toBeGreaterThanOrEqual(950);
   });
+
+  it('纵向泳道扩容正确计入顶部 40px pool 表头高度且不误加到 pool 宽度', () => {
+    const vPool: FlowNode = {
+      id: 'vp',
+      type: 'pool',
+      position: { x: 0, y: 0 },
+      width: 480,
+      height: 520,
+      data: { label: '竖向池', type: 'pool', orientation: 'vertical', headerSize: 40, laneOrder: ['vl1', 'vl2'] },
+    };
+    const vl1: FlowNode = { id: 'vl1', type: 'lane', parentId: 'vp', extent: 'parent', position: { x: 0, y: 40 }, width: 240, height: 480, data: { label: '端A', type: 'lane' } };
+    const vl2: FlowNode = { id: 'vl2', type: 'lane', parentId: 'vp', extent: 'parent', position: { x: 240, y: 40 }, width: 240, height: 480, data: { label: '端B', type: 'lane' } };
+    const child: FlowNode = { id: 'vc', type: 'process', parentId: 'vl1', position: { x: 40, y: 460 }, width: 160, height: 80, data: { label: '扩展', type: 'process' } };
+
+    const { updated, nextNodes } = handleNodeDragNesting('vc', [vPool, vl1, vl2, child]);
+    expect(updated).toBe(true);
+    const nextLane = nextNodes.find((n) => n.id === 'vl1')!;
+    const nextPool = nextNodes.find((n) => n.id === 'vp')!;
+    expect(nextLane.height).toBe(580);
+    expect(nextPool.height).toBe(620);
+    expect(nextPool.width).toBe(480);
+  });
 });

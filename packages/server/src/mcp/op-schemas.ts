@@ -18,6 +18,7 @@ const edgeStyleSchema = z.object({
 }).passthrough();
 
 const edgeStrokeStyleSchema = z.enum(EDGE_STROKE_STYLES);
+const edgeRoutingSchema = z.enum(['orthogonal', 'straight']);
 
 const flowNodeTypeSchema = z.enum([...FLOW_NODE_TYPES]);
 
@@ -51,6 +52,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     label: z.string().optional(),
     kind: z.enum(['next', 'branch', 'loop', 'jump', 'annotate', 'tree']).optional(),
     strokeStyle: edgeStrokeStyleSchema.optional(),
+    routingType: edgeRoutingSchema.optional(),
     style: edgeStyleSchema.optional(),
   }),
   z.object({
@@ -82,6 +84,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     sourceHandle: borderHandleSchema.optional(),
     targetHandle: borderHandleSchema.optional(),
     strokeStyle: edgeStrokeStyleSchema.optional(),
+    routingType: edgeRoutingSchema.optional(),
     style: edgeStyleSchema.optional(),
   }),
   z.object({
@@ -100,6 +103,7 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     downstreamLabel: z.string().optional(),
     direction: z.enum(['RIGHT', 'DOWN']).optional(),
     strokeStyle: edgeStrokeStyleSchema.optional(),
+    routingType: edgeRoutingSchema.optional(),
   }),
 ]);
 
@@ -120,6 +124,7 @@ export const scaffoldDiagramInputSchema = z.object({
 export const autoLayoutInputSchema = z.object({
   diagramId: z.string().min(1),
   direction: z.enum(['RIGHT', 'DOWN']).optional(),
+  mode: z.enum(['layered', 'tree']).optional(),
 });
 
 export const getSelectionInputSchema = z.object({

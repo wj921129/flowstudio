@@ -18,6 +18,7 @@ export function diffRendered(
   existingNodes: FlowNode[],
   existingEdges: FlowEdge[],
   lockOf: (id: string) => NodeLockMode,
+  opts?: { orientationChanged?: boolean },
 ): RenderDiff {
   const warnings: string[] = [];
   const byId = new Map(existingNodes.map((n) => [n.id, n]));
@@ -35,6 +36,7 @@ export function diffRendered(
     }
   }
 
+  const orientationChanged = Boolean(opts?.orientationChanged);
   const addNodes = rendered.nodes.filter((n) => !byId.has(n.id));
   const updateNodes: RenderDiff['updateNodes'] = [];
   for (const rn of rendered.nodes) {
@@ -44,9 +46,12 @@ export function diffRendered(
     const patch: Partial<FlowNode> = {};
     if (same(ex.type) !== same(rn.type)) patch.type = rn.type;
     const isContainer = rn.type === 'pool' || rn.type === 'lane';
-    if (!isContainer && lockOf(rn.id) !== 'position' && same(ex.position) !== same(rn.position)) patch.position = rn.position;
-    const width = isContainer ? Math.max(ex.width ?? 0, rn.width ?? 0) : rn.width;
-    const height = isContainer ? Math.max(ex.height ?? 0, rn.height ?? 0) : rn.height;
+    const allowContainerPos = isContainer && orientationChanged && lockOf(rn.id) === 'none';
+    if (((!isContainer && lockOf(rn.id) !== 'position') || allowContainerPos) && same(ex.position) !== same(rn.position)) {
+      patch.position = rn.position;
+    }
+    const width = isContainer && !orientationChanged ? Math.max(ex.width ?? 0, rn.width ?? 0) : rn.width;
+    const height = isContainer && !orientationChanged ? Math.max(ex.height ?? 0, rn.height ?? 0) : rn.height;
     if (same(ex.width) !== same(width)) patch.width = width;
     if (same(ex.height) !== same(height)) patch.height = height;
     if (same(ex.parentId) !== same(rn.parentId)) patch.parentId = rn.parentId;
@@ -72,6 +77,7 @@ export function diffRendered(
     const exData = (ex.data as Record<string, unknown> | undefined) ?? {};
     const reData = (re.data as Record<string, unknown> | undefined) ?? {};
     const data: Record<string, unknown> = { ...exData, ...reData };
+    if (re.type === 'straight' || reData.routingType === 'straight') delete data.waypoints;
     const exStyle = exData.style && typeof exData.style === 'object' ? (exData.style as Record<string, unknown>) : undefined;
     const reStyle = reData.style && typeof reData.style === 'object' ? (reData.style as Record<string, unknown>) : undefined;
     if (exStyle || reStyle) {

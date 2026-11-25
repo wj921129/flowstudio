@@ -139,4 +139,44 @@ describe('elk-layout: Flowchart & Swimlane Auto-Layout Engine', () => {
     expect(u1.position.y).toBeGreaterThanOrEqual(30);
     expect(u2.position.x).toBeGreaterThan(u1.position.x);
   });
+
+  it('纵向泳道自动排版从 x=0, y=40 起排不压池表头且支持 tree 模式纯直线展开', async () => {
+    const vPool: FlowNode = {
+      id: 'vp',
+      type: 'pool',
+      position: { x: 0, y: 0 },
+      width: 480,
+      height: 520,
+      data: { label: '竖向池', type: 'pool', orientation: 'vertical', headerSize: 40, laneOrder: ['vl1', 'vl2'] },
+    };
+    const vl1: FlowNode = { id: 'vl1', type: 'lane', parentId: 'vp', position: { x: 0, y: 40 }, width: 240, height: 480, data: { label: '端A', type: 'lane' } };
+    const vl2: FlowNode = { id: 'vl2', type: 'lane', parentId: 'vp', position: { x: 240, y: 40 }, width: 240, height: 480, data: { label: '端B', type: 'lane' } };
+    const vn1: FlowNode = { id: 'vn1', type: 'process', parentId: 'vl1', position: { x: 40, y: 60 }, width: 160, height: 80, data: { label: 'A1', type: 'process' } };
+    const vn2: FlowNode = { id: 'vn2', type: 'process', parentId: 'vl2', position: { x: 40, y: 200 }, width: 160, height: 80, data: { label: 'B1', type: 'process' } };
+    const { nodes: vNodes } = await layoutDiagram([vPool, vl1, vl2, vn1, vn2], [{ id: 've1', source: 'vn1', target: 'vn2' }]);
+    expect(vNodes.find((n) => n.id === 'vl1')!.position).toEqual({ x: 0, y: 40 });
+    expect(vNodes.find((n) => n.id === 'vl2')!.position.y).toBe(40);
+    expect(vNodes.find((n) => n.id === 'vl2')!.position.x).toBeGreaterThanOrEqual(240);
+
+    const tNodes: FlowNode[] = [
+      { id: 'r', type: 'process', position: { x: 0, y: 0 }, width: 160, height: 80, data: { label: 'R', type: 'process' } },
+      { id: 'c1', type: 'process', position: { x: 0, y: 0 }, width: 160, height: 80, data: { label: 'C1', type: 'process' } },
+      { id: 'c2', type: 'process', position: { x: 0, y: 0 }, width: 160, height: 80, data: { label: 'C2', type: 'process' } },
+      { id: 'db', type: 'database', position: { x: 0, y: 0 }, width: 140, height: 90, data: { label: 'DB', type: 'database' } },
+    ];
+    const tEdges: FlowEdge[] = [
+      { id: 'te1', source: 'r', target: 'c1', type: 'straight', data: { routingType: 'straight', waypoints: [{ x: 1, y: 1 }] } },
+      { id: 'te2', source: 'r', target: 'c2', type: 'straight', data: { routingType: 'straight' } },
+      { id: 'te3', source: 'c1', target: 'db', type: 'straight', data: { routingType: 'straight' } },
+      { id: 'te4', source: 'c2', target: 'db', type: 'straight', data: { routingType: 'straight' } },
+    ];
+    const treeRes = await layoutDiagram(tNodes, tEdges, { mode: 'tree' });
+    const lr = treeRes.nodes.find((n) => n.id === 'r')!;
+    const lc1 = treeRes.nodes.find((n) => n.id === 'c1')!;
+    const ldb = treeRes.nodes.find((n) => n.id === 'db')!;
+    expect(lc1.position.y).toBeGreaterThan(lr.position.y);
+    expect(ldb.position.y).toBeGreaterThan(lc1.position.y);
+    expect(treeRes.edges.every((e) => !e.data?.waypoints)).toBe(true);
+    expect(treeRes.edges[0].sourceHandle).toContain('bottom');
+  });
 });

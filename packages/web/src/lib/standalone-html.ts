@@ -152,13 +152,33 @@ const renderNode = (n: FlowNode): string => {
   return `<g class="fs-node" data-id="${esc(n.id)}">${shape}${extraText}</g>`;
 };
 
+const resolveWorldNodes = (nodes: FlowNode[]): FlowNode[] => {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  return nodes.map((n) => {
+    let x = n.position.x;
+    let y = n.position.y;
+    let cur = n.parentId;
+    const seen = new Set<string>([n.id]);
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const p = byId.get(cur);
+      if (!p) break;
+      x += p.position.x;
+      y += p.position.y;
+      cur = p.parentId;
+    }
+    return cur === n.parentId && !n.parentId ? n : { ...n, position: { x, y } };
+  });
+};
+
 const renderEdge = (e: FlowEdge, nodes: FlowNode[]): string => {
   const s = nodes.find((n) => n.id === e.source);
   const t = nodes.find((n) => n.id === e.target);
   if (!s || !t) return '';
   const sc = { x: s.position.x + (s.width ?? 160) / 2, y: s.position.y + (s.height ?? 80) / 2 };
   const tc = { x: t.position.x + (t.width ?? 160) / 2, y: t.position.y + (t.height ?? 80) / 2 };
-  const pts = e.data?.waypoints && e.data.waypoints.length >= 2 ? [sc, ...e.data.waypoints, tc] : [sc, tc];
+  const isStraight = e.type === 'straight' || e.data?.routingType === 'straight';
+  const pts = !isStraight && e.data?.waypoints && e.data.waypoints.length >= 2 ? [sc, ...e.data.waypoints, tc] : [sc, tc];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
   const labelPos = pts[Math.floor(pts.length / 2)];
   const dashArray = getEdgeDashArray(e.data?.style?.strokeStyle);
@@ -188,10 +208,18 @@ export function buildStandaloneHtml(
     edges = (b as FlowEdge[]) || [];
     title = (c as string) || 'FlowStudio 流程图';
   }
+  const worldNodes = resolveWorldNodes(nodes);
   const graphNodes = JSON.stringify(nodes).replace(/</g, '\\u003c');
   const graphEdges = JSON.stringify(edges).replace(/</g, '\\u003c');
-  const shapesSvg = edges.map((e) => renderEdge(e, nodes)).join('\n') + '\n' + nodes.map((n) => renderNode(n)).join('\n');
-  const bounds = nodes.reduce(
+  const containerNodes = worldNodes.filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group');
+  const leafNodes = worldNodes.filter((n) => n.type !== 'pool' && n.type !== 'lane' && n.type !== 'group');
+  const shapesSvg =
+    containerNodes.map((n) => renderNode(n)).join('\n') +
+    '\n' +
+    edges.map((e) => renderEdge(e, worldNodes)).join('\n') +
+    '\n' +
+    leafNodes.map((n) => renderNode(n)).join('\n');
+  const bounds = worldNodes.reduce(
     (acc, n) => ({
       minX: Math.min(acc.minX, n.position.x),
       minY: Math.min(acc.minY, n.position.y),

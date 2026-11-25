@@ -884,17 +884,19 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       const poolId = generateUniqueId('pool');
       const lane1Id = `lane-${Date.now().toString(36)}-1`;
       const lane2Id = `lane-${Date.now().toString(36)}-2`;
+      const orientation = options?.orientation ?? 'horizontal';
+      const isVertical = orientation === 'vertical';
 
       const poolNode: FlowNode = {
         id: poolId,
         type: 'pool',
         position,
-        width: 800,
-        height: 440,
+        width: isVertical ? 520 : 800,
+        height: isVertical ? 520 : 440,
         data: {
           label: '业务泳道池',
           type: 'pool',
-          orientation: 'horizontal',
+          orientation,
           laneOrder: [lane1Id, lane2Id],
           headerSize: 40,
         },
@@ -906,8 +908,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         parentId: poolId,
         extent: 'parent',
         position: { x: 0, y: 40 },
-        width: 800,
-        height: 200,
+        width: isVertical ? 260 : 800,
+        height: isVertical ? 480 : 200,
         data: { label: '泳道 1', type: 'lane', laneTitle: '泳道 1' },
       };
 
@@ -916,9 +918,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         type: 'lane',
         parentId: poolId,
         extent: 'parent',
-        position: { x: 0, y: 240 },
-        width: 800,
-        height: 200,
+        position: isVertical ? { x: 260, y: 40 } : { x: 0, y: 240 },
+        width: isVertical ? 260 : 800,
+        height: isVertical ? 480 : 200,
         data: { label: '泳道 2', type: 'lane', laneTitle: '泳道 2' },
       };
 
@@ -1404,18 +1406,24 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         const nextAnimated =
           data.style?.animated !== undefined ? data.style.animated : e.animated;
         const nextLabel = 'label' in data ? (data.label || undefined) : e.label;
+        const nextType = 'routingType' in data && data.routingType ? data.routingType : e.type;
+        const mergedData: FlowEdgeData = {
+          ...e.data,
+          ...data,
+          style: {
+            ...e.data?.style,
+            ...data.style,
+          },
+        };
+        if (nextType === 'straight') {
+          delete mergedData.waypoints;
+        }
         updatedEdge = {
           ...e,
+          type: nextType,
           label: nextLabel,
           animated: nextAnimated,
-          data: {
-            ...e.data,
-            ...data,
-            style: {
-              ...e.data?.style,
-              ...data.style,
-            },
-          },
+          data: mergedData,
         };
         return updatedEdge;
       }
@@ -1431,6 +1439,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       const target = updatedEdge as FlowEdge;
       commitBridgeDelta((bridge) => {
         bridge.patchEdge(id, {
+          type: target.type,
           label: target.label,
           animated: target.animated,
           data: target.data,

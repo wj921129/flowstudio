@@ -152,4 +152,40 @@ describe('tree 几何约定', () => {
     expect(cto.width).toBe(180);
     expect(cto.height).toBe(90);
   });
+
+  it('支持纯直线路由、单边覆盖、多父共享汇聚节点居中与破环保留边', () => {
+    const codeSpec: DiagramSpec = {
+      paradigm: 'tree',
+      edgeRouting: 'straight',
+      nodes: [
+        { id: 'entry', label: '入口', type: 'arch-gateway' },
+        { id: 's1', label: '服务1' },
+        { id: 's2', label: '服务2' },
+        { id: 'db', label: '共享DB', type: 'database' },
+        { id: 'note', label: '附注', attachTo: 's1' },
+      ],
+      edges: [
+        { from: 'entry', to: 's1' },
+        { from: 'entry', to: 's2', kind: 'branch', label: '分支' },
+        { from: 's1', to: 'db' },
+        { from: 's2', to: 'db' },
+        { from: 's2', to: 'entry', routingType: 'orthogonal', label: '回环' },
+      ],
+    };
+    const r = renderTree(normalizeSpec(codeSpec), ctx);
+    expect(noOverlap(r.nodes)).toBe(true);
+    expect(r.warnings.some((w) => w.includes('环'))).toBe(true);
+    const db = byId(r, 'db');
+    const s1 = byId(r, 's1');
+    const s2 = byId(r, 's2');
+    expect(db.position.y).toBeGreaterThan(s1.position.y + s1.height!);
+    expect(db.position.x + db.width! / 2).toBeCloseTo(((s1.position.x + s1.width! / 2) + (s2.position.x + s2.width! / 2)) / 2, 0);
+    const straightEdge = r.edges.find((e) => e.source === 'entry' && e.target === 's1')!;
+    const overrideEdge = r.edges.find((e) => e.source === 's2' && e.target === 'entry')!;
+    expect(straightEdge.type).toBe('straight');
+    expect(straightEdge.data!.routingType).toBe('straight');
+    expect(overrideEdge.type).toBe('orthogonal');
+    expect(overrideEdge.sourceHandle).toBe('right');
+    expect(overrideEdge.targetHandle).toBe('right');
+  });
 });

@@ -194,4 +194,34 @@ describe('scaffold_diagram spec 差量渲染', () => {
     expect(tools.length).toBe(9);
     expect(tools.map((t: any) => t.name)).not.toContain('list_templates');
   });
+
+  it('竖向泳道图 scaffold_diagram 渲染及含锁节点切向拦截保护', async () => {
+    const id = await newDiagram();
+    const vertSpec = DIAGRAM_PRESETS.find((p) => p.id === 'swimlane-vertical-business')!.spec;
+    const res1 = await callTool(server, 'scaffold_diagram', { diagramId: id, spec: vertSpec });
+    expect(res1.isError, res1.text).toBe(false);
+
+    const view1 = await callTool(server, 'get_diagram', { diagramId: id });
+    expect(view1.data.orientation).toBe('vertical');
+
+    const switched = await callTool(server, 'scaffold_diagram', {
+      diagramId: id,
+      spec: { ...vertSpec, orientation: 'horizontal' },
+    });
+    expect(switched.isError, switched.text).toBe(false);
+    const view2 = await callTool(server, 'get_diagram', { diagramId: id });
+    expect(view2.data.orientation).toBe('horizontal');
+
+    await server.writer.mutate(id, 'test:lock-pos', (doc) => {
+      const m = doc.getMap<Y.Map<unknown>>('nodes').get('c-submit')!;
+      m.set('data', { ...(m.get('data') as object), lockMode: 'position' });
+    });
+
+    const blocked = await callTool(server, 'scaffold_diagram', {
+      diagramId: id,
+      spec: { ...vertSpec, orientation: 'vertical' },
+    });
+    expect(blocked.isError).toBe(true);
+    expect(blocked.text).toContain('锁定');
+  });
 });

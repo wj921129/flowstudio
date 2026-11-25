@@ -84,7 +84,13 @@ const ARCH_THUMBS: Record<string, { icon: string }> = {
   'arch-docker': { icon: 'M6 13 H30 M8 13 V9 H12 V13 M12 13 V9 H16 V13 M16 13 V9 H20 V13 M20 13 V9 H24 V13 M24 13 V10 H28 V13' },
 };
 
-const renderShapeThumbnail = (type: FlowNodeType, _fill: string, stroke: string, poolHeaderBg: string) => {
+const renderShapeThumbnail = (
+  type: FlowNodeType,
+  _fill: string,
+  stroke: string,
+  poolHeaderBg: string,
+  orientation?: 'horizontal' | 'vertical'
+) => {
   const fill = 'var(--fs-node-bg)';
   const arch = ARCH_THUMBS[type];
   if (arch) {
@@ -156,7 +162,13 @@ const renderShapeThumbnail = (type: FlowNodeType, _fill: string, stroke: string,
         </svg>
       );
     case 'pool':
-      return (
+      return orientation === 'vertical' ? (
+        <svg className="w-9 h-6" viewBox="0 0 36 24">
+          <rect x="2" y="2" width="32" height="20" rx="1" fill="none" stroke={stroke} strokeWidth="1.5" />
+          <rect x="2" y="2" width="32" height="6" fill={poolHeaderBg} stroke={stroke} strokeWidth="1" />
+          <line x1="18" y1="8" x2="18" y2="22" stroke={stroke} strokeWidth="1" strokeDasharray="2,2" />
+        </svg>
+      ) : (
         <svg className="w-9 h-6" viewBox="0 0 36 24">
           <rect x="2" y="2" width="32" height="20" rx="1" fill="none" stroke={stroke} strokeWidth="1.5" />
           <rect x="2" y="2" width="8" height="20" fill={poolHeaderBg} stroke={stroke} strokeWidth="1" />
@@ -185,23 +197,32 @@ export const ElementsPanel: React.FC = () => {
   const currentTheme = useMemo(() => getThemePreset(activeThemeId), [activeThemeId]);
   const addNode = useFlowStore((s) => s.addNode);
 
-  const handleItemClick = (type: FlowNodeType, role?: 'start' | 'end') => {
+  const handleItemClick = (type: FlowNodeType, role?: 'start' | 'end', orientation?: 'horizontal' | 'vertical') => {
     const existingCount = useFlowStore.getState().nodes.length;
     const offset = (existingCount % 10) * 25;
-    const newNode = addNode(
-      type,
-      { x: 350 + offset, y: 220 + offset },
-      role ? { label: role === 'start' ? '开始' : '结束', role } : undefined
-    );
+    const opts = role
+      ? { label: role === 'start' ? '开始' : '结束', role }
+      : orientation
+      ? { orientation }
+      : undefined;
+    const newNode = addNode(type, { x: 350 + offset, y: 220 + offset }, opts);
     if (newNode?.id) {
       useFlowStore.getState().setSelectedNodes([newNode.id]);
     }
   };
 
-  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, type: FlowNodeType, role?: 'start' | 'end') => {
+  const handleDragStart = (
+    e: React.DragEvent<HTMLDivElement>,
+    type: FlowNodeType,
+    role?: 'start' | 'end',
+    orientation?: 'horizontal' | 'vertical'
+  ) => {
     e.dataTransfer.setData('application/flowstudio-node-type', type);
     if (role) {
       e.dataTransfer.setData('application/flowstudio-node-role', role);
+    }
+    if (orientation) {
+      e.dataTransfer.setData('application/flowstudio-pool-orientation', orientation);
     }
     e.dataTransfer.effectAllowed = 'move';
   };
@@ -242,11 +263,16 @@ export const ElementsPanel: React.FC = () => {
   const renderGrid = (cat: NodeCategory) => (
     <div className="px-2 pb-1.5 grid grid-cols-4 gap-1">
       {categorized[cat].flatMap((entry) => {
-        const items: Array<{ key: string; label: string; role?: 'start' | 'end' }> =
+        const items: Array<{ key: string; label: string; role?: 'start' | 'end'; orientation?: 'horizontal' | 'vertical' }> =
           entry.type === 'start-end'
             ? [
                 { key: 'start-end-start', label: '开始', role: 'start' },
                 { key: 'start-end-end', label: '结束', role: 'end' },
+              ]
+            : entry.type === 'pool'
+            ? [
+                { key: 'pool-horizontal', label: '横向泳道池', orientation: 'horizontal' },
+                { key: 'pool-vertical', label: '竖向泳道池', orientation: 'vertical' },
               ]
             : [{ key: entry.type, label: entry.label }];
 
@@ -256,8 +282,8 @@ export const ElementsPanel: React.FC = () => {
             <div
               key={item.key}
               draggable
-              onDragStart={(e) => handleDragStart(e, entry.type, item.role)}
-              onClick={() => handleItemClick(entry.type, item.role)}
+              onDragStart={(e) => handleDragStart(e, entry.type, item.role, item.orientation)}
+              onClick={() => handleItemClick(entry.type, item.role, item.orientation)}
               className="group relative flex items-center justify-center h-10 rounded-md border border-fs-border/70 bg-fs-surface hover:bg-fs-bg hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer select-none"
               title={`${item.label}${entry.mcpDescription ? `：${entry.mcpDescription}` : ''}`}
               aria-label={item.label}
@@ -267,7 +293,8 @@ export const ElementsPanel: React.FC = () => {
                   entry.type,
                   resolved.fillColor,
                   resolved.borderColor,
-                  currentTheme.tokens.poolHeaderBg
+                  currentTheme.tokens.poolHeaderBg,
+                  item.orientation
                 )}
               </div>
             </div>
@@ -329,7 +356,9 @@ export const ElementsPanel: React.FC = () => {
               <div className="px-2.5 py-1 text-[11px] font-medium text-fs-text-muted flex items-center justify-between">
                 <span>{cat}</span>
                 <span className="text-[10px] font-mono opacity-75">
-                  {categorized[cat].length + (cat === '流程' && showEdgeLabelCard ? 1 : 0)}
+                  {categorized[cat].length +
+                    (cat === '流程' && showEdgeLabelCard ? 1 : 0) +
+                    (categorized[cat].some((e) => e.type === 'pool') ? 1 : 0)}
                 </span>
               </div>
               {renderGrid(cat)}

@@ -1,74 +1,78 @@
 import { getDefaultNodeSize } from '../node-registry.js';
 import type { NormalizedSpec } from '../spec/normalize.js';
 import type { FlowEdge, FlowNode, FlowNodeType } from '../types.js';
-import { TREE_GAP, TREE_VGAP } from './constants.js';
+import { layoutTreeGraph } from './tree-layout.js';
 import type { RenderContext, RenderResult } from './types.js';
 
 export function renderTree(n: NormalizedSpec, ctx: RenderContext): RenderResult {
-  const warnings = [...n.warnings];
-  if (ctx.fixed.size > 0) warnings.push('tree 暂不支持 fixed 让位，锁节点保持原坐标');
   const eid = (id: string) => ctx.idPrefix + id;
   const nodeById = new Map(n.nodes.map((x) => [x.id, x]));
-  const nodeOf = (id: string) => nodeById.get(id)!;
-  const sizeOf = (id: string) => getDefaultNodeSize(nodeOf(id).type ?? 'process');
-  const children = new Map<string, string[]>();
-  const hasParent = new Set<string>();
-  for (const e of n.edges) {
-    children.set(e.from, [...(children.get(e.from) ?? []), e.to]);
-    hasParent.add(e.to);
-  }
-  const subMemo = new Map<string, number>();
-  const subW = (id: string): number => {
-    const hit = subMemo.get(id);
-    if (hit !== undefined) return hit;
-    const kids = children.get(id) ?? [];
-    const w = kids.length > 0 ? kids.reduce((acc, k) => acc + subW(k), 0) + TREE_GAP * (kids.length - 1) : 0;
-    const res = Math.max(sizeOf(id).width, w);
-    subMemo.set(id, res);
-    return res;
-  };
-  const pos = new Map<string, { x: number; y: number; width: number; height: number }>();
-  const depthOf = new Map<string, number>();
-  const place = (id: string, left: number, depth: number) => {
-    const sw = subW(id);
-    const s = sizeOf(id);
-    const f = ctx.fixed.get(id);
-    pos.set(id, f ? { x: f.position.x, y: f.position.y, width: f.width, height: f.height } : { x: left + (sw - s.width) / 2, y: 0, width: s.width, height: s.height });
-    depthOf.set(id, depth);
-    let cl = left;
-    for (const kid of children.get(id) ?? []) {
-      place(kid, cl, depth + 1);
-      cl += subW(kid) + TREE_GAP;
-    }
-  };
-  let left = ctx.origin.x;
-  for (const root of n.nodes.filter((x) => !hasParent.has(x.id))) {
-    place(root.id, left, 0);
-    left += subW(root.id) + TREE_GAP;
-  }
-  const rowH = new Map<number, number>();
-  for (const [id, d] of depthOf) rowH.set(d, Math.max(rowH.get(d) ?? 0, pos.get(id)!.height));
-  const rowY = new Map<number, number>();
-  let cursor = ctx.origin.y;
-  for (const d of [...rowH.keys()].sort((a, b) => a - b)) {
-    rowY.set(d, cursor);
-    cursor += rowH.get(d)! + TREE_VGAP;
-  }
+  const layout = layoutTreeGraph(
+    n.nodes.map((x) => {
+      const s = getDefaultNodeSize(x.type ?? (x.role === 'annotation' ? 'comment' : 'process'));
+      const f = ctx.fixed.get(x.id);
+      return {
+        id: x.id,
+        width: f?.width ?? s.width,
+        height: f?.height ?? s.height,
+        role: x.role,
+        attachTo: x.attachTo,
+        fixed: f,
+      };
+    }),
+    n.edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind })),
+    { origin: ctx.origin },
+  );
+
+  const warnings = [...n.warnings, ...layout.warnings];
   const nodes: FlowNode[] = [];
-  for (const [id, p] of pos) {
-    const src = nodeOf(id);
-    const type: FlowNodeType = src.type ?? 'process';
-    const y = ctx.fixed.has(id) ? p.y : rowY.get(depthOf.get(id)!)!;
-    nodes.push({ id: eid(id), type, position: { x: p.x, y }, width: p.width, height: p.height, data: { label: src.label, type, role: src.role } });
+  for (const src of n.nodes) {
+    const p = layout.positions.get(src.id);
+    if (!p) continue;
+    const type: FlowNodeType = src.type ?? (src.role === 'annotation' ? 'comment' : 'process');
+    nodes.push({
+      id: eid(src.id),
+      type,
+      position: { x: p.x, y: p.y },
+      width: p.width,
+      height: p.height,
+      data: {
+        label: src.label,
+        type,
+        role: src.role,
+        ...(src.description ? { description: src.description } : {}),
+        ...(src.attachTo ? { attachTo: eid(src.attachTo) } : {}),
+      },
+    });
   }
-  const edges: FlowEdge[] = n.edges.map((e) => ({
-    id: `${ctx.idPrefix}e-${e.from}-${e.to}-${e.kind}`,
-    source: eid(e.from),
-    target: eid(e.to),
-    type: 'orthogonal',
-    sourceHandle: 'bottom',
-    targetHandle: 'top',
-    data: { kind: e.kind, ...(e.label ? { label: e.label } : {}) },
-  }));
+
+  const edges: FlowEdge[] = n.edges.map((e) => {
+    const routing = e.routingType ?? n.edgeRouting ?? 'orthogonal';
+    const isAnnotate = e.kind === 'annotate';
+    const isBack = e.kind === 'loop' || layout.backEdgeKeys.has(`${e.from}|${e.to}|${e.kind ?? 'next'}`);
+    let sourceHandle = 'bottom';
+    let targetHandle = 'top';
+    if (isAnnotate) {
+      sourceHandle = 'right';
+      targetHandle = 'left';
+    } else if (isBack) {
+      sourceHandle = 'right';
+      targetHandle = 'right';
+    }
+    return {
+      id: `${ctx.idPrefix}e-${e.from}-${e.to}-${e.kind}`,
+      source: eid(e.from),
+      target: eid(e.to),
+      type: routing,
+      sourceHandle,
+      targetHandle,
+      data: {
+        kind: e.kind,
+        routingType: routing,
+        ...(e.label ? { label: e.label } : {}),
+      },
+    };
+  });
+
   return { nodes, edges, warnings };
 }

@@ -444,9 +444,13 @@ export const FlowCanvas: React.FC = () => {
         return;
       }
       const rawRole = e.dataTransfer.getData('application/flowstudio-node-role');
+      const rawPoolOrientation = e.dataTransfer.getData('application/flowstudio-pool-orientation');
+      const poolOrientation = rawPoolOrientation === 'vertical' ? 'vertical' : 'horizontal';
       const nodeOptions =
         rawRole === 'start' || rawRole === 'end'
           ? { label: rawRole === 'start' ? '开始' : '结束', role: rawRole as 'start' | 'end' }
+          : rawType === 'pool'
+          ? { orientation: poolOrientation as 'horizontal' | 'vertical' }
           : undefined;
 
       // 将光标所在屏幕物理视口坐标换算为 React Flow 画布世界绝对坐标
@@ -494,51 +498,11 @@ export const FlowCanvas: React.FC = () => {
       setHoveredEdgeForInsert(null);
 
       if (rawType === 'pool') {
-        // 拖入泳道池时自动附带生成两条初始子泳道
-        const poolId = generateUniqueId('pool');
-        const lane1Id = `lane-${Date.now().toString(36)}-1`;
-        const lane2Id = `lane-${Date.now().toString(36)}-2`;
-
-        const poolNode: FlowNode = {
-          id: poolId,
-          type: 'pool',
-          position: centeredPosition,
-          width: 800,
-          height: 440,
-          data: {
-            label: '业务泳道池',
-            type: 'pool',
-            orientation: 'horizontal',
-            laneOrder: [lane1Id, lane2Id],
-            headerSize: 40,
-          },
-        };
-
-        const lane1Node: FlowNode = {
-          id: lane1Id,
-          type: 'lane',
-          parentId: poolId,
-          extent: 'parent',
-          position: { x: 0, y: 40 },
-          width: 800,
-          height: 200,
-          data: { label: '泳道 1', type: 'lane', laneTitle: '泳道 1' },
-        };
-
-        const lane2Node: FlowNode = {
-          id: lane2Id,
-          type: 'lane',
-          parentId: poolId,
-          extent: 'parent',
-          position: { x: 0, y: 240 },
-          width: 800,
-          height: 200,
-          data: { label: '泳道 2', type: 'lane', laneTitle: '泳道 2' },
-        };
-
-        addNodes([poolNode, lane1Node, lane2Node]);
-        setSelectedNodes([poolId]);
-        setSelectedEdge(null);
+        const poolNode = addNode('pool', centeredPosition, nodeOptions);
+        if (poolNode?.id) {
+          setSelectedNodes([poolNode.id]);
+          setSelectedEdge(null);
+        }
         return;
       }
 

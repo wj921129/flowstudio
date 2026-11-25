@@ -246,7 +246,14 @@ export class YjsDiagramBridge {
       if ('style' in patch) this.setField(edgeItem, 'style', patch.style);
       if (patch.data !== undefined) {
         const existingData = (edgeItem.get('data') as Record<string, unknown>) || {};
-        this.setJsonField(edgeItem, 'data', { ...existingData, ...patch.data });
+        const merged: Record<string, unknown> = { ...existingData, ...patch.data };
+        for (const [k, v] of Object.entries(patch.data)) {
+          if (v === undefined) delete merged[k];
+        }
+        if (patch.type === 'straight' || merged.routingType === 'straight') {
+          delete merged.waypoints;
+        }
+        this.setJsonField(edgeItem, 'data', merged);
       }
     });
   }

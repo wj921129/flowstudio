@@ -43,6 +43,7 @@ export function generateEdgeId(source: string, target: string): string {
 export interface CreateNodeOptions {
   label?: string;
   role?: 'start' | 'end';
+  orientation?: 'horizontal' | 'vertical';
 }
 
 export function createNodeFromType(

@@ -67,7 +67,8 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     name: 'scaffold_diagram',
     description:
       '以 DiagramSpec 语义规范生成或重渲染图表（vertical-flow / timeline-annotated / swimlane / tiered-dag / tree 五范式确定性排版：' +
-      'vertical-flow 无分支主干恒距、有分支按块留白、分支网格同行右置、回环上方侧路、分支通过结果 loop 回归源主干（横向侧路）、附注连续左列；其余范式保持主干恒距、附注右列；pool→lane→节点层级），与现状差量写入并生成前置备份快照；' +
+      'swimlane 支持 orientation（horizontal 横向泳道 / vertical 竖向分列泳道）严格按因果推进；tree 支持树优先分层展开与多父共享汇聚节点（适合代码全链路展开）；' +
+      '支持图级 edgeRouting（orthogonal 折线 / straight 纯直线）与边级 routingType 覆盖；' +
       '同节点同侧多条连线与双向边会自动均匀分摊端口防重叠（常规无需手算 sourceHandle/targetHandle，必要时可传 top/right/bottom/left 或 side@0.04~0.96 精调）；' +
       'edges 支持 strokeStyle（solid 实线 / dashed 虚线用于异步、可选旁路或回调 / dotted 点线用于弱依赖参考；annotate 附注边默认 dashed）',
     inputSchema: {
@@ -91,17 +92,18 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       'jump 表示主干跨段旁路（跳过中段直达下游主干，不改变节点角色），' +
       'loop 支持分支通过结果回归源主干节点（双重判断回归，横向侧路），' +
       'add_node 支持 role/attachTo 语义字段；' +
-      'connect / update_edge / insert_between 支持 strokeStyle（solid 实线 / dashed 虚线 / dotted 点线，annotate 默认 dashed）及 style.strokeColor / strokeWidth',
+      'connect / update_edge / insert_between 支持 strokeStyle（solid 实线 / dashed 虚线 / dotted 点线，annotate 默认 dashed）、routingType（orthogonal 折线 / straight 纯直线）及 style.strokeColor / strokeWidth',
     inputSchema: z.toJSONSchema(applyOpsInputSchema) as any,
   },
   {
     name: 'auto_layout',
-    description: '对指定图表执行服务端分层正交自动排版，并自动刷新未锁定、未人工手调的连线端口分布以消除同点重叠',
+    description: '对指定图表执行服务端自动排版（layered 分层正交 / tree 自上而下树状展开；纵向泳道默认 DOWN），并刷新未锁定、未人工手调的连线端口分布以消除同点重叠',
     inputSchema: {
       type: 'object',
       properties: {
         diagramId: { type: 'string', description: '图表 ID' },
         direction: { type: 'string', enum: ['RIGHT', 'DOWN'], description: '排版方向：RIGHT (横向) 或 DOWN (纵向)' },
+        mode: { type: 'string', enum: ['layered', 'tree'], description: '排版模式：layered (分层) 或 tree (树优先展开)' },
       },
       required: ['diagramId'],
     },

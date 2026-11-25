@@ -57,6 +57,22 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
         return { nodes, edges, locks };
       });
 
+      const existingPool = existing.nodes.find((n) => n.type === 'pool' && n.id === 'pool');
+      const prevOrientation = (existingPool?.data?.orientation as string | undefined) ?? 'horizontal';
+      const nextOrientation = input.spec.orientation ?? 'horizontal';
+      const orientationChanged = Boolean(existingPool && input.spec.paradigm === 'swimlane' && prevOrientation !== nextOrientation);
+      if (orientationChanged && existingPool) {
+        const poolLaneIds = new Set(existing.nodes.filter((n) => n.parentId === existingPool.id).map((n) => n.id));
+        const hasLockedMember = existing.nodes.some(
+          (n) =>
+            (n.id === existingPool.id || poolLaneIds.has(n.id) || (n.parentId ? poolLaneIds.has(n.parentId) : false))
+            && (existing.locks.get(n.id) ?? 'none') !== 'none',
+        );
+        if (hasLockedMember) {
+          throw new Error('泳道池内含人工锁定节点，请先解锁后再切换方向');
+        }
+      }
+
       ctx.writer.createSnapshot(input.diagramId, 'AI 生成骨架前快照', 'ai_batch');
 
       const protectedIds = new Set<string>();
@@ -88,10 +104,10 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
           return t === 'pool' || t === 'lane' || t === 'group';
         }),
       );
-      const existingPool = existing.nodes.find((n) => n.type === 'pool' && n.id === 'pool');
+      const effectiveLaneSizes = orientationChanged ? new Map<string, { width: number; height: number }>() : laneSizes;
       const protectedEdges = existing.edges.filter((e) => protectedIds.has(e.source) || protectedIds.has(e.target));
-      const rendered = renderSpec(input.spec, { fixed, laneSizes, poolPosition: existingPool?.position, obstacles, protectedEdges });
-      const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none');
+      const rendered = renderSpec(input.spec, { fixed, laneSizes: effectiveLaneSizes, poolPosition: existingPool?.position, obstacles, protectedEdges });
+      const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none', { orientationChanged });
       const mainOrder = normalizeSpec(input.spec).mainOrder;
 
       const batchId = ctx.newBatchId('ai-scaffold');
