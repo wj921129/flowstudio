@@ -184,6 +184,7 @@ export function projectPointOntoPolyline(
 export type SegmentAxis = 'h' | 'v';
 
 export const SEGMENT_MERGE_SNAP_THRESHOLD = 8;
+export const MIN_ENDPOINT_STUB = 16;
 
 export function getSegmentAxis(a: XYPosition, b: XYPosition): SegmentAxis | null {
   if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) >= 0.5) return 'h';
@@ -197,17 +198,134 @@ export function moveOrthogonalSegment(
   waypoints: XYPosition[],
   segIndex: number,
   offset: number,
-  snapThreshold: number = SEGMENT_MERGE_SNAP_THRESHOLD
+  snapThreshold: number = SEGMENT_MERGE_SNAP_THRESHOLD,
+  dragCursor?: XYPosition
 ): XYPosition[] {
   const pts = [source, ...waypoints, target].map((p) => ({ ...p }));
   const lastIndex = pts.length - 1;
-  if (pts.length <= 2 || segIndex <= 0 || segIndex >= lastIndex - 1) {
+  if (segIndex < 0 || segIndex >= lastIndex || offset === 0) {
     return waypoints.map((p) => ({ ...p }));
   }
+
+  if (pts.length === 2 && segIndex === 0) {
+    const axis = getSegmentAxis(source, target);
+    if (axis === 'h') {
+      const len = Math.abs(target.x - source.x);
+      if (len < 2) return waypoints.map((p) => ({ ...p }));
+      const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 4)));
+      const dir = target.x >= source.x ? 1 : -1;
+      const s1x = source.x + dir * stub;
+      const t1x = target.x - dir * stub;
+      const ny = source.y + offset;
+      return [
+        { x: s1x, y: source.y },
+        { x: s1x, y: ny },
+        { x: t1x, y: ny },
+        { x: t1x, y: target.y },
+      ];
+    }
+    if (axis === 'v') {
+      const len = Math.abs(target.y - source.y);
+      if (len < 2) return waypoints.map((p) => ({ ...p }));
+      const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 4)));
+      const dir = target.y >= source.y ? 1 : -1;
+      const s1y = source.y + dir * stub;
+      const t1y = target.y - dir * stub;
+      const nx = source.x + offset;
+      return [
+        { x: source.x, y: s1y },
+        { x: nx, y: s1y },
+        { x: nx, y: t1y },
+        { x: target.x, y: t1y },
+      ];
+    }
+    const horizontalDominant = Math.abs(target.x - source.x) >= Math.abs(target.y - source.y);
+    if (horizontalDominant) {
+      const midX = (dragCursor?.x ?? (source.x + target.x) / 2) + offset;
+      return [
+        { x: midX, y: source.y },
+        { x: midX, y: target.y },
+      ];
+    }
+    const midY = (dragCursor?.y ?? (source.y + target.y) / 2) + offset;
+    return [
+      { x: source.x, y: midY },
+      { x: target.x, y: midY },
+    ];
+  }
+
+  if (segIndex === 0 && pts.length > 2) {
+    const a = pts[0];
+    const b = pts[1];
+    const axis = getSegmentAxis(a, b);
+    if (!axis) return waypoints.map((p) => ({ ...p }));
+    const segLen = axis === 'h' ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(segLen / 3)));
+    const dir = axis === 'h' ? (b.x >= a.x ? 1 : -1) : (b.y >= a.y ? 1 : -1);
+    let targetCoord = (axis === 'h' ? a.y : a.x) + offset;
+    let snapped = false;
+    if (snapThreshold > 0 && pts.length >= 4 && getSegmentAxis(pts[2], pts[3]) === axis) {
+      const cand = axis === 'h' ? pts[2].y : pts[2].x;
+      if (Math.abs(targetCoord - cand) <= snapThreshold) {
+        targetCoord = cand;
+        snapped = true;
+      }
+    }
+    const nextWps =
+      axis === 'h'
+        ? [
+            { x: a.x + dir * stub, y: a.y },
+            { x: a.x + dir * stub, y: targetCoord },
+            { x: b.x, y: targetCoord },
+            ...pts.slice(2, lastIndex),
+          ]
+        : [
+            { x: a.x, y: a.y + dir * stub },
+            { x: targetCoord, y: a.y + dir * stub },
+            { x: targetCoord, y: b.y },
+            ...pts.slice(2, lastIndex),
+          ];
+    return snapped ? simplifyOrthogonalWaypoints(source, target, nextWps) : nextWps;
+  }
+
+  if (segIndex === lastIndex - 1 && pts.length > 2) {
+    const a = pts[lastIndex - 1];
+    const b = pts[lastIndex];
+    const axis = getSegmentAxis(a, b);
+    if (!axis) return waypoints.map((p) => ({ ...p }));
+    const segLen = axis === 'h' ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(segLen / 3)));
+    const dir = axis === 'h' ? (a.x >= b.x ? 1 : -1) : (a.y >= b.y ? 1 : -1);
+    let targetCoord = (axis === 'h' ? b.y : b.x) + offset;
+    let snapped = false;
+    if (snapThreshold > 0 && lastIndex - 3 >= 0 && getSegmentAxis(pts[lastIndex - 3], pts[lastIndex - 2]) === axis) {
+      const cand = axis === 'h' ? pts[lastIndex - 2].y : pts[lastIndex - 2].x;
+      if (Math.abs(targetCoord - cand) <= snapThreshold) {
+        targetCoord = cand;
+        snapped = true;
+      }
+    }
+    const nextWps =
+      axis === 'h'
+        ? [
+            ...pts.slice(1, lastIndex - 1),
+            { x: a.x, y: targetCoord },
+            { x: b.x + dir * stub, y: targetCoord },
+            { x: b.x + dir * stub, y: b.y },
+          ]
+        : [
+            ...pts.slice(1, lastIndex - 1),
+            { x: targetCoord, y: a.y },
+            { x: targetCoord, y: b.y + dir * stub },
+            { x: b.x, y: b.y + dir * stub },
+          ];
+    return snapped ? simplifyOrthogonalWaypoints(source, target, nextWps) : nextWps;
+  }
+
   const a = pts[segIndex];
   const b = pts[segIndex + 1];
   const axis = a && b ? getSegmentAxis(a, b) : null;
-  if (!axis || offset === 0) return waypoints.map((p) => ({ ...p }));
+  if (!axis) return waypoints.map((p) => ({ ...p }));
 
   const currentCoord = axis === 'h' ? a.y : a.x;
   let targetCoord = currentCoord + offset;
@@ -238,6 +356,79 @@ export function moveOrthogonalSegment(
   pts[segIndex + 1] = applyCoord(b);
   const next = pts.slice(1, lastIndex);
   return snapped ? simplifyOrthogonalWaypoints(source, target, next) : next;
+}
+
+export function moveOrthogonalCorner(
+  source: XYPosition,
+  target: XYPosition,
+  waypoints: XYPosition[],
+  cornerIndex: number,
+  nextPos: XYPosition
+): XYPosition[] {
+  if (cornerIndex < 0 || cornerIndex >= waypoints.length) {
+    return waypoints.map((p) => ({ ...p }));
+  }
+  const pts = [source, ...waypoints, target].map((p) => ({ ...p }));
+  const idx = cornerIndex + 1;
+  const prev = pts[idx - 1];
+  const curr = pts[idx];
+  const next = pts[idx + 1];
+  const inAxis = getSegmentAxis(prev, curr) ?? inferSegmentAxis(prev, curr);
+  const outAxis = getSegmentAxis(curr, next) ?? inferSegmentAxis(curr, next);
+
+  let prefixWps: XYPosition[] = [];
+  if (idx - 1 > 0) {
+    prefixWps = pts.slice(1, idx);
+    const lastPrefix = prefixWps[prefixWps.length - 1];
+    if (inAxis === 'h') lastPrefix.y = nextPos.y;
+    else if (inAxis === 'v') lastPrefix.x = nextPos.x;
+  } else if (inAxis === 'h') {
+    const len = Math.abs(curr.x - source.x);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 3)));
+    const dir = curr.x >= source.x ? 1 : -1;
+    const stubX = source.x + dir * stub;
+    prefixWps = [
+      { x: stubX, y: source.y },
+      { x: stubX, y: nextPos.y },
+    ];
+  } else if (inAxis === 'v') {
+    const len = Math.abs(curr.y - source.y);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 3)));
+    const dir = curr.y >= source.y ? 1 : -1;
+    const stubY = source.y + dir * stub;
+    prefixWps = [
+      { x: source.x, y: stubY },
+      { x: nextPos.x, y: stubY },
+    ];
+  }
+
+  let suffixWps: XYPosition[] = [];
+  if (idx + 1 < pts.length - 1) {
+    suffixWps = pts.slice(idx + 1, pts.length - 1);
+    const firstSuffix = suffixWps[0];
+    if (outAxis === 'h') firstSuffix.y = nextPos.y;
+    else if (outAxis === 'v') firstSuffix.x = nextPos.x;
+  } else if (outAxis === 'h') {
+    const len = Math.abs(curr.x - target.x);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 3)));
+    const dir = curr.x >= target.x ? 1 : -1;
+    const stubX = target.x + dir * stub;
+    suffixWps = [
+      { x: stubX, y: nextPos.y },
+      { x: stubX, y: target.y },
+    ];
+  } else if (outAxis === 'v') {
+    const len = Math.abs(curr.y - target.y);
+    const stub = Math.min(MIN_ENDPOINT_STUB, Math.max(4, Math.floor(len / 3)));
+    const dir = curr.y >= target.y ? 1 : -1;
+    const stubY = target.y + dir * stub;
+    suffixWps = [
+      { x: nextPos.x, y: stubY },
+      { x: target.x, y: stubY },
+    ];
+  }
+
+  return [...prefixWps, { x: nextPos.x, y: nextPos.y }, ...suffixWps];
 }
 
 export function simplifyOrthogonalWaypoints(

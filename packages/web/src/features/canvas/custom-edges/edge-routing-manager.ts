@@ -14,6 +14,10 @@ import {
   buildBridgeJumpPath,
   type HorizontalSegment,
 } from './bridge-jump-utils';
+import {
+  computeEdgeOverlaps,
+  type EdgeOverlapSegment,
+} from './edge-overlap-utils';
 
 export interface RouteEdgeParams {
   id: string;
@@ -45,6 +49,13 @@ export class EdgeRoutingManager {
   private nodeParentMap = new Map<string, string | undefined>();
   private obstaclesVersion = 0;
   private edgeHorizontalSegments = new Map<string, HorizontalSegment[]>();
+  private edgeSegmentsMap = new Map<string, PathSegment[]>();
+  private edgeSegmentSignatures = new Map<string, string>();
+  private overlapCache: EdgeOverlapSegment[] | null = null;
+  private overlapByEdgeCache = new Map<string, EdgeOverlapSegment[]>();
+  private overlapVersion = 0;
+  private overlapListeners = new Set<() => void>();
+  private overlapNotifyScheduled = false;
   private routeCache = new Map<string, ComputedEdgeRoute>();
   private rafScheduled = false;
   private pendingCallbacks = new Set<() => void>();
@@ -211,14 +222,81 @@ export class EdgeRoutingManager {
     return list;
   }
 
+  private scheduleOverlapNotify(): void {
+    if (this.overlapNotifyScheduled) return;
+    this.overlapNotifyScheduled = true;
+    this.scheduleRaf(() => {
+      this.overlapNotifyScheduled = false;
+      this.overlapVersion++;
+      for (const listener of this.overlapListeners) listener();
+    });
+  }
+
+  private invalidateOverlaps(): void {
+    this.overlapCache = null;
+    this.overlapByEdgeCache.clear();
+    if (this.overlapListeners.size > 0) {
+      this.scheduleOverlapNotify();
+    } else {
+      this.overlapVersion++;
+    }
+  }
+
   registerEdgeSegments(edgeId: string, segments: PathSegment[]): void {
     const hSegs = extractHorizontalSegments(edgeId, segments);
     this.edgeHorizontalSegments.set(edgeId, hSegs);
+    const sig = segments
+      .map((s) => `${Math.round(s.start.x * 10)},${Math.round(s.start.y * 10)}->${Math.round(s.end.x * 10)},${Math.round(s.end.y * 10)}`)
+      .join('|');
+    if (this.edgeSegmentSignatures.get(edgeId) === sig) return;
+    this.edgeSegmentSignatures.set(edgeId, sig);
+    this.edgeSegmentsMap.set(edgeId, segments);
+    this.invalidateOverlaps();
   }
 
   unregisterEdge(edgeId: string): void {
     this.edgeHorizontalSegments.delete(edgeId);
     this.routeCache.delete(edgeId);
+    if (this.edgeSegmentsMap.has(edgeId)) {
+      this.edgeSegmentsMap.delete(edgeId);
+      this.edgeSegmentSignatures.delete(edgeId);
+      this.invalidateOverlaps();
+    }
+  }
+
+  getOverlapVersion(): number {
+    return this.overlapVersion;
+  }
+
+  subscribeOverlaps(listener: () => void): () => void {
+    this.overlapListeners.add(listener);
+    return () => {
+      this.overlapListeners.delete(listener);
+    };
+  }
+
+  getAllOverlaps(): EdgeOverlapSegment[] {
+    if (!this.overlapCache) {
+      const all = computeEdgeOverlaps(this.edgeSegmentsMap);
+      this.overlapCache = all;
+      this.overlapByEdgeCache.clear();
+      for (const seg of all) {
+        for (const eid of seg.edgeIds) {
+          let list = this.overlapByEdgeCache.get(eid);
+          if (!list) {
+            list = [];
+            this.overlapByEdgeCache.set(eid, list);
+          }
+          list.push(seg);
+        }
+      }
+    }
+    return this.overlapCache;
+  }
+
+  getOverlapsForEdge(edgeId: string): EdgeOverlapSegment[] {
+    this.getAllOverlaps();
+    return this.overlapByEdgeCache.get(edgeId) ?? [];
   }
 
   routeEdge(params: RouteEdgeParams): ComputedEdgeRoute {
@@ -323,6 +401,12 @@ export class EdgeRoutingManager {
     this.nodePositions.clear();
     this.nodeParentMap.clear();
     this.edgeHorizontalSegments.clear();
+    this.edgeSegmentsMap.clear();
+    this.edgeSegmentSignatures.clear();
+    this.overlapCache = null;
+    this.overlapByEdgeCache.clear();
+    this.overlapNotifyScheduled = false;
+    this.overlapVersion = 0;
     this.routeCache.clear();
     this.pendingCallbacks.clear();
     this.rafScheduled = false;

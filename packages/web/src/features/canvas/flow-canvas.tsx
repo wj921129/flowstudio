@@ -53,8 +53,8 @@ import { WatermarkLayer, PresentationControls, usePresentationStore } from '../p
 import { SnapshotDiffOverlay, SnapshotDiffSidebar } from '../snapshot';
 
 
-/** 协同光标广播最小间隔 (ms)：原生 mousemove 频率远超展示与带宽需要，逐帧直发会引发全树重渲染 */
 const CURSOR_BROADCAST_INTERVAL_MS = 40;
+const CONTAINER_NODE_TYPE_SET = new Set(['pool', 'lane', 'group']);
 
 export const FlowCanvas: React.FC = () => {
   const nodes = useFlowStore((s) => s.nodes);
@@ -93,6 +93,10 @@ export const FlowCanvas: React.FC = () => {
   const showToast = useFlowStore((s) => s.showToast);
   const isReadOnly = usePresentationStore((s) => s.isReadOnly);
   const isPresenting = usePresentationStore((s) => s.isPresenting);
+  const isReconnectingEdge = useFlowStore((s) => s.isReconnectingEdge);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [isConnectingEdge, setIsConnectingEdge] = useState(false);
+  const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
 
   const { screenToFlowPosition, setViewport } = useReactFlow();
   const collab = useCollaboration();
@@ -144,28 +148,48 @@ export const FlowCanvas: React.FC = () => {
     setSpotlightTarget,
   ]);
 
-  // 单选节点自动触发链路走查（选中连线不展示链路）；若存在外部指定目标（如演讲/主讲人跟随）则优先使用
+  useEffect(() => {
+    if (effectivePanMode || spotlightActive || isReconnectingEdge || isConnectingEdge) {
+      setHoveredNodeId(null);
+    }
+  }, [effectivePanMode, spotlightActive, isReconnectingEdge, isConnectingEdge]);
+
+  const activeHoveredNodeId =
+    effectivePanMode || spotlightActive || isReconnectingEdge || isConnectingEdge
+      ? null
+      : hoveredNodeId;
+
+  const hoverFocus = useMemo(() => {
+    if (!activeHoveredNodeId) return null;
+    const nodeIds = new Set<string>([activeHoveredNodeId]);
+    const edgeIds = new Set<string>();
+    for (const e of edges) {
+      if (e.source === activeHoveredNodeId || e.target === activeHoveredNodeId) {
+        edgeIds.add(e.id);
+        nodeIds.add(e.source);
+        nodeIds.add(e.target);
+      }
+    }
+    return { nodeIds, edgeIds };
+  }, [activeHoveredNodeId, edges]);
+
   const autoSpotlightTargetId = useMemo(() => {
     if (selectedNodeIds.length === 1 && !selectedEdgeId) return selectedNodeIds[0];
     return null;
   }, [selectedNodeIds, selectedEdgeId]);
 
-  const effectiveSpotlightTargetId = spotlightTargetId || autoSpotlightTargetId;
+  const effectiveSpotlightTargetId = spotlightActive ? (spotlightTargetId || autoSpotlightTargetId) : null;
 
-  // 计算因果链路聚光灯走查范围（单选元素局部走查 或 全局链路走查）
   const spotlightResult = useMemo(() => {
+    if (!spotlightActive) return null;
     if (effectiveSpotlightTargetId) {
       return computePathSpotlight(nodes, edges, effectiveSpotlightTargetId, {
         decisionBranchFilter: spotlightBranchFilter,
       });
     }
-    if (spotlightActive) {
-      return computeGlobalPathSpotlight(nodes, edges);
-    }
-    return null;
+    return computeGlobalPathSpotlight(nodes, edges);
   }, [spotlightActive, effectiveSpotlightTargetId, spotlightBranchFilter, nodes, edges]);
 
-  // 计算当前聚焦链路中的决策分支列表供浮动单选胶囊切换
   const decisionBranches = useMemo(() => {
     if (!effectiveSpotlightTargetId) return [];
     return getDecisionBranches(effectiveSpotlightTargetId, edges);
@@ -173,17 +197,20 @@ export const FlowCanvas: React.FC = () => {
 
   const displayNodeCacheRef = useRef<Map<string, DisplayNodeCacheEntry>>(new Map());
 
-  // 映射聚光灯走查与锚定锁限制下的节点集合（position/full 锁定及包含锁定子节点的容器禁止拖拽，聚光灯降噪15%透明度）
   const displayNodes = useMemo(() => {
     const hasSpotlightDim = Boolean(spotlightActive && spotlightResult);
     return deriveDisplayNodes(
       nodes,
-      { hasSpotlightDim, spotlightResult, isReadOnly },
+      {
+        hasSpotlightDim,
+        spotlightResult,
+        isReadOnly,
+        hoverFocusNodeIds: hasSpotlightDim ? null : hoverFocus?.nodeIds ?? null,
+      },
       displayNodeCacheRef.current
     );
-  }, [nodes, spotlightActive, spotlightResult, isReadOnly]);
+  }, [nodes, spotlightActive, spotlightResult, isReadOnly, hoverFocus]);
 
-  // 映射聚光灯走查及断键悬停下的连线样式
   const displayEdges = useMemo(() => {
     const tintMarker = (marker: FlowEdge['markerEnd'], color: string, fallbackType?: MarkerType) => {
       if (marker && typeof marker === 'object') return { ...marker, color };
@@ -192,8 +219,9 @@ export const FlowCanvas: React.FC = () => {
     };
 
     const selectionRing = 'var(--fs-selection-ring, #2563eb)';
+    const focusStroke = 'var(--fs-edge-focus-stroke, #475569)';
     const hasSelected = Boolean(selectedEdgeId) || edges.some((e) => e.selected);
-    if (!spotlightResult && !hoveredEdgeForInsert && !hasSelected) return edges;
+    if (!spotlightResult && !hoveredEdgeForInsert && !hasSelected && !hoverFocus) return edges;
     const edgeIds = spotlightResult?.edgeIds;
 
     return edges.map((edge) => {
@@ -245,6 +273,46 @@ export const FlowCanvas: React.FC = () => {
         };
       }
 
+      if (hoverFocus) {
+        const isFocusEdge = hoverFocus.edgeIds.has(edge.id);
+        const baseW = typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.5;
+        if (isFocusEdge) {
+          const hasCustomColor = Boolean(edge.data?.style?.strokeColor || edge.style?.stroke);
+          const nextStroke = isEdgeSelected
+            ? selectionRing
+            : hasCustomColor
+            ? edge.style?.stroke
+            : focusStroke;
+          return {
+            ...edge,
+            zIndex: isEdgeSelected ? 20 : 10,
+            ...(selectedPatch || (!hasCustomColor
+              ? {
+                  markerEnd: tintMarker(edge.markerEnd, focusStroke, MarkerType.ArrowClosed),
+                  ...(edge.markerStart ? { markerStart: tintMarker(edge.markerStart, focusStroke) } : {}),
+                }
+              : {})),
+            style: {
+              ...edge.style,
+              opacity: 1,
+              ...(nextStroke ? { stroke: nextStroke } : {}),
+              strokeWidth: Math.max(baseW + 1.5, 3),
+              transition: 'opacity 0.16s ease, stroke-width 0.16s ease',
+            },
+          };
+        }
+        return {
+          ...edge,
+          ...(selectedPatch || {}),
+          style: {
+            ...edge.style,
+            ...(isEdgeSelected ? { stroke: selectionRing, strokeWidth: Math.max(baseW, 2) } : {}),
+            opacity: 0.8,
+            transition: 'opacity 0.16s ease, stroke-width 0.16s ease',
+          },
+        };
+      }
+
       if (selectedPatch) {
         return {
           ...edge,
@@ -259,7 +327,7 @@ export const FlowCanvas: React.FC = () => {
 
       return edge;
     });
-  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert, selectedEdgeId]);
+  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert, selectedEdgeId, hoverFocus]);
 
   const lastCursorBroadcastRef = useRef(0);
 
@@ -278,10 +346,23 @@ export const FlowCanvas: React.FC = () => {
 
   const handleMouseLeave = useCallback(() => {
     setHoveredEdgeForInsert(null);
+    setHoveredNodeId(null);
     if (!collab) return;
     lastCursorBroadcastRef.current = 0;
     collab.broadcastCursor(null);
   }, [collab]);
+
+  const handleNodeMouseEnter = useCallback(
+    (_event: React.MouseEvent, node: { id: string; type?: string }) => {
+      if (CONTAINER_NODE_TYPE_SET.has(node.type ?? '')) return;
+      setHoveredNodeId(node.id);
+    },
+    []
+  );
+
+  const handleNodeMouseLeave = useCallback((_event: React.MouseEvent, node: { id: string }) => {
+    setHoveredNodeId((prev) => (prev === node.id ? null : prev));
+  }, []);
 
   /** 视口缩放随 pan/zoom 变化，对齐感应半径需要据此换算，并向协同者广播视口 */
   const handleViewportMove = useCallback(
@@ -567,15 +648,14 @@ export const FlowCanvas: React.FC = () => {
     [onConnect]
   );
 
-  const handleReconnect = useCallback(
-    (oldEdge: FlowEdge, newConnection: any) => {
-      useFlowStore.getState().reconnectEdge(oldEdge, newConnection);
-    },
-    []
-  );
-
   const handleConnectStart = useCallback(() => {
     setConnectSourceNodeId(null);
+    setHoveredNodeId(null);
+    setIsConnectingEdge(true);
+  }, []);
+
+  const handleConnectEnd = useCallback(() => {
+    setIsConnectingEdge(false);
   }, []);
 
   /**
@@ -1042,7 +1122,6 @@ export const FlowCanvas: React.FC = () => {
   }, [isReadOnly]);
 
   const translateExtent = useMemo(() => computeCanvasTranslateExtent(nodes), [nodes]);
-  const effectivePanMode = isSpacePanning || isReadOnly || activeTool === 'pan';
   const effectiveConnectMode = isShiftPressed
     ? edgeConnectMode === 'orthogonal'
       ? 'straight'
@@ -1155,8 +1234,8 @@ export const FlowCanvas: React.FC = () => {
         onSelectionChange={handleSelectionChange}
         onConnect={handleConnect}
         onConnectStart={handleConnectStart}
-        onReconnect={handleReconnect}
-        edgesReconnectable={!isSpacePanning && !isReadOnly && activeTool !== 'pan'}
+        onConnectEnd={handleConnectEnd}
+        edgesReconnectable={false}
         onEdgeClick={handleEdgeClick}
         onEdgeDoubleClick={(_e, edge) => {
           if (isReadOnly || isSpacePanning || activeTool === 'pan') return;
@@ -1165,6 +1244,8 @@ export const FlowCanvas: React.FC = () => {
           useFlowStore.getState().setEditingEdgeLabelId(edge.id);
         }}
         onNodeClick={handleNodeClick}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
         onNodeDragStop={handleNodeDragStop}
         onMove={handleViewportMove}
         onMoveStart={handleMoveStart}

@@ -11,12 +11,15 @@ export function getSwimlaneBaseZIndex(type: FlowNode['type']): number | undefine
   return undefined;
 }
 
+export type NodeHoverFocusState = 'none' | 'focus' | 'dim';
+
 export interface DisplayNodeCacheEntry {
   raw: FlowNode;
   draggable: false | undefined;
   zIndex: number | undefined;
   hasSpotlightDim: boolean;
   isHighlighted: boolean;
+  hoverState: NodeHoverFocusState;
   derived: FlowNode;
 }
 
@@ -24,6 +27,14 @@ export interface DeriveDisplayNodesOptions {
   hasSpotlightDim: boolean;
   spotlightResult: PathSpotlightResult | null;
   isReadOnly: boolean;
+  hoverFocusNodeIds?: ReadonlySet<string> | null;
+}
+
+function appendNodeClassName(base: string | undefined, extra: string): string {
+  if (!base) return extra;
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.includes(extra)) return base;
+  return `${base} ${extra}`;
 }
 
 function sortNodesByHierarchy(nodes: FlowNode[], nodeById: Map<string, FlowNode>): FlowNode[] {
@@ -52,7 +63,8 @@ export function deriveDisplayNodes(
   options: DeriveDisplayNodesOptions,
   cache?: Map<string, DisplayNodeCacheEntry>
 ): FlowNode[] {
-  const { hasSpotlightDim, spotlightResult, isReadOnly } = options;
+  const { hasSpotlightDim, spotlightResult, isReadOnly, hoverFocusNodeIds } = options;
+  const hasHoverFocus = Boolean(!hasSpotlightDim && hoverFocusNodeIds && hoverFocusNodeIds.size > 0);
 
   const nodeById = new Map<string, FlowNode>();
   const lockedNodeIds = new Set<string>();
@@ -70,6 +82,19 @@ export function deriveDisplayNodes(
     const baseZ = getSwimlaneBaseZIndex(n.type);
     if (baseZ !== undefined && (n.zIndex !== baseZ || n.style?.zIndex !== undefined)) {
       hasSwimlaneZAdjust = true;
+    }
+  }
+
+  const hoverFocusedAncestors = new Set<string>();
+  if (hasHoverFocus && hoverFocusNodeIds) {
+    for (const focusId of hoverFocusNodeIds) {
+      let curr = nodeById.get(focusId)?.parentId;
+      const visited = new Set<string>([focusId]);
+      while (curr && !visited.has(curr)) {
+        visited.add(curr);
+        hoverFocusedAncestors.add(curr);
+        curr = nodeById.get(curr)?.parentId;
+      }
     }
   }
 
@@ -91,7 +116,7 @@ export function deriveDisplayNodes(
   }
 
   const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
-  if (!hasSpotlightDim && !hasAnyLocked && !isReadOnly && !hasSwimlaneZAdjust && !needsTopologicalSort) {
+  if (!hasSpotlightDim && !hasHoverFocus && !hasAnyLocked && !isReadOnly && !hasSwimlaneZAdjust && !needsTopologicalSort) {
     cache?.clear();
     return nodes;
   }
@@ -108,8 +133,15 @@ export function deriveDisplayNodes(
       hasSpotlightDim && spotlightResult
         ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
         : true;
+    const hoverState: NodeHoverFocusState = !hasHoverFocus
+      ? 'none'
+      : hoverFocusNodeIds!.has(node.id)
+      ? 'focus'
+      : hoverFocusedAncestors.has(node.id)
+      ? 'none'
+      : 'dim';
 
-    if (!hasSpotlightDim && draggable === node.draggable && targetZ === node.zIndex && !hasStyleZOverride) {
+    if (!hasSpotlightDim && hoverState === 'none' && draggable === node.draggable && targetZ === node.zIndex && !hasStyleZOverride) {
       return node;
     }
 
@@ -120,7 +152,8 @@ export function deriveDisplayNodes(
       cached.draggable === draggable &&
       cached.zIndex === targetZ &&
       cached.hasSpotlightDim === hasSpotlightDim &&
-      cached.isHighlighted === isHighlighted
+      cached.isHighlighted === isHighlighted &&
+      cached.hoverState === hoverState
     ) {
       nextCache?.set(node.id, cached);
       return cached.derived;
@@ -140,10 +173,18 @@ export function deriveDisplayNodes(
       };
     }
 
+    const nextClassName =
+      hoverState === 'focus'
+        ? appendNodeClassName(node.className, 'fs-node-hover-focus')
+        : hoverState === 'dim'
+        ? appendNodeClassName(node.className, 'fs-node-hover-dim')
+        : node.className;
+
     const derived: FlowNode = {
       ...node,
       draggable,
       ...(targetZ !== undefined ? { zIndex: targetZ } : {}),
+      ...(nextClassName !== node.className ? { className: nextClassName } : {}),
       style: nextStyle,
     };
 
@@ -153,6 +194,7 @@ export function deriveDisplayNodes(
       zIndex: targetZ,
       hasSpotlightDim,
       isHighlighted,
+      hoverState,
       derived,
     });
     return derived;

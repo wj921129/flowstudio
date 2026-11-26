@@ -5,6 +5,7 @@ import {
   buildWaypointPath,
   deriveDefaultOrthogonalWaypoints,
   findNearestNodeBorderAnchor,
+  moveOrthogonalCorner,
   moveOrthogonalSegment,
   simplifyOrthogonalWaypoints,
 } from '../src/features/canvas/custom-edges/waypoint-path-utils.js';
@@ -24,13 +25,77 @@ describe('waypoint-path-utils: 线段横纵拖动', () => {
     expect(isOrthogonal([s, ...next, t])).toBe(true);
   });
 
-  it('首尾段与无折点直通线段不新增折线，保持原连线样式', () => {
-    expect(moveOrthogonalSegment(s, t, wps, 0, -40)).toEqual(wps);
-    expect(moveOrthogonalSegment(s, t, wps, 2, 40)).toEqual(wps);
+  it('首尾段与无折点直通线段支持自动保留短桩拆出正交折线且绝不挪动起终点', () => {
+    const movedFirst = moveOrthogonalSegment(s, t, wps, 0, -40);
+    expect(movedFirst.length).toBeGreaterThan(wps.length);
+    expect(isOrthogonal([s, ...movedFirst, t])).toBe(true);
+    expect(movedFirst[0].y).toBe(s.y);
+    expect(movedFirst[1].y).toBe(-40);
+
+    const movedLast = moveOrthogonalSegment(s, t, wps, 2, 40);
+    expect(movedLast.length).toBeGreaterThan(wps.length);
+    expect(isOrthogonal([s, ...movedLast, t])).toBe(true);
+    expect(movedLast[movedLast.length - 1].y).toBe(t.y);
+    expect(movedLast[movedLast.length - 2].y).toBe(140);
 
     const a = { x: 0, y: 50 };
     const b = { x: 300, y: 50 };
-    expect(moveOrthogonalSegment(a, b, [], 0, 20)).toEqual([]);
+    const splitH = moveOrthogonalSegment(a, b, [], 0, 20);
+    expect(splitH).toEqual([
+      { x: 16, y: 50 },
+      { x: 16, y: 70 },
+      { x: 284, y: 70 },
+      { x: 284, y: 50 },
+    ]);
+    expect(isOrthogonal([a, ...splitH, b])).toBe(true);
+
+    const va = { x: 50, y: 0 };
+    const vb = { x: 50, y: 200 };
+    const splitV = moveOrthogonalSegment(va, vb, [], 0, -25);
+    expect(splitV).toEqual([
+      { x: 50, y: 16 },
+      { x: 25, y: 16 },
+      { x: 25, y: 184 },
+      { x: 50, y: 184 },
+    ]);
+    expect(isOrthogonal([va, ...splitV, vb])).toBe(true);
+
+    const diag = moveOrthogonalSegment({ x: 0, y: 0 }, { x: 200, y: 100 }, [], 0, 20);
+    expect(diag).toEqual([
+      { x: 120, y: 0 },
+      { x: 120, y: 100 },
+    ]);
+    expect(isOrthogonal([{ x: 0, y: 0 }, ...diag, { x: 200, y: 100 }])).toBe(true);
+  });
+
+  it('moveOrthogonalCorner 拖动内部与近端点拐角均保持正交且绝不挪动起终点锚点', () => {
+    const movedCorner0 = moveOrthogonalCorner(s, t, wps, 0, { x: 120, y: 30 });
+    expect(isOrthogonal([s, ...movedCorner0, t])).toBe(true);
+    expect(movedCorner0[0]).toEqual({ x: 16, y: 0 });
+    expect(movedCorner0).toContainEqual({ x: 120, y: 30 });
+    expect(movedCorner0[movedCorner0.length - 1]).toEqual({ x: 120, y: 100 });
+
+    const movedCorner1 = moveOrthogonalCorner(s, t, wps, 1, { x: 140, y: 75 });
+    expect(isOrthogonal([s, ...movedCorner1, t])).toBe(true);
+    expect(movedCorner1[0]).toEqual({ x: 140, y: 0 });
+    expect(movedCorner1[movedCorner1.length - 1]).toEqual({ x: 184, y: 100 });
+
+    const multiSrc = { x: 0, y: 0 };
+    const multiTgt = { x: 300, y: 200 };
+    const multiWps = [
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 200, y: 100 },
+      { x: 200, y: 200 },
+    ];
+    const movedMiddle = moveOrthogonalCorner(multiSrc, multiTgt, multiWps, 1, { x: 130, y: 80 });
+    expect(movedMiddle).toEqual([
+      { x: 130, y: 0 },
+      { x: 130, y: 80 },
+      { x: 200, y: 80 },
+      { x: 200, y: 200 },
+    ]);
+    expect(isOrthogonal([multiSrc, ...movedMiddle, multiTgt])).toBe(true);
   });
 
   it('中间横线段只沿 Y 平移并保持原有折点数量与正交性', () => {

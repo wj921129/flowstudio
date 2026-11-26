@@ -24,6 +24,7 @@ import {
   getPointAtPolylineRatio,
   projectPointOntoPolyline,
 } from '../src/features/canvas/custom-edges/waypoint-path-utils';
+import { computeFlowDotAnimationSpec } from '../src/features/canvas/custom-edges/orthogonal-edge';
 import {
   parseBorderAnchorHandle,
   formatBorderAnchorHandle,
@@ -657,5 +658,105 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(useFlowStore.getState().edges[0].targetHandle).toBe('top');
     expect(useFlowStore.getState().edges[0].selected).toBe(true);
     expect(useFlowStore.getState().selectedEdgeId).toBe('e1');
+  });
+
+  it('Hover 聚焦区分聚焦/淡化且保护父容器，流向圆点匀速每 0.5s 发射且源码关闭内置重联抢占', () => {
+    const cache = new Map<string, DisplayNodeCacheEntry>();
+    const pool = {
+      id: 'pool-1',
+      type: 'pool' as const,
+      position: { x: 0, y: 0 },
+      zIndex: POOL_Z_INDEX,
+      data: { label: '泳池', type: 'pool' as const },
+    };
+    const lane = {
+      id: 'lane-1',
+      type: 'lane' as const,
+      parentId: 'pool-1',
+      position: { x: 0, y: 40 },
+      zIndex: LANE_Z_INDEX,
+      data: { label: '泳道', type: 'lane' as const },
+    };
+    const n1 = {
+      id: 'n1',
+      type: 'process' as const,
+      parentId: 'lane-1',
+      position: { x: 50, y: 60 },
+      data: { label: 'N1', type: 'process' as const },
+    };
+    const n2 = {
+      id: 'n2',
+      type: 'process' as const,
+      position: { x: 260, y: 60 },
+      data: { label: 'N2', type: 'process' as const },
+    };
+
+    const baseNodes = [pool, lane, n1, n2];
+    expect(
+      deriveDisplayNodes(
+        baseNodes,
+        { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false, hoverFocusNodeIds: null },
+        cache
+      )
+    ).toBe(baseNodes);
+
+    const hovered = deriveDisplayNodes(
+      baseNodes,
+      { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false, hoverFocusNodeIds: new Set(['n1']) },
+      cache
+    );
+    expect(hovered[0].className ?? '').not.toContain('fs-node-hover-dim');
+    expect(hovered[1].className ?? '').not.toContain('fs-node-hover-dim');
+    expect(hovered[2].className).toContain('fs-node-hover-focus');
+    expect(hovered[3].className).toContain('fs-node-hover-dim');
+
+    const spotlightWins = deriveDisplayNodes(
+      baseNodes,
+      {
+        hasSpotlightDim: true,
+        spotlightResult: { nodeIds: new Set(['n2']), edgeIds: new Set<string>(), laneIds: new Set<string>() },
+        isReadOnly: false,
+        hoverFocusNodeIds: new Set(['n1']),
+      },
+      cache
+    );
+    expect(spotlightWins[2].className ?? '').not.toContain('fs-node-hover-focus');
+    expect(spotlightWins[2].style?.opacity).toBe(0.15);
+
+    const shortSpec = computeFlowDotAnimationSpec(40);
+    expect(shortSpec.dotCount).toBe(1);
+    expect(shortSpec.cycleDur).toBe(0.5);
+    expect(shortSpec.step).toBe(0.5);
+
+    const medSpec = computeFlowDotAnimationSpec(240);
+    expect(medSpec.travelDur).toBeCloseTo(1.5, 4);
+    expect(medSpec.dotCount).toBe(3);
+    expect(medSpec.cycleDur).toBe(1.5);
+    expect(medSpec.step).toBe(0.5);
+
+    const longSpec = computeFlowDotAnimationSpec(320);
+    expect(longSpec.travelDur).toBeCloseTo(2.0, 4);
+    expect(longSpec.dotCount).toBe(4);
+    expect(longSpec.cycleDur).toBeGreaterThanOrEqual(longSpec.travelDur);
+
+    const ultraLongSpec = computeFlowDotAnimationSpec(4800);
+    expect(ultraLongSpec.dotCount).toBe(20);
+    expect(ultraLongSpec.cycleDur).toBeCloseTo(30, 4);
+
+    const canvasCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+      'utf-8'
+    );
+    expect(canvasCode).toContain('edgesReconnectable={false}');
+    expect(canvasCode).toContain('onNodeMouseEnter={handleNodeMouseEnter}');
+    expect(canvasCode).toContain('onNodeMouseLeave={handleNodeMouseLeave}');
+
+    const edgeCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
+      'utf-8'
+    );
+    expect(edgeCode).toContain('<animateMotion');
+    expect(edgeCode).toContain('handleCornerPointerDown');
+    expect(edgeCode).toContain('draggableSegments');
   });
 });

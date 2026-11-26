@@ -16,16 +16,58 @@ import {
   getPointAtPolylineRatio,
   getSegmentAxis,
   inferAnchorDirection,
+  moveOrthogonalCorner,
   moveOrthogonalSegment,
   projectPointOntoPolyline,
   simplifyOrthogonalWaypoints,
   type EdgeAnchorDirection,
   type ReconnectAnchorHit,
 } from './waypoint-path-utils';
+import {
+  computeOverlapStrokeWidth,
+  pickOverlapRepresentative,
+} from './edge-overlap-utils';
 import { useFlowStore } from '../../../stores/flow-store';
 import { usePresentationStore } from '../../presentation';
 import { EdgeRoutingManager } from './edge-routing-manager';
 import { InlineTextEditor } from '../custom-nodes/inline-text-editor';
+
+export const FLOW_DOT_SPEED_PX_PER_SEC = 160;
+export const FLOW_DOT_INTERVAL_SEC = 0.5;
+export const FLOW_DOT_MAX_COUNT = 20;
+
+export interface FlowDotAnimationSpec {
+  dotCount: number;
+  travelDur: number;
+  cycleDur: number;
+  step: number;
+  activeRatio: number;
+}
+
+export function computeFlowDotAnimationSpec(totalLength: number): FlowDotAnimationSpec {
+  const travelDur = Math.max(FLOW_DOT_INTERVAL_SEC, totalLength / FLOW_DOT_SPEED_PX_PER_SEC);
+  const rawCount = Math.max(1, Math.ceil(travelDur / FLOW_DOT_INTERVAL_SEC));
+  if (rawCount <= FLOW_DOT_MAX_COUNT) {
+    const dotCount = rawCount;
+    const cycleDur = Number((dotCount * FLOW_DOT_INTERVAL_SEC).toFixed(4));
+    return {
+      dotCount,
+      travelDur,
+      cycleDur,
+      step: FLOW_DOT_INTERVAL_SEC,
+      activeRatio: Math.min(1, travelDur / cycleDur),
+    };
+  }
+  const dotCount = FLOW_DOT_MAX_COUNT;
+  const cycleDur = Number(travelDur.toFixed(4));
+  return {
+    dotCount,
+    travelDur,
+    cycleDur,
+    step: Number((cycleDur / dotCount).toFixed(4)),
+    activeRatio: 1,
+  };
+}
 
 export const TERMINAL_ARROW_DOCKING_GAP = 2.5;
 
@@ -113,6 +155,14 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const setEditingEdgeLabelId = useFlowStore((s) => s.setEditingEdgeLabelId);
   const selectedEdgeLabelId = useFlowStore((s) => s.selectedEdgeLabelId);
   const setSelectedEdgeLabelId = useFlowStore((s) => s.setSelectedEdgeLabelId);
+  const selectedEdgeId = useFlowStore((s) => s.selectedEdgeId);
+  const showFlowDots = useFlowStore(
+    (s) =>
+      !s.spotlightActive &&
+      !s.selectedEdgeId &&
+      s.selectedNodeIds.length > 0 &&
+      (s.selectedNodeIds.includes(source) || s.selectedNodeIds.includes(target))
+  );
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const isReadOnly = usePresentationStore((s) => s.isReadOnly);
@@ -207,6 +257,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     if (currentNodes.length > 0) manager.updateNodes(currentNodes);
   }
 
+  const [overlapVer, setOverlapVer] = useState(() => manager.getOverlapVersion());
+  useEffect(() => manager.subscribeOverlaps(() => setOverlapVer(manager.getOverlapVersion())), [manager]);
+
   const isStraight = type === 'straight' || data?.routingType === 'straight';
   const effectiveSourceNodeId = isDraggingSourceEnd ? endpointDrag.snapped?.nodeId : source;
   const effectiveTargetNodeId = isDraggingTargetEnd ? endpointDrag.snapped?.nodeId : target;
@@ -214,13 +267,23 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
 
   const computedRoute = useMemo(() => {
     if (isStraight) {
+      const straightSegments = [
+        {
+          index: 0,
+          start: dockSource,
+          end: dockTarget,
+          midpoint: {
+            x: (dockSource.x + dockTarget.x) / 2,
+            y: (dockSource.y + dockTarget.y) / 2,
+          },
+        },
+      ];
+      manager.registerEdgeSegments(id, straightSegments);
       return {
         path: `M ${dockSource.x} ${dockSource.y} L ${dockTarget.x} ${dockTarget.y}`,
         waypoints: [],
-        labelPosition: {
-          x: (dockSource.x + dockTarget.x) / 2,
-          y: (dockSource.y + dockTarget.y) / 2,
-        },
+        labelPosition: straightSegments[0].midpoint,
+        segments: straightSegments,
       };
     }
     return manager.routeEdge({
@@ -254,6 +317,32 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     () => [dockSource, ...(computedRoute.waypoints || []), dockTarget],
     [dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints]
   );
+
+  const totalPathLength = useMemo(() => {
+    let total = 0;
+    for (let i = 1; i < polylinePoints.length; i++) {
+      total += Math.hypot(
+        polylinePoints[i].x - polylinePoints[i - 1].x,
+        polylinePoints[i].y - polylinePoints[i - 1].y
+      );
+    }
+    return total;
+  }, [polylinePoints]);
+
+  const flowDotSpec = useMemo(() => {
+    if (!showFlowDots || totalPathLength <= 4) return null;
+    return computeFlowDotAnimationSpec(totalPathLength);
+  }, [showFlowDots, totalPathLength]);
+
+  const isHoverFocusedEdge = incomingStroke === 'var(--fs-edge-focus-stroke)' || (!selected && strokeWidth >= 3);
+  const overlapSegments = useMemo(() => {
+    const all = manager.getOverlapsForEdge(id);
+    if (all.length === 0) return [];
+    const priorityIds = selectedEdgeId ? new Set([selectedEdgeId]) : undefined;
+    return all.filter(
+      (seg) => isHoverFocusedEdge || pickOverlapRepresentative(seg.edgeIds, priorityIds) === id
+    );
+  }, [manager, id, overlapVer, edgePath, selectedEdgeId, isHoverFocusedEdge]);
   const activeRatio = dragLabelRatio ?? (typeof data?.labelRatio === 'number' ? data.labelRatio : null);
   const resolvedLabelPos = useMemo(
     () =>
@@ -334,24 +423,54 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
     });
   }, [isStraight, polylinePoints]);
 
+  const draggableSegments = useMemo(() => {
+    if (polylinePoints.length < 2) return [];
+    return polylinePoints.slice(0, -1).flatMap((a, i) => {
+      const b = polylinePoints[i + 1];
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return [];
+      const axis = getSegmentAxis(a, b);
+      return [{ index: i, a, b, axis }];
+    });
+  }, [polylinePoints]);
+
+  const cornerPoints = useMemo(() => {
+    if (isStraight || !computedRoute.waypoints || computedRoute.waypoints.length === 0) return [];
+    return computedRoute.waypoints.map((pt, index) => ({ index, x: pt.x, y: pt.y }));
+  }, [isStraight, computedRoute.waypoints]);
+
   const handleSegmentPointerDown = useCallback(
-    (index: number, axis: 'h' | 'v', e: React.PointerEvent<HTMLDivElement>) => {
+    (index: number, axis: 'h' | 'v' | null, e: React.PointerEvent<SVGLineElement | HTMLDivElement>) => {
       if (e.button !== 0 || isPanOrLocked) return;
       e.stopPropagation();
       const src = { ...dockSource };
       const tgt = { ...dockTarget };
       const base = (computedRoute.waypoints || []).map((p) => ({ ...p }));
       const start = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const startClient = { x: e.clientX, y: e.clientY };
+      let moved = false;
       let latest = base;
 
       const onPointerMove = (moveEvent: PointerEvent) => {
+        if (!moved && Math.hypot(moveEvent.clientX - startClient.x, moveEvent.clientY - startClient.y) < 3) {
+          return;
+        }
+        moved = true;
         const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
-        const offset = axis === 'h' ? cur.y - start.y : cur.x - start.x;
+        const dx = cur.x - start.x;
+        const dy = cur.y - start.y;
+        const offset =
+          axis === 'h'
+            ? dy
+            : axis === 'v'
+            ? dx
+            : Math.abs(dockTarget.x - dockSource.x) >= Math.abs(dockTarget.y - dockSource.y)
+            ? dx
+            : dy;
         const zoom = useFlowStore.getState().viewportZoom || 1;
         const snapThreshold = moveEvent.altKey
           ? 0
           : Math.min(12, Math.max(5, SEGMENT_MERGE_SNAP_THRESHOLD / Math.max(0.25, zoom)));
-        latest = moveOrthogonalSegment(src, tgt, base, index, offset, snapThreshold);
+        latest = moveOrthogonalSegment(src, tgt, base, index, offset, snapThreshold, cur);
         const preview =
           latest.length === 0 && (Math.abs(src.x - tgt.x) < 1 || Math.abs(src.y - tgt.y) < 1)
             ? [{ x: (src.x + tgt.x) / 2, y: (src.y + tgt.y) / 2 }]
@@ -363,7 +482,54 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       const finish = () => {
         detach();
         setDragWaypoints(null);
-        if (latest === base) return;
+        if (!moved) return;
+        const next = simplifyOrthogonalWaypoints(src, tgt, latest);
+        useFlowStore.getState().updateEdgeData(id, { waypoints: next.length ? next : undefined });
+      };
+
+      detach = () => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+      };
+      dragEndRef.current = () => {
+        detach();
+        setDragWaypoints(null);
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+    },
+    [isPanOrLocked, dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints, screenToFlowPosition, id]
+  );
+
+  const handleCornerPointerDown = useCallback(
+    (cornerIndex: number, e: React.PointerEvent<SVGElement>) => {
+      if (e.button !== 0 || isPanOrLocked) return;
+      e.stopPropagation();
+      const src = { ...dockSource };
+      const tgt = { ...dockTarget };
+      const base = (computedRoute.waypoints || []).map((p) => ({ ...p }));
+      const startClient = { x: e.clientX, y: e.clientY };
+      let moved = false;
+      let latest = base;
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (!moved && Math.hypot(moveEvent.clientX - startClient.x, moveEvent.clientY - startClient.y) < 3) {
+          return;
+        }
+        moved = true;
+        const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
+        latest = moveOrthogonalCorner(src, tgt, base, cornerIndex, cur);
+        setDragWaypoints(latest);
+      };
+
+      let detach = () => {};
+      const finish = () => {
+        detach();
+        setDragWaypoints(null);
+        if (!moved) return;
         const next = simplifyOrthogonalWaypoints(src, tgt, latest);
         useFlowStore.getState().updateEdgeData(id, { waypoints: next.length ? next : undefined });
       };
@@ -482,6 +648,102 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         markerStart={markerStart}
         interactionWidth={mergedStyle?.pointerEvents === 'none' ? 0 : interactionWidth}
       />
+
+      {overlapSegments.map((seg) => (
+        <path
+          key={seg.key}
+          d={`M ${seg.start.x} ${seg.start.y} L ${seg.end.x} ${seg.end.y}`}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth={Math.max(strokeWidth, computeOverlapStrokeWidth(baseStrokeWidth, seg.count))}
+          strokeLinecap="round"
+          strokeDasharray={strokeDasharray}
+          style={{ opacity: mergedStyle.opacity, pointerEvents: 'none' }}
+        />
+      ))}
+
+      {flowDotSpec && !endpointDrag && (
+        <g className="fs-edge-flow-dot" style={{ pointerEvents: 'none' }}>
+          {Array.from({ length: flowDotSpec.dotCount }, (_, i) => {
+            const beginSec = `${Number((i * flowDotSpec.step).toFixed(3))}s`;
+            const durSec = `${flowDotSpec.cycleDur}s`;
+            const tActive = Number(flowDotSpec.activeRatio.toFixed(4));
+            const tFade = Math.min(0.9999, Number((tActive + 0.0005).toFixed(4)));
+            const useHoldPhase = tActive < 0.999;
+            return (
+              <circle
+                key={`${id}-${edgePath}-${i}`}
+                r={3.5}
+                fill="var(--fs-selection-ring, #2563eb)"
+                stroke="var(--fs-surface, #ffffff)"
+                strokeWidth={1.2}
+                opacity={0}
+              >
+                <animateMotion
+                  dur={durSec}
+                  begin={beginSec}
+                  repeatCount="indefinite"
+                  path={edgePath}
+                  calcMode="linear"
+                  {...(useHoldPhase
+                    ? { keyPoints: '0;1;1', keyTimes: `0;${tActive};1` }
+                    : {})}
+                />
+                <animate
+                  attributeName="opacity"
+                  dur={durSec}
+                  begin={beginSec}
+                  repeatCount="indefinite"
+                  values={useHoldPhase ? '1;1;0;0' : '1;1'}
+                  keyTimes={useHoldPhase ? `0;${tActive};${tFade};1` : '0;1'}
+                />
+              </circle>
+            );
+          })}
+        </g>
+      )}
+
+      {selected && !isEditingLabel && !isPanOrLocked && !endpointDrag && (
+        <g>
+          {draggableSegments.map((seg) => (
+            <line
+              key={`drag-seg-${seg.index}`}
+              x1={seg.a.x}
+              y1={seg.a.y}
+              x2={seg.b.x}
+              y2={seg.b.y}
+              stroke="transparent"
+              strokeWidth={14}
+              className="nodrag nopan"
+              style={{
+                cursor: seg.axis === 'h' ? 'ns-resize' : seg.axis === 'v' ? 'ew-resize' : 'move',
+                pointerEvents: 'stroke',
+              }}
+              onPointerDown={(e) => handleSegmentPointerDown(seg.index, seg.axis, e)}
+              onDoubleClick={handleResetWaypoints}
+            />
+          ))}
+          {cornerPoints.map((pt) => (
+            <g
+              key={`corner-${pt.index}`}
+              className="nodrag nopan"
+              style={{ cursor: 'move', pointerEvents: 'all' }}
+              onPointerDown={(e) => handleCornerPointerDown(pt.index, e)}
+              onDoubleClick={handleResetWaypoints}
+            >
+              <circle cx={pt.x} cy={pt.y} r={8} fill="transparent" />
+              <circle
+                cx={pt.x}
+                cy={pt.y}
+                r={4}
+                fill="var(--fs-surface, #ffffff)"
+                stroke="var(--fs-selection-ring, #2563eb)"
+                strokeWidth={1.8}
+              />
+            </g>
+          ))}
+        </g>
+      )}
 
       <EdgeLabelRenderer>
         {isEditingLabel ? (
