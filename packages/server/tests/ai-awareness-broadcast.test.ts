@@ -116,7 +116,7 @@ describe('工单10：服务端 AI 实时在线感知广播与状态清理', () =
       diagramId: diag.id,
       agentName: 'ScaffoldBot',
       spec: {
-        paradigm: 'vertical-flow',
+        paradigm: 'circuit-flow',
         nodes: [{ id: 'n1', label: '节点1' }],
         edges: [],
       },

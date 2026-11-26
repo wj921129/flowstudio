@@ -39,6 +39,8 @@ export function diffRendered(
   const orientationChanged = Boolean(opts?.orientationChanged);
   const addNodes = rendered.nodes.filter((n) => !byId.has(n.id));
   const updateNodes: RenderDiff['updateNodes'] = [];
+  const patchById = new Map<string, Partial<FlowNode>>();
+
   for (const rn of rendered.nodes) {
     const ex = byId.get(rn.id);
     if (!ex) continue;
@@ -58,8 +60,60 @@ export function diffRendered(
     if (same(ex.extent) !== same(rn.extent)) patch.extent = rn.extent;
     const data = { ...(ex.data as object), ...(rn.data as object) };
     if (same(ex.data) !== same(data)) patch.data = data as FlowNode['data'];
-    if (Object.keys(patch).length > 0) updateNodes.push({ id: rn.id, patch });
+    patchById.set(rn.id, patch);
   }
+
+  if (!orientationChanged) {
+    for (const pool of rendered.nodes.filter((n) => n.type === 'pool')) {
+      const exPool = byId.get(pool.id);
+      if (!exPool) continue;
+      const poolData = ((patchById.get(pool.id)?.data ?? exPool.data) as Record<string, unknown> | undefined) ?? {};
+      const isHoriz = (poolData.orientation ?? 'horizontal') !== 'vertical';
+      const headerSize = typeof poolData.headerSize === 'number' ? poolData.headerSize : 40;
+      const renderedLanes = rendered.nodes.filter((n) => n.type === 'lane' && n.parentId === pool.id);
+      let cursor = headerSize;
+      let crossMax = 0;
+      for (const rl of renderedLanes) {
+        const exLane = byId.get(rl.id);
+        const lp = patchById.get(rl.id);
+        const w = (lp?.width ?? exLane?.width ?? rl.width ?? 0) as number;
+        const h = (lp?.height ?? exLane?.height ?? rl.height ?? 0) as number;
+        if (exLane && !protectedIds.has(rl.id) && lockOf(rl.id) === 'none') {
+          const curPos = (lp?.position ?? exLane.position) as { x: number; y: number };
+          const curMain = isHoriz ? curPos.y : curPos.x;
+          if (curMain < cursor) {
+            const nextPos = isHoriz ? { x: curPos.x, y: cursor } : { x: cursor, y: curPos.y };
+            const targetPatch = lp ?? {};
+            targetPatch.position = nextPos;
+            patchById.set(rl.id, targetPatch);
+            cursor = cursor + (isHoriz ? h : w);
+          } else {
+            cursor = curMain + (isHoriz ? h : w);
+          }
+          crossMax = Math.max(crossMax, isHoriz ? curPos.x + w : curPos.y + h);
+        } else {
+          const pos = (exLane?.position ?? rl.position) as { x: number; y: number };
+          cursor = Math.max(cursor, (isHoriz ? pos.y + h : pos.x + w));
+          crossMax = Math.max(crossMax, isHoriz ? pos.x + w : pos.y + h);
+        }
+      }
+      if (!protectedIds.has(pool.id) && lockOf(pool.id) !== 'full') {
+        const pp = patchById.get(pool.id) ?? {};
+        const curW = (pp.width ?? exPool.width ?? pool.width ?? 0) as number;
+        const curH = (pp.height ?? exPool.height ?? pool.height ?? 0) as number;
+        const reqW = isHoriz ? Math.max(curW, crossMax) : Math.max(curW, cursor);
+        const reqH = isHoriz ? Math.max(curH, cursor) : Math.max(curH, headerSize + crossMax);
+        if (reqW !== curW) pp.width = reqW;
+        if (reqH !== curH) pp.height = reqH;
+        if (Object.keys(pp).length > 0) patchById.set(pool.id, pp);
+      }
+    }
+  }
+
+  for (const [id, patch] of patchById) {
+    if (Object.keys(patch).length > 0) updateNodes.push({ id, patch });
+  }
+
   const renderedNodeIds = new Set(rendered.nodes.map((n) => n.id));
   const deleteNodeIds = existingNodes.filter((n) => !renderedNodeIds.has(n.id) && !protectedIds.has(n.id)).map((n) => n.id);
 
@@ -79,7 +133,7 @@ export function diffRendered(
     const data: Record<string, unknown> = { ...exData, ...reData };
     if (re.type === 'straight' || reData.routingType === 'straight') delete data.waypoints;
     const exStyle = exData.style && typeof exData.style === 'object' ? (exData.style as Record<string, unknown>) : undefined;
-    const reStyle = reData.style && typeof reData.style === 'object' ? (reData.style as Record<string, unknown>) : undefined;
+    const reStyle = reData.style && typeof exData.style === 'object' ? (reData.style as Record<string, unknown>) : undefined;
     if (exStyle || reStyle) {
       const nextStyle: Record<string, unknown> = { ...(exStyle ?? {}), ...(reStyle ?? {}) };
       if (!reStyle || !('strokeStyle' in reStyle)) delete nextStyle.strokeStyle;

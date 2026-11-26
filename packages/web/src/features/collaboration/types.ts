@@ -7,6 +7,9 @@ export interface DiagramBridgeState {
   edges: FlowEdge[];
   title: string;
   themeId?: string;
+  paradigm?: string;
+  orientation?: 'horizontal' | 'vertical';
+  edgeRouting?: 'orthogonal' | 'straight';
   isLocal?: boolean;
   metaOnly?: boolean;
 }

@@ -2,16 +2,16 @@ import { distributeEdgePorts, hasExplicitBorderOffset } from '../edge-port-alloc
 import { normalizeSpec } from '../spec/normalize.js';
 import type { DiagramSpec, Paradigm, SpecEdgeKind } from '../spec/types.js';
 import type { FlowEdge } from '../types.js';
+import { renderCircuitFlow } from './circuit-flow.js';
 import { ORIGIN } from './constants.js';
 import { renderSwimlane } from './swimlane.js';
 import { renderTiered } from './tiered.js';
 import { renderTimeline } from './timeline.js';
 import { renderTree } from './tree.js';
 import type { RenderContext, RenderOptions, RenderResult } from './types.js';
-import { renderVerticalFlowGrid } from './vertical-flow-grid.js';
 
 const RENDERERS: Record<Paradigm, (n: ReturnType<typeof normalizeSpec>, ctx: RenderContext) => RenderResult> = {
-  'vertical-flow': renderVerticalFlowGrid,
+  'circuit-flow': renderCircuitFlow,
   'timeline-annotated': renderTimeline,
   swimlane: renderSwimlane,
   'tiered-dag': renderTiered,
@@ -64,7 +64,11 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
     }
 
     const specEdge = specEdgesByKey.get(key);
-    const routing = specEdge?.routingType ?? n.edgeRouting ?? (edge.type === 'straight' ? 'straight' : 'orthogonal');
+    const routing =
+      specEdge?.routingType ??
+      (edge.data?.routingType === 'orthogonal' && n.edgeRouting === 'straight' ? 'orthogonal' : undefined) ??
+      n.edgeRouting ??
+      (edge.type === 'straight' ? 'straight' : 'orthogonal');
     const nextSourceHandle = specEdge?.sourceHandle ?? edge.sourceHandle;
     const nextTargetHandle = specEdge?.targetHandle ?? edge.targetHandle;
     if (specEdge?.sourceHandle && hasExplicitBorderOffset(specEdge.sourceHandle)) {
@@ -94,11 +98,19 @@ export function renderSpec(spec: DiagramSpec, opts: RenderOptions = {}): RenderR
     (pe) => !seenKeys.has(edgeKeyOf(pe.source, pe.target, pe.data?.kind)),
   );
 
+  const flowDirection =
+    n.paradigm === 'circuit-flow' || n.paradigm === 'swimlane'
+      ? n.orientation === 'horizontal'
+        ? 'RIGHT'
+        : 'DOWN'
+      : 'DOWN';
+
   const distributedEdges = distributeEdgePorts(result.nodes, enrichedEdges, {
     fixedEdgeIds,
     lockedSourceEdgeIds,
     lockedTargetEdgeIds,
     obstacleEdges,
+    flowDirection,
   });
 
   return {

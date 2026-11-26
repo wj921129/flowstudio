@@ -96,6 +96,9 @@ export interface FlowStoreState {
   canRedo: boolean;
   /** 当前流程图标题 */
   diagramTitle: string;
+  diagramParadigm?: string;
+  diagramOrientation?: 'horizontal' | 'vertical';
+  diagramEdgeRouting?: 'orthogonal' | 'straight';
 }
 
 /**
@@ -205,6 +208,7 @@ export interface FlowStoreActions {
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => void;
   /** 设置当前图表标题 */
   setDiagramTitle: (title: string) => void;
+  setDiagramMeta: (patch: { paradigm?: string; orientation?: 'horizontal' | 'vertical'; edgeRouting?: 'orthogonal' | 'straight' }) => void;
   /** 重置画布图表状态（用于切换图表或离开画布时的状态清理，杜绝跨图残留） */
   resetDiagramState: () => void;
   /** 切换因果链路聚光灯走查模式 */
@@ -2144,6 +2148,17 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     }
   },
 
+  setDiagramMeta: (patch) => {
+    set({
+      ...(patch.paradigm !== undefined ? { diagramParadigm: patch.paradigm } : {}),
+      ...(patch.orientation !== undefined ? { diagramOrientation: patch.orientation } : {}),
+      ...(patch.edgeRouting !== undefined ? { diagramEdgeRouting: patch.edgeRouting } : {}),
+    });
+    if (activeBridge) {
+      activeBridge.setDiagramMeta(patch);
+    }
+  },
+
   resetDiagramState: () => {
     centeredResizes.clear();
     dirtyMovedEdgeIds.clear();
@@ -2157,6 +2172,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       selectedNodeIds: [],
       selectedEdgeId: null,
       diagramTitle: '未命名流程图',
+      diagramParadigm: undefined,
+      diagramOrientation: undefined,
+      diagramEdgeRouting: undefined,
       historyPast: [],
       historyFuture: [],
       canUndo: false,
@@ -2542,11 +2560,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
     const bridgeState = bridge.toReactFlowState();
     const rawTitle = bridge.getRawTitle();
-    if (bridgeState.nodes.length > 0 || bridgeState.edges.length > 0 || rawTitle) {
+    if (bridgeState.nodes.length > 0 || bridgeState.edges.length > 0 || rawTitle || bridgeState.paradigm || bridgeState.orientation || bridgeState.edgeRouting) {
       set({
         nodes: bridgeState.nodes,
         edges: bridgeState.edges,
         ...(rawTitle ? { diagramTitle: rawTitle } : {}),
+        ...(bridgeState.paradigm ? { diagramParadigm: bridgeState.paradigm } : {}),
+        ...(bridgeState.orientation ? { diagramOrientation: bridgeState.orientation } : {}),
+        ...(bridgeState.edgeRouting ? { diagramEdgeRouting: bridgeState.edgeRouting } : {}),
       });
     } else {
       const { nodes, edges } = get();
@@ -2563,9 +2584,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     if (unsubscribeBridge) unsubscribeBridge();
     unsubscribeBridge = bridge.subscribe((state) => {
       if (state.metaOnly) {
-        if (state.title !== get().diagramTitle) {
-          set({ diagramTitle: state.title });
-        }
+        set({
+          ...(state.title !== get().diagramTitle ? { diagramTitle: state.title } : {}),
+          diagramParadigm: state.paradigm,
+          diagramOrientation: state.orientation,
+          diagramEdgeRouting: state.edgeRouting,
+        });
         return;
       }
 
@@ -2663,6 +2687,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         editingEdgeLabelId: nextEditingEdgeLabelId,
         selectedEdgeLabelId: nextSelectedEdgeLabelId,
         ...(state.title !== diagramTitle ? { diagramTitle: state.title } : {}),
+        diagramParadigm: state.paradigm,
+        diagramOrientation: state.orientation,
+        diagramEdgeRouting: state.edgeRouting,
       });
     });
 

@@ -2,10 +2,12 @@ import * as Y from 'yjs';
 import type ELK from 'elkjs/lib/elk.bundled.js';
 import {
   type AiBatchEntityDiff,
+  type CircuitEdgePlan,
   distributeEdgePorts,
   type FlowEdge,
   type FlowNode,
   isAutoManagedPort,
+  layoutCircuitFlowGraph,
   layoutTreeGraph,
 } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
@@ -39,7 +41,8 @@ export interface AutoLayoutContext {
 export interface AutoLayoutInput {
   diagramId: string;
   direction?: 'RIGHT' | 'DOWN';
-  mode?: 'layered' | 'tree';
+  mode?: 'circuit' | 'layered' | 'tree';
+  edgeRouting?: 'orthogonal' | 'straight';
   agentName?: string;
 }
 
@@ -51,7 +54,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
   return ctx.withAiAwareness(
     input.diagramId,
     input.agentName,
-    'AI 正在执行正交自动排版...',
+    'AI 正在执行自动排版...',
     [],
     async () => {
       ctx.writer.createSnapshot(input.diagramId, '服务端自动排版前快照', 'auto');
@@ -59,9 +62,14 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       const graph = await ctx.writer.readDocument(input.diagramId, (doc) => {
         const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
         const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
-        const paradigm = doc.getMap<unknown>('meta').get('paradigm') as string | undefined;
+        const metaMap = doc.getMap<unknown>('meta');
+        const paradigm = metaMap.get('paradigm') as string | undefined;
+        const orientation = metaMap.get('orientation') as string | undefined;
+        const metaEdgeRouting = metaMap.get('edgeRouting') as 'orthogonal' | 'straight' | undefined;
         const children: Array<{
           id: string;
+          type: string;
+          label: string;
           parentId?: string;
           position: LayoutPoint;
           width: number;
@@ -69,6 +77,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           locked: boolean;
           role?: string;
           attachTo?: string;
+          earlyExit?: boolean;
         }> = [];
         const pools: Array<{
           id: string;
@@ -89,7 +98,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
         }> = [];
 
         nodesMap.forEach((nodeMap, id) => {
-          const type = nodeMap.get('type') as string;
+          const type = (nodeMap.get('type') as string) || 'process';
           const size = getMapDimensions(nodeMap);
           const data = (nodeMap.get('data') as Record<string, unknown> | undefined) ?? {};
           if (type === 'pool') {
@@ -117,6 +126,8 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           }
           children.push({
             id,
+            type,
+            label: typeof data.label === 'string' ? data.label : id,
             parentId: nodeMap.get('parentId') as string | undefined,
             position: (nodeMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
             width: size.width,
@@ -124,37 +135,77 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
             locked: getNodeLockMode(nodeMap) !== 'none',
             role: typeof data.role === 'string' ? data.role : undefined,
             attachTo: typeof data.attachTo === 'string' ? data.attachTo : undefined,
+            earlyExit: typeof data.earlyExit === 'boolean' ? data.earlyExit : undefined,
           });
         });
 
-        const elkEdges: Array<{ id: string; sources: string[]; targets: string[]; kind?: string }> = [];
+        const elkEdges: Array<{ id: string; sources: string[]; targets: string[]; kind?: string; label?: string; routing?: string }> = [];
         edgesMap.forEach((edgeMap, id) => {
           const source = edgeMap.get('source') as string;
           const target = edgeMap.get('target') as string;
           const edgeData = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
+          const rawRouting = (edgeData.routingType ?? edgeMap.get('type')) as string | undefined;
           if (source && target) {
             elkEdges.push({
               id,
               sources: [source],
               targets: [target],
               kind: typeof edgeData.kind === 'string' ? edgeData.kind : undefined,
+              label: typeof edgeData.label === 'string' ? edgeData.label : undefined,
+              routing: rawRouting,
             });
           }
         });
-        return { paradigm, children, pools, lanes, elkEdges };
+        return { paradigm, orientation, metaEdgeRouting, children, pools, lanes, elkEdges };
       });
 
-      const requestedMode = input.mode ?? (graph.paradigm === 'tree' && graph.pools.length === 0 ? 'tree' : 'layered');
-      const useTreeMode = requestedMode === 'tree' && graph.pools.length === 0;
+      const defaultMode =
+        graph.pools.length === 0
+          ? graph.paradigm === 'tree'
+            ? 'tree'
+            : graph.paradigm === 'circuit-flow'
+            ? 'circuit'
+            : 'layered'
+          : 'layered';
+      const requestedMode = input.mode ?? defaultMode;
       const modeWarnings: string[] = [];
-      if (requestedMode === 'tree' && graph.pools.length > 0) {
-        modeWarnings.push('泳道图暂不支持 tree 模式，已自动回退为泳道排版');
+      if ((requestedMode === 'tree' || requestedMode === 'circuit') && graph.pools.length > 0) {
+        modeWarnings.push(`泳道图暂不支持 ${requestedMode} 模式，已自动回退为泳道排版`);
       }
-      const effectiveDirection = input.direction ?? (graph.pools.some((p) => !p.horizontal) ? 'DOWN' : 'RIGHT');
+      const activeMode: 'circuit' | 'layered' | 'tree' =
+        graph.pools.length > 0 ? 'layered' : requestedMode;
+
+      const effectiveDirection: 'RIGHT' | 'DOWN' =
+        input.direction ??
+        (graph.pools.length > 0
+          ? graph.pools.some((p) => !p.horizontal)
+            ? 'DOWN'
+            : 'RIGHT'
+          : activeMode === 'tree'
+          ? 'DOWN'
+          : graph.orientation === 'vertical'
+          ? 'DOWN'
+          : graph.orientation === 'horizontal'
+          ? 'RIGHT'
+          : activeMode === 'circuit'
+          ? 'DOWN'
+          : 'RIGHT');
+
+      const bizEdges = graph.elkEdges.filter((e) => e.kind !== 'loop' && e.kind !== 'annotate');
+      const straightCount = bizEdges.filter((e) => e.routing === 'straight').length;
+      const inferredRouting: 'orthogonal' | 'straight' =
+        graph.metaEdgeRouting === 'straight' || graph.metaEdgeRouting === 'orthogonal'
+          ? graph.metaEdgeRouting
+          : bizEdges.length > 0 && straightCount / bizEdges.length > 0.5
+          ? 'straight'
+          : 'orthogonal';
+      const effectiveEdgeRouting = input.edgeRouting ?? inferredRouting;
 
       const globalPositions = new Map<string, LayoutPoint>();
       let treeBackEdgeKeys = new Set<string>();
-      if (useTreeMode) {
+      let circuitEdgePlans = new Map<string, CircuitEdgePlan>();
+
+      if (activeMode === 'tree') {
         const treeRes = layoutTreeGraph(
           graph.children.map((c) => ({
             id: c.id,
@@ -172,7 +223,33 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
         for (const [id, box] of treeRes.positions) {
           globalPositions.set(id, { x: box.x, y: box.y });
         }
+      } else if (activeMode === 'circuit') {
+        const circuitRes = layoutCircuitFlowGraph(
+          graph.children.map((c) => ({
+            id: c.id,
+            width: c.width,
+            height: c.height,
+            type: c.type,
+            label: c.label,
+            role: c.role,
+            attachTo: c.attachTo,
+            earlyExit: c.earlyExit,
+            fixed: c.locked ? { position: c.position, width: c.width, height: c.height } : undefined,
+          })),
+          graph.elkEdges.map((e) => ({ from: e.sources[0], to: e.targets[0], kind: e.kind, label: e.label })),
+          {
+            direction: effectiveDirection,
+            edgeRouting: effectiveEdgeRouting,
+            origin: { x: 50, y: 50 },
+          },
+        );
+        modeWarnings.push(...circuitRes.warnings);
+        circuitEdgePlans = circuitRes.edgePlans;
+        for (const [id, box] of circuitRes.positions) {
+          globalPositions.set(id, { x: box.x, y: box.y });
+        }
       } else {
+        const layoutEdges = graph.elkEdges.filter((e) => e.kind !== 'loop' && e.kind !== 'annotate');
         const layoutRes = await ctx.elkInstance.layout({
           id: 'root',
           layoutOptions: {
@@ -180,9 +257,12 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
             'elk.direction': effectiveDirection,
             'elk.spacing.nodeNode': '60',
             'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+            'elk.edgeRouting': 'ORTHOGONAL',
+            'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+            'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
           },
           children: graph.children.map((c) => ({ id: c.id, width: c.width, height: c.height })),
-          edges: graph.elkEdges.map((e) => ({ id: e.id, sources: e.sources, targets: e.targets })),
+          edges: layoutEdges.map((e) => ({ id: e.id, sources: e.sources, targets: e.targets })),
         });
         for (const child of layoutRes.children ?? []) {
           globalPositions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
@@ -190,7 +270,6 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       }
 
       const lockedIds = new Set(graph.children.filter((c) => c.locked).map((c) => c.id));
-
       const laneById = new Map(graph.lanes.map((lane) => [lane.id, lane]));
       const poolById = new Map(graph.pools.map((pool) => [pool.id, pool]));
 
@@ -228,14 +307,18 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       }
       const sizingPositions = new Map(globalPositions);
       for (const child of graph.children) {
-        if (!child.locked || !child.parentId) continue;
-        const lane = laneById.get(child.parentId);
-        if (!lane) continue;
-        const pool = lane.parentId ? poolById.get(lane.parentId) : undefined;
-        sizingPositions.set(child.id, {
-          x: child.position.x + lane.position.x + (pool?.position.x ?? 0),
-          y: child.position.y + lane.position.y + (pool?.position.y ?? 0),
-        });
+        if (!child.locked) continue;
+        if (child.parentId) {
+          const lane = laneById.get(child.parentId);
+          if (!lane) continue;
+          const pool = lane.parentId ? poolById.get(lane.parentId) : undefined;
+          sizingPositions.set(child.id, {
+            x: child.position.x + lane.position.x + (pool?.position.x ?? 0),
+            y: child.position.y + lane.position.y + (pool?.position.y ?? 0),
+          });
+        } else {
+          sizingPositions.set(child.id, { x: child.position.x, y: child.position.y });
+        }
       }
 
       const laneHasLockedChild = new Set<string>();
@@ -366,6 +449,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
       const outcome = await ctx.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
         const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
         const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+        const metaMap = doc.getMap<unknown>('meta');
         const diffs: AiBatchEntityDiff[] = [];
         const warnings: string[] = [...planWarnings];
         const { containersWithLockedChild, hasLockedAncestor } = collectLiveLockState(nodesMap);
@@ -452,6 +536,13 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           });
         }
 
+        if (graph.pools.length === 0) {
+          if (input.direction) metaMap.set('orientation', input.direction === 'RIGHT' ? 'horizontal' : 'vertical');
+          if (input.mode === 'circuit') metaMap.set('paradigm', 'circuit-flow');
+          else if (input.mode === 'tree') metaMap.set('paradigm', 'tree');
+          if (input.edgeRouting) metaMap.set('edgeRouting', input.edgeRouting);
+        }
+
         const nodeDiffCount = diffs.length;
         const liveNodes: FlowNode[] = [];
         const isNodeLockedLive = (id: string): boolean => {
@@ -481,6 +572,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
         const lockedTargetEdgeIds = new Set<string>();
         const bothAutoEdgeIds = new Set<string>();
         const liveEdges: FlowEdge[] = [];
+        const circuitPlanByEdgeId = new Map<string, CircuitEdgePlan>();
 
         edgesMap.forEach((m, id) => {
           const source = m.get('source') as string;
@@ -510,7 +602,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           const kind = typeof rawData.kind === 'string' ? rawData.kind : undefined;
           let seededSource: string | undefined;
           let seededTarget: string | undefined;
-          if (useTreeMode) {
+          if (activeMode === 'tree') {
             const isBack = kind === 'loop' || treeBackEdgeKeys.has(`${source}|${target}|${kind ?? 'next'}`);
             if (kind === 'annotate') {
               seededSource = 'right';
@@ -521,6 +613,13 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
             } else {
               seededSource = 'bottom';
               seededTarget = 'top';
+            }
+          } else if (activeMode === 'circuit') {
+            const plan = circuitEdgePlans.get(`${source}|${target}|${kind ?? 'next'}`);
+            if (plan) {
+              circuitPlanByEdgeId.set(id, plan);
+              seededSource = plan.sourceHandle;
+              seededTarget = plan.targetHandle;
             }
           }
           liveEdges.push({
@@ -537,6 +636,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           fixedEdgeIds,
           lockedSourceEdgeIds,
           lockedTargetEdgeIds,
+          flowDirection: effectiveDirection,
         });
 
         for (const nextEdge of distributed) {
@@ -547,12 +647,28 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           if (nextEdge.sourceHandle) edgeMap.set('sourceHandle', nextEdge.sourceHandle);
           if (nextEdge.targetHandle) edgeMap.set('targetHandle', nextEdge.targetHandle);
           const nextData = { ...(nextEdge.data ?? {}) } as Record<string, unknown>;
-          const isStraightEdge = edgeMap.get('type') === 'straight' || nextData.routingType === 'straight';
-          if (isStraightEdge) {
+          const plan = circuitPlanByEdgeId.get(nextEdge.id);
+          const prevRouting = nextData.routingType ?? (edgeMap.get('type') as string | undefined);
+          const targetRouting =
+            input.edgeRouting
+              ? plan?.routingType ?? input.edgeRouting
+              : plan?.routingType === 'orthogonal' && effectiveEdgeRouting === 'straight'
+              ? 'orthogonal'
+              : prevRouting === 'straight' || prevRouting === 'orthogonal'
+              ? prevRouting
+              : effectiveEdgeRouting;
+          if (targetRouting === 'straight') {
             edgeMap.set('type', 'straight');
+            nextData.routingType = 'straight';
             delete nextData.waypoints;
-          } else if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
-            delete nextData.waypoints;
+          } else {
+            edgeMap.set('type', 'orthogonal');
+            nextData.routingType = 'orthogonal';
+            if (activeMode === 'circuit' && plan?.waypoints && bothAutoEdgeIds.has(nextEdge.id)) {
+              nextData.waypoints = plan.waypoints;
+            } else if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
+              delete nextData.waypoints;
+            }
           }
           edgeMap.set('data', nextData);
           const after = snapshotMap(edgeMap);

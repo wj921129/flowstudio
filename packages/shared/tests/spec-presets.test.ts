@@ -4,8 +4,8 @@ import { DIAGRAM_PRESETS } from '../src/spec/presets.js';
 import { noOverlap, byId, preset, laneContainsAllChildren } from './helpers/render-asserts.js';
 
 describe('renderSpec 入口与范式预设', () => {
-  it('10 个预设齐全且覆盖 4 个分类', () => {
-    expect(DIAGRAM_PRESETS.length).toBe(10);
+  it('13 个预设齐全且覆盖 4 个分类', () => {
+    expect(DIAGRAM_PRESETS.length).toBe(13);
     expect(new Set(DIAGRAM_PRESETS.map((p) => p.category)).size).toBe(4);
   });
 
@@ -28,18 +28,18 @@ describe('renderSpec 入口与范式预设', () => {
     }
   });
 
-  it('基准预设满足四条几何约定', () => {
+  it('电路重试补偿预设满足入口出口共轴与附注左置约定', () => {
     const r = renderSpec(preset('flowchart-retry-compensation'));
     const mains = r.nodes.filter((n) => ['start-2', 'proc-task', 'dec-status', 'end-success'].includes(n.id));
-    expect(new Set(mains.map((n) => n.position.x + n.width! / 2)).size).toBe(1);
+    expect(new Set(mains.map((n) => Math.round(n.position.x + n.width! / 2))).size).toBe(1);
     expect(mains[1].position.y - (mains[0].position.y + mains[0].height!)).toBe(50);
     const d1 = byId(r, 'dec-status');
     const d2 = byId(r, 'dec-retry');
-    expect(d2.position.y + d2.height! / 2).toBe(d1.position.y + d1.height! / 2);
-    expect(d2.position.x - (d1.position.x + d1.width!)).toBe(85);
+    expect(d2.position.y).toBe(d1.position.y + d1.height! + 50);
+    expect(d2.position.x).toBeGreaterThan(d1.position.x + d1.width!);
     const loop = r.edges.find((e) => e.data!.kind === 'loop')!;
-    const mainRight = Math.max(...mains.map((n) => n.position.x + n.width!));
-    expect(loop.data!.waypoints!.every((p) => p.x > mainRight)).toBe(true);
+    const maxMainRight = Math.max(...mains.map((n) => n.position.x + n.width!));
+    expect(loop.data!.waypoints!.every((p) => p.x > maxMainRight)).toBe(true);
   });
 
   it('重试补偿预设附注左置且 annotate 边显式连接桩', () => {
@@ -50,8 +50,8 @@ describe('renderSpec 入口与范式预设', () => {
     const annot = r.edges.find((e) => e.data!.kind === 'annotate')!;
     expect(annot.source).toBe('dec-status');
     expect(annot.target).toBe('note-2');
-    expect(annot.sourceHandle).toBe('left');
-    expect(annot.targetHandle).toBe('right');
+    expect(annot.sourceHandle).toMatch(/^left(@|$)/);
+    expect(annot.targetHandle).toMatch(/^right(@|$)/);
     expect(noOverlap(r.nodes)).toBe(true);
   });
 
@@ -69,7 +69,7 @@ describe('renderSpec 入口与范式预设', () => {
   });
 
   it('空 spec 渲染为空结果', () => {
-    expect(renderSpec({ paradigm: 'vertical-flow', nodes: [], edges: [] }).nodes).toEqual([]);
+    expect(renderSpec({ paradigm: 'circuit-flow', nodes: [], edges: [] }).nodes).toEqual([]);
   });
 
   it('双父敏捷阵型以 tiered-dag 渲染且同层不重叠', () => {
@@ -94,5 +94,24 @@ describe('renderSpec 入口与范式预设', () => {
     const stepSave = byId(callTree, 'step-save');
     expect(dbOrder.position.y).toBeGreaterThan(stepStock.position.y + stepStock.height!);
     expect(dbOrder.position.y).toBeGreaterThan(stepSave.position.y + stepSave.height!);
+  });
+
+  it('三套新增 circuit-flow 标杆预设无重叠且入口出口共轴', () => {
+    const code = renderSpec(preset('flowchart-circuit-code'));
+    const entry = byId(code, 'entry');
+    const exit = byId(code, 'exit');
+    expect(Math.round(entry.position.x + entry.width! / 2)).toBe(Math.round(exit.position.x + exit.width! / 2));
+    expect(noOverlap(code.nodes)).toBe(true);
+
+    const straight = renderSpec(preset('flowchart-circuit-straight'));
+    expect(straight.edges.every((e) => e.type === 'straight' && !e.data?.waypoints)).toBe(true);
+    expect(noOverlap(straight.nodes)).toBe(true);
+
+    const horiz = renderSpec(preset('flowchart-circuit-horizontal'));
+    const hs = byId(horiz, 'h-start');
+    const he = byId(horiz, 'h-end');
+    expect(Math.round(hs.position.y + hs.height! / 2)).toBe(Math.round(he.position.y + he.height! / 2));
+    expect(he.position.x).toBeGreaterThan(hs.position.x);
+    expect(noOverlap(horiz.nodes)).toBe(true);
   });
 });

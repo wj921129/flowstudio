@@ -112,6 +112,7 @@ export class AiCollaborator {
           laneId: parentId,
           role: data.role as CompactDiagram['nodes'][number]['role'],
           attachTo: data.attachTo as string | undefined,
+          ...(typeof data.earlyExit === 'boolean' ? { earlyExit: data.earlyExit } : {}),
           position: pos,
           lockMode: getNodeLockMode(nodeMap),
         });
@@ -150,11 +151,14 @@ export class AiCollaborator {
     });
 
     const meta = doc.getMap<unknown>('meta');
+    const resolvedOrientation = orientation ?? (meta.get('orientation') as 'horizontal' | 'vertical' | undefined);
+    const resolvedRouting = meta.get('edgeRouting') as 'orthogonal' | 'straight' | undefined;
     return {
       id: diagramId,
       title,
       paradigm: meta.get('paradigm') as string | undefined,
-      ...(orientation ? { orientation } : {}),
+      ...(resolvedOrientation ? { orientation: resolvedOrientation } : {}),
+      ...(resolvedRouting ? { edgeRouting: resolvedRouting } : {}),
       mainOrder: meta.get('mainOrder') as string[] | undefined,
       lanes,
       nodes,
@@ -272,7 +276,7 @@ export class AiCollaborator {
     );
   }
 
-  async autoLayout(input: { diagramId: string; direction?: 'RIGHT' | 'DOWN'; mode?: 'layered' | 'tree'; agentName?: string }) {
+  async autoLayout(input: { diagramId: string; direction?: 'RIGHT' | 'DOWN'; mode?: 'circuit' | 'layered' | 'tree'; edgeRouting?: 'orthogonal' | 'straight'; agentName?: string }) {
     return executeAutoLayout(
       {
         repo: this.repo,

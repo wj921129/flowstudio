@@ -1,6 +1,6 @@
 import type { EdgeStrokeStyle, FlowNodeType } from '../types.js';
 
-export type Paradigm = 'vertical-flow' | 'timeline-annotated' | 'swimlane' | 'tiered-dag' | 'tree';
+export type Paradigm = 'circuit-flow' | 'timeline-annotated' | 'swimlane' | 'tiered-dag' | 'tree';
 export type SwimlaneOrientation = 'horizontal' | 'vertical';
 export type SpecEdgeRouting = 'orthogonal' | 'straight';
 export type SpecRole = 'main' | 'branch' | 'annotation';
@@ -14,6 +14,7 @@ export interface SpecNode {
   laneId?: string;
   attachTo?: string;
   description?: string;
+  earlyExit?: boolean;
 }
 
 export interface SpecEdge {

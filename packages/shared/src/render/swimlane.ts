@@ -3,6 +3,7 @@ import type { NormalizedSpec } from '../spec/normalize.js';
 import type { SpecNode } from '../spec/types.js';
 import type { FlowEdge, FlowNode, FlowNodeType } from '../types.js';
 import { ANNOT_GAP, BRANCH_VGAP, GRID_COL_GAP, LANE_HEADER, LANE_PAD, MAIN_GAP } from './constants.js';
+import { analyzeGraphTopology } from './topology.js';
 import type { RenderContext, RenderResult } from './types.js';
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -259,9 +260,9 @@ function renderCrossLaneDirectional(n: NormalizedSpec, ctx: RenderContext): Rend
   const isHoriz = n.orientation === 'horizontal';
   const poolId = eid('pool');
   const nodeById = new Map(n.nodes.map((x) => [x.id, x]));
-  const bizNodes = n.nodes.filter((x) => x.role !== 'annotation');
-  const bizSet = new Set(bizNodes.map((x) => x.id));
-  const annots = n.nodes.filter((x) => x.role === 'annotation');
+  const topo = analyzeGraphTopology(n.nodes, n.edges);
+  const { bizNodes, annotNodes: annots, backEdgeKeys: backEdges, layerOf } = topo;
+  if (backEdges.size > 0) warnings.push(`swimlane 检测到 ${backEdges.size} 条非 loop 环回边，已破环分层`);
 
   const fixedOf = (id: string): Box | undefined => {
     const f = ctx.fixed.get(id);
@@ -273,46 +274,6 @@ function renderCrossLaneDirectional(n: NormalizedSpec, ctx: RenderContext): Rend
     const s = sizeOfNode(nodeById.get(id)!);
     return { x: 0, y: 0, width: s.width, height: s.height };
   };
-
-  const dagEdges = n.edges.filter(
-    (e) => e.kind !== 'loop' && e.kind !== 'annotate' && e.from !== e.to && bizSet.has(e.from) && bizSet.has(e.to),
-  );
-  const backEdges = new Set<string>();
-  const rawAdj = new Map<string, Array<{ to: string; key: string }>>();
-  for (const e of dagEdges) {
-    const key = `${e.from}|${e.to}|${e.kind}`;
-    rawAdj.set(e.from, [...(rawAdj.get(e.from) ?? []), { to: e.to, key }]);
-  }
-  const dfsState = new Map<string, number>();
-  const dfs = (u: string) => {
-    dfsState.set(u, 1);
-    for (const item of rawAdj.get(u) ?? []) {
-      const st = dfsState.get(item.to) ?? 0;
-      if (st === 1) backEdges.add(item.key);
-      else if (st === 0) dfs(item.to);
-    }
-    dfsState.set(u, 2);
-  };
-  for (const b of bizNodes) {
-    if ((dfsState.get(b.id) ?? 0) === 0) dfs(b.id);
-  }
-  if (backEdges.size > 0) warnings.push(`swimlane 检测到 ${backEdges.size} 条非 loop 环回边，已破环分层`);
-
-  const parents = new Map<string, string[]>();
-  for (const e of dagEdges) {
-    if (backEdges.has(`${e.from}|${e.to}|${e.kind}`)) continue;
-    parents.set(e.to, [...(parents.get(e.to) ?? []), e.from]);
-  }
-  const layerOf = new Map<string, number>();
-  const calcLayer = (id: string): number => {
-    const hit = layerOf.get(id);
-    if (hit !== undefined) return hit;
-    const ps = parents.get(id) ?? [];
-    const l = ps.length > 0 ? Math.max(...ps.map(calcLayer)) + 1 : 0;
-    layerOf.set(id, l);
-    return l;
-  };
-  for (const b of bizNodes) calcLayer(b.id);
 
   const maxLayer = bizNodes.reduce((m, b) => Math.max(m, layerOf.get(b.id) ?? 0), 0);
   const layerMaxMain = new Map<number, number>();

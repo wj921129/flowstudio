@@ -344,7 +344,7 @@ describe('后端审查整改第二轮', () => {
     const result = await callTool(server, 1, 'scaffold_diagram', {
       diagramId: diag.id,
       spec: {
-        paradigm: 'vertical-flow',
+        paradigm: 'circuit-flow',
         nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
         edges: [],
       },

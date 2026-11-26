@@ -1,7 +1,3 @@
-/**
- * @fileoverview @flowstudio/shared 统一导出入口
- */
-
 export const VERSION = '0.1.0';
 
 export * from './types.js';
@@ -22,6 +18,7 @@ export * from './spec/normalize.js';
 export * from './spec/presets.js';
 export * from './render/types.js';
 export * from './render/constants.js';
+export * from './render/topology.js';
 export * from './render/tree-layout.js';
+export * from './render/circuit-flow-layout.js';
 export * from './render/index.js';
-

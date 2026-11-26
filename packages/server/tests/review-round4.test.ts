@@ -924,7 +924,7 @@ describe('后端审查整改第四轮·锚定锁容器语义', () => {
     const result = await callTool(server, 1, 'scaffold_diagram', {
       diagramId: diag.id,
       spec: {
-        paradigm: 'vertical-flow',
+        paradigm: 'circuit-flow',
         nodes: [
           { id: 'step-1', type: 'process', label: '步骤一（AI 更新）' },
           { id: 'step-2', type: 'process', label: '步骤二' },

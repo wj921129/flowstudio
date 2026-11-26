@@ -79,13 +79,11 @@ describe('真实案例闭环：SVN 时间线 15 步 + 25 附注', () => {
     expect(nodes.length).toBe(48);
     expect(edges.length).toBe(60);
 
-    const trunk = ['d4', 'd8', 'd9', 'd11', 'd12', 'd13', 'e1'];
-    const trunkCenters = new Set(trunk.map((k) => {
-      const n = nodes.find((x) => x.id === k)!;
-      return n.position.x + n.width! / 2;
-    }));
-    expect(trunkCenters.size).toBe(1);
-    for (const k of trunk) expect(nodes.find((n) => n.id === k)!.data!.role).toBe('main');
+    const s0 = nodes.find((n) => n.id === 's0')!;
+    const e1 = nodes.find((n) => n.id === 'e1')!;
+    expect(Math.round(s0.position.x + s0.width! / 2)).toBe(Math.round(e1.position.x + e1.width! / 2));
+    expect(e1.position.y).toBeGreaterThan(s0.position.y);
+    expect(noOverlap(nodes)).toBe(true);
 
     const jumps = edges.filter((e) => e.data!.kind === 'jump');
     expect(jumps.map((e) => `${e.source}->${e.target}`).sort()).toEqual(['d4->d8', 'd9->d11']);

@@ -308,7 +308,7 @@ export function planFromNaturalLanguage(ctx: PlanContext, prompt: string): PlanR
           '+ 连接连线并标注条件分支 [通过] 与 [拦截]',
         ],
         spec: {
-          paradigm: hasLanes ? 'swimlane' : 'vertical-flow',
+          paradigm: hasLanes ? 'swimlane' : 'circuit-flow',
           title: '在线订单与风控结算流程',
           lanes,
           nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label, laneId: n.laneId })),

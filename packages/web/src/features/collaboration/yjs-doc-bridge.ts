@@ -54,6 +54,9 @@ export class YjsDiagramBridge {
   private cachedValidEdges: FlowEdge[] = [];
   private cachedTitle = '未命名流程图';
   private cachedThemeId: string = DEFAULT_THEME_ID;
+  private cachedParadigm: string | undefined;
+  private cachedOrientation: 'horizontal' | 'vertical' | undefined;
+  private cachedEdgeRouting: 'orthogonal' | 'straight' | undefined;
 
   constructor(doc: Y.Doc, options: YjsDiagramBridgeOptions) {
     this.doc = doc;
@@ -101,6 +104,25 @@ export class YjsDiagramBridge {
     });
   }
 
+  getDiagramMeta(): { paradigm?: string; orientation?: 'horizontal' | 'vertical'; edgeRouting?: 'orthogonal' | 'straight' } {
+    const p = this.metaMap.get('paradigm');
+    const o = this.metaMap.get('orientation');
+    const r = this.metaMap.get('edgeRouting');
+    return {
+      paradigm: typeof p === 'string' ? p : undefined,
+      orientation: o === 'horizontal' || o === 'vertical' ? o : undefined,
+      edgeRouting: r === 'orthogonal' || r === 'straight' ? r : undefined,
+    };
+  }
+
+  setDiagramMeta(patch: { paradigm?: string; orientation?: 'horizontal' | 'vertical'; edgeRouting?: 'orthogonal' | 'straight' }, origin: string = this.localClientId): void {
+    this.transact(() => {
+      if (patch.paradigm !== undefined) this.metaMap.set('paradigm', patch.paradigm);
+      if (patch.orientation !== undefined) this.metaMap.set('orientation', patch.orientation);
+      if (patch.edgeRouting !== undefined) this.metaMap.set('edgeRouting', patch.edgeRouting);
+    }, origin);
+  }
+
   applyTheme(theme: ThemePreset, preserveManual: boolean = true): void {
     applyThemeToYDoc(this.doc, theme, preserveManual, this.localClientId);
   }
@@ -111,6 +133,9 @@ export class YjsDiagramBridge {
       edges: this.cachedValidEdges,
       title: this.cachedTitle,
       themeId: this.cachedThemeId,
+      paradigm: this.cachedParadigm,
+      orientation: this.cachedOrientation,
+      edgeRouting: this.cachedEdgeRouting,
     };
   }
 
@@ -301,6 +326,7 @@ export class YjsDiagramBridge {
       edges: validEdges,
       title: this.getTitle(),
       themeId: this.getThemeId(),
+      ...this.getDiagramMeta(),
     };
   }
 
@@ -338,6 +364,10 @@ export class YjsDiagramBridge {
     this.cachedValidEdges = this.filterValidEdges();
     this.cachedTitle = this.getTitle();
     this.cachedThemeId = this.getThemeId();
+    const m = this.getDiagramMeta();
+    this.cachedParadigm = m.paradigm;
+    this.cachedOrientation = m.orientation;
+    this.cachedEdgeRouting = m.edgeRouting;
   }
 
   private filterValidEdges(): FlowEdge[] {
@@ -479,6 +509,10 @@ export class YjsDiagramBridge {
       if (metaChanged) {
         this.cachedTitle = this.getTitle();
         this.cachedThemeId = this.getThemeId();
+        const m = this.getDiagramMeta();
+        this.cachedParadigm = m.paradigm;
+        this.cachedOrientation = m.orientation;
+        this.cachedEdgeRouting = m.edgeRouting;
       }
 
       if (this.listeners.size === 0) return;
@@ -492,6 +526,9 @@ export class YjsDiagramBridge {
         edges: this.cachedValidEdges,
         title: this.cachedTitle,
         themeId: this.cachedThemeId,
+        paradigm: this.cachedParadigm,
+        orientation: this.cachedOrientation,
+        edgeRouting: this.cachedEdgeRouting,
         isLocal,
         metaOnly: !nodesChanged && !edgesChanged && metaChanged,
       };

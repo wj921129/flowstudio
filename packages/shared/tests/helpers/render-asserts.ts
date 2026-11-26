@@ -215,5 +215,5 @@ export function buildYeepaySpec(): DiagramSpec {
     { from: "d10", to: "a8", kind: "annotate" },
     { from: "d11", to: "a9", kind: "annotate" },
   ];
-  return { paradigm: 'vertical-flow', nodes, edges };
+  return { paradigm: 'circuit-flow', nodes, edges };
 }

@@ -1,3 +1,4 @@
+import { analyzeGraphTopology } from '../render/topology.js';
 import { diagramSpecSchema } from './spec-schema.js';
 import type {
   DiagramSpec,
@@ -48,6 +49,53 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
       warnings.push(`非 tree 范式忽略 ${dropped.length} 条 tree 边`);
       edges = edges.filter((e) => e.kind !== 'tree');
     }
+  }
+
+  const defaultOrientation: SwimlaneOrientation = s.paradigm === 'swimlane' ? 'horizontal' : 'vertical';
+  const orientation = s.orientation ?? defaultOrientation;
+  const edgeRouting: SpecEdgeRouting = s.edgeRouting ?? 'orthogonal';
+
+  if (s.paradigm === 'circuit-flow') {
+    for (const e of edges) {
+      if (e.from === e.to) throw new SpecError(`circuit-flow 自环不被支持: ${e.from}`);
+    }
+    const annIds = new Set<string>([
+      ...s.nodes.filter((n) => n.attachTo).map((n) => n.id),
+      ...edges.filter((e) => e.kind === 'annotate').map((e) => e.to),
+    ]);
+    const nodes: Array<SpecNode & { role: SpecRole }> = s.nodes.map((n) => {
+      const role: SpecRole = annIds.has(n.id) ? 'annotation' : n.role ?? 'main';
+      return { ...n, role };
+    });
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    for (const e of edges.filter((x) => x.kind === 'annotate')) {
+      const target = byId.get(e.to)!;
+      if (target.attachTo && target.attachTo !== e.from) throw new SpecError(`附注 ${e.to} 的 attachTo 与 annotate 边宿主不一致`);
+      target.attachTo = e.from;
+    }
+    for (const n of nodes) {
+      if (n.role !== 'annotation') continue;
+      if (!n.attachTo) throw new SpecError(`附注 ${n.id} 缺少宿主`);
+      const host = byId.get(n.attachTo);
+      if (!host) throw new SpecError(`附注宿主不存在: ${n.attachTo}`);
+      if (host.role === 'annotation') throw new SpecError(`附注宿主不能是附注节点: ${n.attachTo}`);
+      if (!edges.some((e) => e.kind === 'annotate' && e.from === n.attachTo && e.to === n.id)) {
+        edges.push({ from: n.attachTo, to: n.id, kind: 'annotate' });
+      }
+    }
+    const topo = analyzeGraphTopology(nodes, edges);
+    if (topo.backEdgeKeys.size > 0) warnings.push(`circuit-flow 检测到 ${topo.backEdgeKeys.size} 条非 loop 暗环，已按入口优先破环`);
+    return {
+      paradigm: s.paradigm,
+      orientation,
+      edgeRouting,
+      title: s.title,
+      lanes: s.lanes ?? [],
+      nodes,
+      edges,
+      mainOrder: topo.topoOrder,
+      warnings,
+    };
   }
 
   const annIds = new Set<string>([
@@ -127,34 +175,12 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
     return from.role === 'branch' ? anchor(from.id, visited) : order.get(from.id) ?? -1;
   };
   for (const n of nodes) if (n.role === 'branch') order.set(n.id, anchor(n.id, new Set()));
-  const regAnchor = (id: string): string => {
-    let cur = id;
-    const seen = new Set<string>();
-    while (!seen.has(cur)) {
-      seen.add(cur);
-      if (byId.get(cur)!.role === 'main') return cur;
-      const inc = edges.find((e) => (e.kind === 'branch' || e.kind === 'next') && e.to === cur);
-      if (!inc) return cur;
-      cur = inc.from;
-    }
-    return cur;
-  };
   for (const e of edges.filter((x) => x.kind === 'loop')) {
     const a = order.get(e.from);
     const b = order.get(e.to);
     if (a === undefined || b === undefined) throw new SpecError(`loop 边端点必须是主干或分支: ${e.from} -> ${e.to}`);
     if (s.paradigm === 'swimlane' || s.paradigm === 'tree') continue;
-    if (s.paradigm === 'vertical-flow' && byId.get(e.from)!.role === 'branch' && byId.get(e.to)!.role === 'main' && regAnchor(e.from) === e.to) continue;
     if (b >= a) throw new SpecError(`loop 边必须指向拓扑序更早的节点: ${e.from} -> ${e.to}`);
-  }
-  if (s.paradigm === 'vertical-flow') {
-    for (const e of edges) {
-      if ((e.kind === 'next' || e.kind === 'branch') && byId.get(e.from)!.role === 'branch' && byId.get(e.to)!.role === 'main') {
-        const anchorOrd = order.get(regAnchor(e.from)) ?? -1;
-        const toOrd = order.get(e.to) ?? -1;
-        if (toOrd <= anchorOrd) warnings.push(`分支 ${e.from} 以 ${e.kind} 连回主干 ${e.to}，建议改用 loop 回归边`);
-      }
-    }
   }
   for (const e of edges.filter((x) => x.kind === 'jump')) {
     const from = byId.get(e.from)!;
@@ -185,8 +211,8 @@ export function normalizeSpec(spec: DiagramSpec): NormalizedSpec {
 
   return {
     paradigm: s.paradigm,
-    orientation: s.orientation ?? 'horizontal',
-    edgeRouting: s.edgeRouting ?? 'orthogonal',
+    orientation,
+    edgeRouting,
     title: s.title,
     lanes: s.lanes ?? [],
     nodes,

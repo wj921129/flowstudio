@@ -15,6 +15,7 @@ export interface RoutingOptions {
   padding?: number;
   sourceNodeId?: string;
   targetNodeId?: string;
+  selfContainerIds?: Set<string>;
   laneCorridorPenalty?: number;
 }
 
@@ -279,7 +280,7 @@ function runAStarRoute(
   gScores.set(startKey, 0);
 
   let bestNode: PriorityNode | null = null;
-  const maxIterations = 600;
+  const maxIterations = 1200;
   let iterations = 0;
 
   while (openList.length > 0 && iterations++ < maxIterations) {
@@ -398,9 +399,10 @@ export function findObstacleAvoidingPath(
   if (options.sourceNodeId) selfIds.add(options.sourceNodeId);
   if (options.targetNodeId) selfIds.add(options.targetNodeId);
 
+  const selfContainerIds = options.selfContainerIds ?? new Set<string>();
   const otherObstacles = obstacles.filter((o) => !selfIds.has(o.id));
   const selfObstacles = obstacles.filter((o) => selfIds.has(o.id) && !o.isLane);
-  const laneObstacles = otherObstacles.filter((o) => o.isLane);
+  const laneObstacles = otherObstacles.filter((o) => o.isLane && !selfContainerIds.has(o.id));
 
   const defaultWaypoints = deriveDefaultOrthogonalWaypoints(
     source,

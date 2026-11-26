@@ -72,9 +72,10 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
       const batchId = ctx.newBatchId();
       const isAtomic = Boolean(input.atomic);
 
-      const outcome = await ctx.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
+        const outcome = await ctx.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
         const nodesMap = doc.getMap<Y.Map<unknown>>('nodes');
         const edgesMap = doc.getMap<Y.Map<unknown>>('edges');
+        const metaMap = doc.getMap<unknown>('meta');
 
         const diffs: AiBatchEntityDiff[] = [];
         const warnings: string[] = [];
@@ -170,6 +171,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           laneId?: string;
           role?: 'main' | 'branch' | 'annotation';
           attachTo?: string;
+          earlyExit?: boolean;
           style?: Record<string, unknown>;
         }) => {
           const nodeMap = new Y.Map<unknown>();
@@ -187,6 +189,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
             type: spec.type || 'process',
             ...(spec.role ? { role: spec.role } : {}),
             ...(spec.attachTo ? { attachTo: spec.attachTo } : {}),
+            ...(spec.earlyExit !== undefined ? { earlyExit: spec.earlyExit } : {}),
             ...(spec.style ? { style: spec.style } : {}),
           });
           nodesMap.set(spec.id, nodeMap);
@@ -273,6 +276,149 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           return Object.keys(next).length > 0 ? next : undefined;
         };
 
+        const resolveFlowDirection = (laneId?: string): 'DOWN' | 'RIGHT' => {
+          if (laneId) {
+            const poolId = nodesMap.get(laneId)?.get('parentId');
+            const poolData = typeof poolId === 'string' ? (nodesMap.get(poolId)?.get('data') as Record<string, unknown> | undefined) : undefined;
+            if (poolData) return poolData.orientation === 'vertical' ? 'DOWN' : 'RIGHT';
+          }
+          const metaOri = metaMap.get('orientation') as string | undefined;
+          if (metaOri === 'horizontal') return 'RIGHT';
+          if (metaOri === 'vertical') return 'DOWN';
+          let poolOri: string | undefined;
+          nodesMap.forEach((m) => {
+            if (!poolOri && m.get('type') === 'pool') {
+              const d = (m.get('data') as Record<string, unknown> | undefined) ?? {};
+              poolOri = d.orientation === 'vertical' ? 'vertical' : 'horizontal';
+            }
+          });
+          if (poolOri) return poolOri === 'vertical' ? 'DOWN' : 'RIGHT';
+          const paradigm = metaMap.get('paradigm') as string | undefined;
+          if (paradigm === 'circuit-flow' || paradigm === 'tree' || paradigm === 'timeline-annotated') return 'DOWN';
+          return 'DOWN';
+        };
+
+        const bumpSize = (nodeMap: Y.Map<unknown>, width: number, height: number) => {
+          nodeMap.set('width', width);
+          nodeMap.set('height', height);
+          const style = nodeMap.get('style');
+          if (style && typeof style === 'object') {
+            nodeMap.set('style', { ...(style as Record<string, unknown>), width, height });
+          }
+        };
+
+        const expandLanesAndPools = (affectedLaneIds: Set<string>) => {
+          if (affectedLaneIds.size === 0) return;
+          const lockedRelated = new Set<string>();
+          const markLockedChain = (startId: string) => {
+            let cursor: string | undefined = startId;
+            const seen = new Set<string>();
+            while (cursor && !seen.has(cursor)) {
+              seen.add(cursor);
+              lockedRelated.add(cursor);
+              cursor = nodesMap.get(cursor)?.get('parentId') as string | undefined;
+            }
+          };
+          nodesMap.forEach((map, id) => {
+            if (getNodeLockMode(map) !== 'none') markLockedChain(id);
+          });
+
+          const laneChildExtents = new Map<string, { right: number; bottom: number }>();
+          nodesMap.forEach((childMap, childId) => {
+            const parentId = childMap.get('parentId');
+            if (typeof parentId !== 'string' || !affectedLaneIds.has(parentId) || childId === parentId) return;
+            const childType = childMap.get('type');
+            if (childType === 'pool' || childType === 'lane') return;
+            const pos = (childMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+            const size = getMapDimensions(childMap);
+            const extent = laneChildExtents.get(parentId) ?? { right: 0, bottom: 0 };
+            extent.right = Math.max(extent.right, pos.x + size.width);
+            extent.bottom = Math.max(extent.bottom, pos.y + size.height);
+            laneChildExtents.set(parentId, extent);
+          });
+
+          for (const affectedLaneId of affectedLaneIds) {
+            const laneMap = nodesMap.get(affectedLaneId);
+            const extent = laneChildExtents.get(affectedLaneId);
+            if (!laneMap || !extent) continue;
+            if (getNodeLockMode(laneMap) !== 'none') {
+              warnings.push(`泳道 ${affectedLaneId} 已锁定，跳过自动撑开`);
+              continue;
+            }
+            const beforeLane = snapshotMap(laneMap);
+            const laneSize = getMapDimensions(laneMap);
+            const nextLaneW = Math.max(laneSize.width, extent.right + LAYOUT_PADDING);
+            const nextLaneH = Math.max(laneSize.height, extent.bottom + LAYOUT_PADDING);
+            if (nextLaneW !== laneSize.width || nextLaneH !== laneSize.height) {
+              bumpSize(laneMap, nextLaneW, nextLaneH);
+              recordUpdate('node', affectedLaneId, beforeLane, snapshotMap(laneMap));
+            }
+          }
+
+          const touchedPoolIds = new Set<string>();
+          for (const affectedLaneId of affectedLaneIds) {
+            const poolId = nodesMap.get(affectedLaneId)?.get('parentId');
+            if (typeof poolId === 'string' && nodesMap.get(poolId)?.get('type') === 'pool') {
+              touchedPoolIds.add(poolId);
+            }
+          }
+          const lanesWithLockedChild = new Set<string>();
+          for (const relatedId of lockedRelated) {
+            const relatedMap = nodesMap.get(relatedId);
+            if (relatedMap?.get('type') === 'lane' && getNodeLockMode(relatedMap) === 'none') {
+              lanesWithLockedChild.add(relatedId);
+            }
+          }
+          for (const poolId of touchedPoolIds) {
+            const poolMap = nodesMap.get(poolId);
+            if (!poolMap) continue;
+            const poolData = (poolMap.get('data') as Record<string, unknown> | undefined) ?? {};
+            const isHorizontal = (poolData.orientation ?? 'horizontal') !== 'vertical';
+            const headerSize = typeof poolData.headerSize === 'number' ? poolData.headerSize : LANE_HEADER_SIZE;
+            const siblingLanes: Array<{ id: string; map: Y.Map<unknown> }> = [];
+            nodesMap.forEach((map, id) => {
+              if (map.get('type') === 'lane' && map.get('parentId') === poolId) siblingLanes.push({ id, map });
+            });
+            const laneOrder = orderLaneIds(
+              Array.isArray(poolData.laneOrder) ? (poolData.laneOrder as string[]) : undefined,
+              siblingLanes.map((lane) => ({
+                id: lane.id,
+                position: (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
+              })),
+              isHorizontal,
+            );
+            let cursor = headerSize;
+            let crossExtent = 0;
+            for (const orderedLaneId of laneOrder) {
+              const lane = siblingLanes.find((item) => item.id === orderedLaneId);
+              if (!lane) continue;
+              const size = getMapDimensions(lane.map);
+              const currentPos = (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+              const mustStay = getNodeLockMode(lane.map) !== 'none' || lanesWithLockedChild.has(orderedLaneId);
+              const baseline = isHorizontal ? currentPos.y : currentPos.x;
+              const targetMain = mustStay ? baseline : Math.max(baseline, cursor);
+              if (targetMain !== baseline) {
+                const beforeLane = snapshotMap(lane.map);
+                lane.map.set(
+                  'position',
+                  isHorizontal ? { x: currentPos.x, y: targetMain } : { x: targetMain, y: currentPos.y },
+                );
+                recordUpdate('node', orderedLaneId, beforeLane, snapshotMap(lane.map));
+              }
+              cursor = Math.max(cursor, targetMain + (isHorizontal ? size.height : size.width));
+              crossExtent = Math.max(crossExtent, isHorizontal ? currentPos.x + size.width : currentPos.y + size.height);
+            }
+            const beforePool = snapshotMap(poolMap);
+            const poolSize = getMapDimensions(poolMap);
+            const nextPoolW = Math.max(poolSize.width, isHorizontal ? crossExtent : cursor);
+            const nextPoolH = Math.max(poolSize.height, isHorizontal ? cursor : crossExtent);
+            if (nextPoolW !== poolSize.width || nextPoolH !== poolSize.height) {
+              bumpSize(poolMap, nextPoolW, nextPoolH);
+              recordUpdate('node', poolId, beforePool, snapshotMap(poolMap));
+            }
+          }
+        };
+
         const findAddNodePosition = (laneId: string | undefined): LayoutPoint => {
           const siblings: Array<{ x: number; y: number; width: number; height: number }> = [];
           nodesMap.forEach((map) => {
@@ -284,6 +430,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
             const pos = (map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
             siblings.push({ x: pos.x, y: pos.y, width: size.width, height: size.height });
           });
+          const dir = resolveFlowDirection(laneId);
           const container = laneId ? nodesMap.get(laneId) : undefined;
           const containerSize = container ? getMapDimensions(container) : undefined;
           const boundWidth = containerSize ? containerSize.width : Infinity;
@@ -296,11 +443,28 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 && y < r.y + r.height + INSERT_GAP
                 && y + DEFAULT_NODE_HEIGHT + INSERT_GAP > r.y,
             );
+          if (dir === 'DOWN') {
+            const maxRows = boundHeight === Infinity
+              ? 50
+              : Math.max(1, Math.floor((boundHeight - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_HEIGHT + INSERT_GAP)));
+            const maxCols = boundWidth === Infinity
+              ? 4
+              : Math.max(1, Math.floor((boundWidth - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_WIDTH + INSERT_GAP)));
+            for (let col = 0; col < maxCols; col++) {
+              for (let row = 0; row < maxRows; row++) {
+                const x = LAYOUT_PADDING + col * (DEFAULT_NODE_WIDTH + INSERT_GAP);
+                const y = LAYOUT_PADDING + row * (DEFAULT_NODE_HEIGHT + INSERT_GAP);
+                if (!collides(x, y)) return { x, y };
+              }
+            }
+            const maxBottom = siblings.reduce((max, r) => Math.max(max, r.y + r.height), LAYOUT_PADDING);
+            return { x: LAYOUT_PADDING, y: maxBottom + INSERT_GAP };
+          }
           const maxCols = boundWidth === Infinity
             ? 50
             : Math.max(1, Math.floor((boundWidth - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_WIDTH + INSERT_GAP)));
           const maxRows = boundHeight === Infinity
-            ? 1
+            ? 4
             : Math.max(1, Math.floor((boundHeight - LAYOUT_PADDING * 2 + INSERT_GAP) / (DEFAULT_NODE_HEIGHT + INSERT_GAP)));
           for (let row = 0; row < maxRows; row++) {
             for (let col = 0; col < maxCols; col++) {
@@ -325,22 +489,27 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 warnings.push(`节点 ${nodeId} 已存在，跳过新增`);
                 break;
               }
-              if (op.laneId && !nodesMap.has(op.laneId)) {
+              let resolvedLaneId = op.laneId;
+              const laneMap = resolvedLaneId ? nodesMap.get(resolvedLaneId) : undefined;
+              if (resolvedLaneId && (!laneMap || laneMap.get('type') !== 'lane')) {
                 if (isAtomic) {
-                  throw new Error(`目标泳道 "${op.laneId}" 不存在。候选可用泳道: [${getCandidateLaneIds().join(', ')}]`);
+                  throw new Error(`目标泳道 "${resolvedLaneId}" 不存在。候选可用泳道: [${getCandidateLaneIds().join(', ')}]`);
                 }
-                warnings.push(`目标泳道 ${op.laneId} 不存在，将作为独立浮动节点创建`);
+                warnings.push(`目标泳道 ${resolvedLaneId} 不存在，将作为独立浮动节点创建`);
+                resolvedLaneId = undefined;
               }
               createNodeMap({
                 id: nodeId,
                 type: op.type || 'process',
                 label: op.label,
-                position: findAddNodePosition(op.laneId),
-                laneId: op.laneId,
+                position: findAddNodePosition(resolvedLaneId),
+                laneId: resolvedLaneId,
                 role: op.role,
                 attachTo: op.attachTo,
+                earlyExit: op.earlyExit,
                 style: op.style,
               });
+              if (resolvedLaneId) expandLanesAndPools(new Set([resolvedLaneId]));
               appliedCount++;
               break;
             }
@@ -361,6 +530,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
               const data = (nodeMap.get('data') as Record<string, unknown>) || {};
               const nextData = { ...data };
               if (op.label !== undefined) nextData.label = op.label;
+              if (op.earlyExit !== undefined) nextData.earlyExit = op.earlyExit;
               if (op.style) {
                 nextData.style = {
                   ...((nextData.style as Record<string, unknown>) || {}),
@@ -419,11 +589,14 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 break;
               }
               const graph = snapshotGraphForPorts();
+              const hasLane = Boolean(nodesMap.get(op.source)?.get('parentId'));
+              const explicitDir = metaMap.get('paradigm') || metaMap.get('orientation') || hasLane ? resolveFlowDirection(nodesMap.get(op.source)?.get('parentId') as string | undefined) : undefined;
               const picked = pickEdgePortsForConnect(graph.nodes, graph.edges, {
                 sourceId: op.source,
                 targetId: op.target,
                 sourceHandle: op.sourceHandle,
                 targetHandle: op.targetHandle,
+                ...(explicitDir ? { flowDirection: explicitDir } : {}),
               });
               const edgeStyle = mergeEdgeStyle(op.style, op.strokeStyle, op.kind);
               createEdgeMap(
@@ -490,10 +663,38 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 warnings.push(`目标泳道 ${op.laneId} 不存在，跳过移入泳道`);
                 break;
               }
+              const worldBoxes = resolveNodeWorldBoxes(snapshotGraphForPorts().nodes);
+              const nodeWorld = worldBoxes.get(op.nodeId);
+              const laneWorld = worldBoxes.get(op.laneId);
+              const nodeDim = getMapDimensions(nodeMap);
               const before = snapshotMap(nodeMap);
               nodeMap.set('parentId', op.laneId);
               nodeMap.set('extent', 'parent');
+              if (nodeWorld && laneWorld) {
+                let lx = Math.max(LAYOUT_PADDING, nodeWorld.x - laneWorld.x);
+                let ly = Math.max(LAYOUT_PADDING, nodeWorld.y - laneWorld.y);
+                const siblings: Array<{ x: number; y: number; width: number; height: number }> = [];
+                nodesMap.forEach((m, id) => {
+                  if (id !== op.nodeId && m.get('parentId') === op.laneId && m.get('type') !== 'pool' && m.get('type') !== 'lane') {
+                    const p = (m.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
+                    const d = getMapDimensions(m);
+                    siblings.push({ x: p.x, y: p.y, width: d.width, height: d.height });
+                  }
+                });
+                const isVert = resolveFlowDirection(op.laneId) === 'DOWN';
+                let guard = 0;
+                while (
+                  siblings.some(
+                    (s) => lx < s.x + s.width + INSERT_GAP && lx + nodeDim.width + INSERT_GAP > s.x && ly < s.y + s.height + INSERT_GAP && ly + nodeDim.height + INSERT_GAP > s.y,
+                  ) && guard++ < 100
+                ) {
+                  if (isVert) ly += nodeDim.height + INSERT_GAP;
+                  else lx += nodeDim.width + INSERT_GAP;
+                }
+                nodeMap.set('position', { x: lx, y: ly });
+              }
               recordUpdate('node', op.nodeId, before, snapshotMap(nodeMap));
+              expandLanesAndPools(new Set([op.laneId]));
               appliedCount++;
               break;
             }
@@ -671,8 +872,6 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 break;
               }
 
-              const direction = op.direction ?? 'RIGHT';
-
               const getWorldOrigin = (nodeMap: Y.Map<unknown>): LayoutPoint => {
                 let origin: LayoutPoint = { x: 0, y: 0 };
                 let current: Y.Map<unknown> | undefined = nodeMap;
@@ -706,6 +905,16 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                   laneId = undefined;
                 }
               }
+
+              const direction: 'RIGHT' | 'DOWN' = op.direction ?? (() => {
+                const poolDir = laneId ? resolveFlowDirection(laneId) : undefined;
+                if (poolDir) return poolDir;
+                const dx = Math.abs(targetWorld.x - sourceWorld.x);
+                const dy = Math.abs(targetWorld.y - sourceWorld.y);
+                if (dy > dx + 10) return 'DOWN';
+                if (dx > dy + 10) return 'RIGHT';
+                return resolveFlowDirection();
+              })();
               const laneOrigin = typeof laneId === 'string'
                 ? getWorldPosition(nodesMap.get(laneId)!)
                 : { x: 0, y: 0 };
@@ -730,89 +939,13 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 style: op.node.style,
               });
 
-              const originalEdgeIds: string[] = [];
-              edgesMap.forEach((edgeMap, edgeId) => {
-                if (edgeMap.get('source') === op.source && edgeMap.get('target') === op.target) {
-                  originalEdgeIds.push(edgeId);
-                }
-              });
-
-              let inheritedLabel: string | undefined;
-              let inheritedStyle: Record<string, unknown> | undefined;
-              let inheritedRouting: 'orthogonal' | 'straight' | undefined;
-              for (const edgeId of originalEdgeIds) {
-                const edgeMap = edgesMap.get(edgeId);
-                if (!edgeMap) continue;
-                const data = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
-                const raw = data.label ?? edgeMap.get('label');
-                if (!inheritedLabel && typeof raw === 'string' && raw.trim()) {
-                  inheritedLabel = raw;
-                }
-                if (!inheritedStyle && data.style && typeof data.style === 'object') {
-                  inheritedStyle = { ...(data.style as Record<string, unknown>) };
-                }
-                if (!inheritedRouting) {
-                  const r = data.routingType ?? edgeMap.get('type');
-                  if (r === 'straight' || r === 'orthogonal') inheritedRouting = r;
-                }
-              }
-
-              for (const edgeId of originalEdgeIds) {
-                const edgeMap = edgesMap.get(edgeId);
-                if (edgeMap) {
-                  recordDelete('edge', edgeId, snapshotMap(edgeMap));
-                  edgesMap.delete(edgeId);
-                }
-              }
-
-              const betweenStyle = mergeEdgeStyle(inheritedStyle, op.strokeStyle);
-              const betweenRouting = op.routingType ?? inheritedRouting;
-              const preferredSourceSide = direction === 'DOWN' ? 'bottom' : 'right';
-              const preferredTargetSide = direction === 'DOWN' ? 'top' : 'left';
-
-              const upGraph = snapshotGraphForPorts();
-              const upPorts = pickEdgePortsForConnect(upGraph.nodes, upGraph.edges, {
-                sourceId: op.source,
-                targetId: nodeId,
-                sourceHandle: preferredSourceSide,
-                targetHandle: preferredTargetSide,
-              });
-              createEdgeMap(
-                op.source,
-                nodeId,
-                op.upstreamLabel ?? op.edgeLabel ?? inheritedLabel,
-                betweenStyle,
-                undefined,
-                upPorts.sourceHandle,
-                upPorts.targetHandle,
-                upPorts.sourceAuto ? upPorts.sourceHandle : undefined,
-                upPorts.targetAuto ? upPorts.targetHandle : undefined,
-                betweenRouting,
-              );
-
-              const downGraph = snapshotGraphForPorts();
-              const downPorts = pickEdgePortsForConnect(downGraph.nodes, downGraph.edges, {
-                sourceId: nodeId,
-                targetId: op.target,
-              });
-              createEdgeMap(
-                nodeId,
-                op.target,
-                op.downstreamLabel ?? op.edgeLabel,
-                betweenStyle,
-                undefined,
-                downPorts.sourceHandle,
-                downPorts.targetHandle,
-                downPorts.sourceAuto ? downPorts.sourceHandle : undefined,
-                downPorts.targetAuto ? downPorts.targetHandle : undefined,
-                betweenRouting,
-              );
-
               const outgoing = new Map<string, string[]>();
               edgesMap.forEach((edgeMap) => {
                 const source = edgeMap.get('source');
                 const target = edgeMap.get('target');
                 if (typeof source !== 'string' || typeof target !== 'string') return;
+                const edgeData = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
+                if (edgeData.kind === 'loop' || edgeData.kind === 'annotate') return;
                 const bucket = outgoing.get(source);
                 if (bucket) bucket.push(target);
                 else outgoing.set(source, [target]);
@@ -891,15 +1024,6 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                 }
               }
 
-              const bumpSize = (nodeMap: Y.Map<unknown>, width: number, height: number) => {
-                nodeMap.set('width', width);
-                nodeMap.set('height', height);
-                const style = nodeMap.get('style');
-                if (style && typeof style === 'object') {
-                  nodeMap.set('style', { ...(style as Record<string, unknown>), width, height });
-                }
-              };
-
               const affectedLaneIds = new Set<string>();
               for (const affectedId of [nodeId, op.target, ...downstream]) {
                 const parentId = nodesMap.get(affectedId)?.get('parentId');
@@ -907,124 +1031,89 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
                   affectedLaneIds.add(parentId);
                 }
               }
+              expandLanesAndPools(affectedLaneIds);
 
-              const laneChildExtents = new Map<string, { right: number; bottom: number }>();
-              nodesMap.forEach((childMap, childId) => {
-                const parentId = childMap.get('parentId');
-                if (typeof parentId !== 'string' || !affectedLaneIds.has(parentId)) return;
-                if (childId === parentId) return;
-                const childType = childMap.get('type');
-                if (childType === 'pool' || childType === 'lane') return;
-                const pos = (childMap.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
-                const size = getMapDimensions(childMap);
-                const extent = laneChildExtents.get(parentId) ?? { right: 0, bottom: 0 };
-                extent.right = Math.max(extent.right, pos.x + size.width);
-                extent.bottom = Math.max(extent.bottom, pos.y + size.height);
-                laneChildExtents.set(parentId, extent);
+              const originalEdgeIds: string[] = [];
+              edgesMap.forEach((edgeMap, edgeId) => {
+                if (edgeMap.get('source') === op.source && edgeMap.get('target') === op.target) {
+                  originalEdgeIds.push(edgeId);
+                }
               });
 
-              for (const affectedLaneId of affectedLaneIds) {
-                const laneMap = nodesMap.get(affectedLaneId);
-                const extent = laneChildExtents.get(affectedLaneId);
-                if (!laneMap || !extent) continue;
-
-                if (getNodeLockMode(laneMap) !== 'none') {
-                  warnings.push(`泳道 ${affectedLaneId} 已锁定，跳过自动撑开`);
-                  continue;
+              let inheritedLabel: string | undefined;
+              let inheritedStyle: Record<string, unknown> | undefined;
+              let inheritedRouting: 'orthogonal' | 'straight' | undefined;
+              for (const edgeId of originalEdgeIds) {
+                const edgeMap = edgesMap.get(edgeId);
+                if (!edgeMap) continue;
+                const data = (edgeMap.get('data') as Record<string, unknown> | undefined) ?? {};
+                const raw = data.label ?? edgeMap.get('label');
+                if (!inheritedLabel && typeof raw === 'string' && raw.trim()) {
+                  inheritedLabel = raw;
                 }
-
-                const beforeLane = snapshotMap(laneMap);
-                const laneSize = getMapDimensions(laneMap);
-                const nextLaneW = Math.max(laneSize.width, extent.right + LAYOUT_PADDING);
-                const nextLaneH = Math.max(laneSize.height, extent.bottom + LAYOUT_PADDING);
-                if (nextLaneW !== laneSize.width || nextLaneH !== laneSize.height) {
-                  bumpSize(laneMap, nextLaneW, nextLaneH);
-                  recordUpdate('node', affectedLaneId, beforeLane, snapshotMap(laneMap));
+                if (!inheritedStyle && data.style && typeof data.style === 'object') {
+                  inheritedStyle = { ...(data.style as Record<string, unknown>) };
                 }
-              }
-
-              const touchedPoolIds = new Set<string>();
-              for (const affectedLaneId of affectedLaneIds) {
-                const poolId = nodesMap.get(affectedLaneId)?.get('parentId');
-                if (typeof poolId === 'string' && nodesMap.get(poolId)?.get('type') === 'pool') {
-                  touchedPoolIds.add(poolId);
+                if (!inheritedRouting) {
+                  const r = data.routingType ?? edgeMap.get('type');
+                  if (r === 'straight' || r === 'orthogonal') inheritedRouting = r;
                 }
               }
 
-              const lanesWithLockedChild = new Set<string>();
-              for (const relatedId of lockedRelated) {
-                const relatedMap = nodesMap.get(relatedId);
-                if (relatedMap?.get('type') === 'lane' && getNodeLockMode(relatedMap) === 'none') {
-                  lanesWithLockedChild.add(relatedId);
+              for (const edgeId of originalEdgeIds) {
+                const edgeMap = edgesMap.get(edgeId);
+                if (edgeMap) {
+                  recordDelete('edge', edgeId, snapshotMap(edgeMap));
+                  edgesMap.delete(edgeId);
                 }
               }
 
-              for (const poolId of touchedPoolIds) {
-                const poolMap = nodesMap.get(poolId);
-                if (!poolMap) continue;
+              const betweenStyle = mergeEdgeStyle(inheritedStyle, op.strokeStyle);
+              const betweenRouting = op.routingType ?? inheritedRouting;
+              const preferredSourceSide = direction === 'DOWN' ? 'bottom' : 'right';
+              const preferredTargetSide = direction === 'DOWN' ? 'top' : 'left';
 
-                const poolData = (poolMap.get('data') as Record<string, unknown> | undefined) ?? {};
-                const isHorizontal = (poolData.orientation ?? 'horizontal') !== 'vertical';
-                const headerSize = typeof poolData.headerSize === 'number'
-                  ? poolData.headerSize
-                  : LANE_HEADER_SIZE;
+              const upGraph = snapshotGraphForPorts();
+              const upPorts = pickEdgePortsForConnect(upGraph.nodes, upGraph.edges, {
+                sourceId: op.source,
+                targetId: nodeId,
+                sourceHandle: preferredSourceSide,
+                targetHandle: preferredTargetSide,
+                flowDirection: direction,
+              });
+              createEdgeMap(
+                op.source,
+                nodeId,
+                op.upstreamLabel ?? op.edgeLabel ?? inheritedLabel,
+                betweenStyle,
+                undefined,
+                upPorts.sourceHandle,
+                upPorts.targetHandle,
+                upPorts.sourceAuto ? upPorts.sourceHandle : undefined,
+                upPorts.targetAuto ? upPorts.targetHandle : undefined,
+                betweenRouting,
+              );
 
-                const siblingLanes: Array<{ id: string; map: Y.Map<unknown> }> = [];
-                nodesMap.forEach((map, id) => {
-                  if (map.get('type') === 'lane' && map.get('parentId') === poolId) {
-                    siblingLanes.push({ id, map });
-                  }
-                });
-                const laneOrder = orderLaneIds(
-                  Array.isArray(poolData.laneOrder) ? (poolData.laneOrder as string[]) : undefined,
-                  siblingLanes.map((lane) => ({
-                    id: lane.id,
-                    position: (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 },
-                  })),
-                  isHorizontal,
-                );
-
-                let cursor = headerSize;
-                let crossExtent = 0;
-                for (const orderedLaneId of laneOrder) {
-                  const lane = siblingLanes.find((item) => item.id === orderedLaneId);
-                  if (!lane) continue;
-                  const size = getMapDimensions(lane.map);
-                  const currentPos = (lane.map.get('position') as LayoutPoint | undefined) ?? { x: 0, y: 0 };
-                  const mustStay =
-                    getNodeLockMode(lane.map) !== 'none' || lanesWithLockedChild.has(orderedLaneId);
-                  const baseline = isHorizontal ? currentPos.y : currentPos.x;
-                  const targetMain = mustStay ? baseline : Math.max(baseline, cursor);
-
-                  if (targetMain !== baseline) {
-                    const beforeLane = snapshotMap(lane.map);
-                    lane.map.set(
-                      'position',
-                      isHorizontal
-                        ? { x: currentPos.x, y: targetMain }
-                        : { x: targetMain, y: currentPos.y },
-                    );
-                    recordUpdate('node', orderedLaneId, beforeLane, snapshotMap(lane.map));
-                  }
-                  cursor = Math.max(
-                    cursor,
-                    targetMain + (isHorizontal ? size.height : size.width),
-                  );
-                  crossExtent = Math.max(
-                    crossExtent,
-                    isHorizontal ? currentPos.x + size.width : currentPos.y + size.height,
-                  );
-                }
-
-                const beforePool = snapshotMap(poolMap);
-                const poolSize = getMapDimensions(poolMap);
-                const nextPoolW = Math.max(poolSize.width, isHorizontal ? crossExtent : cursor);
-                const nextPoolH = Math.max(poolSize.height, isHorizontal ? cursor : crossExtent);
-                if (nextPoolW !== poolSize.width || nextPoolH !== poolSize.height) {
-                  bumpSize(poolMap, nextPoolW, nextPoolH);
-                  recordUpdate('node', poolId, beforePool, snapshotMap(poolMap));
-                }
-              }
+              const downGraph = snapshotGraphForPorts();
+              const downPorts = pickEdgePortsForConnect(downGraph.nodes, downGraph.edges, {
+                sourceId: nodeId,
+                targetId: op.target,
+                sourceHandle: preferredSourceSide,
+                targetHandle: preferredTargetSide,
+                flowDirection: direction,
+              });
+              createEdgeMap(
+                nodeId,
+                op.target,
+                op.downstreamLabel ?? op.edgeLabel,
+                betweenStyle,
+                undefined,
+                downPorts.sourceHandle,
+                downPorts.targetHandle,
+                downPorts.sourceAuto ? downPorts.sourceHandle : undefined,
+                downPorts.targetAuto ? downPorts.targetHandle : undefined,
+                betweenRouting,
+              );
 
               appliedCount++;
               break;
@@ -1032,7 +1121,7 @@ export async function executeApplyOps(ctx: OpExecutorContext, input: ApplyOpsInp
           }
         }
 
-        const semanticWarnings = inspectDiagramSemantics(nodesMap, edgesMap);
+        const semanticWarnings = inspectDiagramSemantics(nodesMap, edgesMap, metaMap);
         return {
           diffs,
           warnings: Array.from(new Set([...warnings, ...semanticWarnings])),

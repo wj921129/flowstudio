@@ -217,7 +217,7 @@ describe('后端审查整改第三轮', () => {
           arguments: {
             diagramId: diag.id,
             spec: {
-              paradigm: 'vertical-flow',
+              paradigm: 'circuit-flow',
               nodes: [{ id: 'n-new', type: 'process', label: '新节点' }],
               edges: [
                 { from: 'n-new', to: 'locked-a' },

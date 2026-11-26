@@ -10,7 +10,7 @@ FlowStudio 专为局域网团队设计，结合现代 Web 技术与分布式 CRD
 
 - 👥 **多人实时协同**：基于 Yjs CRDT + Hocuspocus WebSocket，支持多人同时编辑、光标移动、头像气泡与实时选中高亮。
 - 🎨 **丰富图形与泳道**：支持 9 种基础流程节点（矩形、圆角、判定、圆形、菱形、圆柱体等）、横向/竖向毛玻璃 Pool/Lane 泳道、正交折线与纯直线连线（线段横/纵向拖拽，实线/虚线/点线线型）。
-- 🤖 **AI 人机共治**：通过 Fastify MCP 端点提供 9 大标准 MCP 画布操作工具，支持横向/竖向泳道确定性排版、纯直线树优先分层展开（含多父共享节点居中）、智能防重叠任意点连线端口分摊与实线/虚线/点线线型语义；画布具备 AI 批次悬浮卡片与防冲突撤回（保留人类同事手工修改，安全撤回 AI 操作）。
+- 🤖 **AI 人机共治**：通过 Fastify MCP 端点提供 9 大标准 MCP 画布操作工具与原生 `resources/list` / `resources/read` 模板指南通道（13 套 SSOT 预设 + AI 绘图决策卡），支持 `circuit-flow` 电路式控制流排版（严格入口出口共轴、单边守卫早退、对称多路汇合与横纵转置）、横向/竖向泳道确定性排版、纯直线树优先分层展开（含多父共享节点居中）、方向感知端口分摊与语义/几何软体检；画布具备 AI 批次悬浮卡片与防冲突撤回。
 - 📸 **无损差异快照引擎**：恢复历史快照时全员 WebSocket 连接不断连，通过单一协同事务平滑应用差量，并支持快照另存为新图。
 - 📐 **泳道感知自动排版**：集成 `elkjs` 分层排版引擎，先拓扑计算因果流向再投影至局部泳道，杜绝跨泳道倒流重叠。
 - 🚀 **局域网一键开箱即用**：自动探测局域网 IP，单进程拉起 Web 静态资源托管与后端协同服务，自动唤起浏览器。
@@ -26,7 +26,7 @@ flowstudio/
 ├── packages/
 │   ├── shared/                 # 共享层：数据契约、Zod Schema 校验、几何边框与端口分摊引擎
 │   │   ├── src/schemas/        # 节点、连线、泳道、快照、MCP 操作的统一 Zod 定义
-│   │   ├── src/render/         # 5 范式确定性渲染器（含横/竖对称泳道、共享 tree-layout.ts 树优先布局与端口分摊）
+│   │   ├── src/render/         # 5 范式确定性渲染器（统一拓扑核、circuit-flow 电路控制流、横/竖泳道、加固 tree-layout 与方向端口分摊）
 │   │   └── tests/              # 共享层 Schema 与端口分摊单测
 │   │
 │   ├── server/                 # 服务端：Fastify 5 + Hocuspocus CRDT + SQLite + MCP
@@ -136,9 +136,9 @@ FlowStudio 内置 Fastify 原生 MCP 服务（端点 `/mcp`，遵循 Model Conte
 | `get_diagram` | 获取指定图表的全部节点、连线与泳道结构数据 |
 | `search_nodes` | 按关键词、泳道或节点类型局部检索节点及直接关联连线 |
 | `get_selection` | 获取指定客户端或全体在线同事当前选中的节点 ID 与数据 |
-| `scaffold_diagram` | 依据 DiagramSpec 语义规范生成或重渲染图表（支持横/竖泳道 `orientation`、纯直线/折线 `edgeRouting` 与树优先汇聚布局，自动防重叠端口分摊、支持 `strokeStyle` 与语义软体检 `warnings`） |
-| `apply_ops` | 原子事务级执行批量增量操作（`connect` 自动选边避让旧线、支持 `side@0.04~0.96`、`strokeStyle` 与 `routingType`，含语义巡检与锚定锁保护） |
-| `auto_layout` | 触发服务端的智能排版（支持 `layered` 分层正交与 `tree` 自上而下树状展开；纵向泳道默认 `DOWN` 并自动刷新未锁定、未人工手调的连线端口分布） |
+| `scaffold_diagram` | 依据 DiagramSpec 语义规范生成或重渲染图表（支持 `circuit-flow` 电路控制流、`tree` 纯直线树展开、横/竖泳道 `swimlane`、`tiered-dag` 与 `timeline-annotated` 五范式；支持 `earlyExit` 早退与 `edgeRouting` 纯直线/折线，配合 MCP `resources` 提供 13 套标杆模板与绘图指南） |
+| `apply_ops` | 原子事务级执行批量增量操作（仅用于局部增量编辑；`add_node`/`update_node` 支持 `earlyExit`，`connect`/`insert_between` 自动按流向选边并避让回环，含几何重叠/越界/逆流软体检 `warnings`） |
+| `auto_layout` | 触发服务端智能排版（支持 `circuit` 电路控制流、`layered` 分层正交与 `tree` 树状纯直线；自动保留原图直线/折线不被误洗，支持 `direction` 与 `meta` 回写并刷新端口分布） |
 | `undo_ai_batch` | 撤回指定或最近一条活跃 AI 批次（字段级防冲突保留人类同事修改） |
 
 ---

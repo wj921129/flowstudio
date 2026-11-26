@@ -31,12 +31,14 @@ export const mcpOpSchema = z.discriminatedUnion('op', [
     laneId: z.string().min(1).optional(),
     role: z.enum(['main', 'branch', 'annotation']).optional(),
     attachTo: z.string().min(1).optional(),
+    earlyExit: z.boolean().optional(),
     style: styleSchema.optional(),
   }),
   z.object({
     op: z.literal('update_node'),
     id: z.string().min(1),
     label: z.string().min(1).optional(),
+    earlyExit: z.boolean().optional(),
     style: styleSchema.optional(),
   }),
   z.object({
@@ -123,8 +125,10 @@ export const scaffoldDiagramInputSchema = z.object({
 
 export const autoLayoutInputSchema = z.object({
   diagramId: z.string().min(1),
-  direction: z.enum(['RIGHT', 'DOWN']).optional(),
-  mode: z.enum(['layered', 'tree']).optional(),
+  direction: z.enum(['RIGHT', 'DOWN']).optional().describe('排版方向：DOWN (纵向默认) 或 RIGHT (横向)'),
+  mode: z.enum(['circuit', 'layered', 'tree']).optional().describe('排版模式：circuit (电路控制流) / layered (ELK分层) / tree (树状纯直线)'),
+  edgeRouting: z.enum(['orthogonal', 'straight']).optional().describe('可选覆盖连线路由：orthogonal 正交折线 / straight 纯直线；省略则自动保留原图路由'),
+  agentName: z.string().optional(),
 });
 
 export const getSelectionInputSchema = z.object({

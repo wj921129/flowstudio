@@ -75,8 +75,8 @@ describe('apply_ops 语义化与 get_diagram 语义读回', () => {
   it('scaffold 后读回 paradigm 与 mainOrder', async () => {
     const id = await seeded();
     const view = (await callTool(server, 'get_diagram', { diagramId: id })).data;
-    expect(view.paradigm).toBe('vertical-flow');
-    expect(view.mainOrder).toEqual(['start-2', 'proc-task', 'dec-status', 'end-success']);
+    expect(view.paradigm).toBe('circuit-flow');
+    expect(view.mainOrder).toEqual(['start-2', 'proc-task', 'dec-status', 'end-success', 'dec-retry', 'proc-alarm']);
   });
 
   it('scaffold 渲染的边读回 kind 与连接桩语义一致', async () => {
@@ -93,7 +93,7 @@ describe('apply_ops 语义化与 get_diagram 语义读回', () => {
     const res = await callTool(server, 'scaffold_diagram', {
       diagramId: id,
       spec: {
-        paradigm: 'vertical-flow',
+        paradigm: 'circuit-flow',
         nodes: [
           { id: 'd1', label: '命中？', type: 'decision' },
           { id: 'p1', label: '中段处理' },

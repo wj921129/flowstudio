@@ -22,6 +22,7 @@ export interface DistributeEdgePortsOptions {
   lockedSourceEdgeIds?: ReadonlySet<string>;
   lockedTargetEdgeIds?: ReadonlySet<string>;
   obstacleEdges?: ReadonlyArray<Pick<FlowEdge, 'id' | 'source' | 'target' | 'sourceHandle' | 'targetHandle'>>;
+  flowDirection?: 'DOWN' | 'RIGHT';
 }
 
 export interface PickEdgePortsParams {
@@ -29,6 +30,7 @@ export interface PickEdgePortsParams {
   targetId: string;
   sourceHandle?: string;
   targetHandle?: string;
+  flowDirection?: 'DOWN' | 'RIGHT';
 }
 
 export interface PickedEdgePorts {
@@ -89,6 +91,7 @@ export function isAutoManagedPort(handle?: string | null, autoFingerprint?: stri
 export function inferBestSides(
   sourceBox: NodeWorldBox,
   targetBox: NodeWorldBox,
+  flowDirection?: 'DOWN' | 'RIGHT',
 ): { sourceSide: BorderSide; targetSide: BorderSide } {
   if (sourceBox.id === targetBox.id) return { sourceSide: 'right', targetSide: 'top' };
   const sx = sourceBox.x + sourceBox.width / 2;
@@ -97,6 +100,8 @@ export function inferBestSides(
   const ty = targetBox.y + targetBox.height / 2;
   const dx = tx - sx;
   const dy = ty - sy;
+  if (flowDirection === 'DOWN' && dy >= -10) return { sourceSide: 'bottom', targetSide: 'top' };
+  if (flowDirection === 'RIGHT' && dx >= -10) return { sourceSide: 'right', targetSide: 'left' };
   if (Math.abs(dx) >= Math.abs(dy)) {
     return dx >= 0 ? { sourceSide: 'right', targetSide: 'left' } : { sourceSide: 'left', targetSide: 'right' };
   }
@@ -225,7 +230,7 @@ export function distributeEdgePorts(
   const resolvedEnds = edges.map((edge) => {
     const sBox = boxes.get(edge.source);
     const tBox = boxes.get(edge.target);
-    const fallback = sBox && tBox ? inferBestSides(sBox, tBox) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
+    const fallback = sBox && tBox ? inferBestSides(sBox, tBox, options?.flowDirection) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
     const parsedSource = parseBorderAnchorHandle(edge.sourceHandle);
     const parsedTarget = parseBorderAnchorHandle(edge.targetHandle);
     const isFixedEdge = fixedEdges?.has(edge.id) ?? false;
@@ -270,7 +275,7 @@ export function distributeEdgePorts(
   for (const obs of options?.obstacleEdges ?? []) {
     const sBox = boxes.get(obs.source);
     const tBox = boxes.get(obs.target);
-    const fallback = sBox && tBox ? inferBestSides(sBox, tBox) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
+    const fallback = sBox && tBox ? inferBestSides(sBox, tBox, options?.flowDirection) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
     const ps = parseBorderAnchorHandle(obs.sourceHandle);
     const pt = parseBorderAnchorHandle(obs.targetHandle);
     pushPort(obs.source, ps?.side ?? fallback.sourceSide, {
@@ -387,12 +392,13 @@ function collectOccupiedOffsets(
   boxes: ReadonlyMap<string, NodeWorldBox>,
   nodeId: string,
   side: BorderSide,
+  flowDirection?: 'DOWN' | 'RIGHT',
 ): number[] {
   const occupied: number[] = [];
   for (const edge of edges) {
     const sBox = boxes.get(edge.source);
     const tBox = boxes.get(edge.target);
-    const fallback = sBox && tBox ? inferBestSides(sBox, tBox) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
+    const fallback = sBox && tBox ? inferBestSides(sBox, tBox, flowDirection) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
     if (edge.source === nodeId) {
       const parsed = parseBorderAnchorHandle(edge.sourceHandle);
       const s = parsed?.side ?? fallback.sourceSide;
@@ -436,7 +442,7 @@ export function pickEdgePortsForConnect(
   const boxes = resolveNodeWorldBoxes(nodes);
   const sBox = boxes.get(params.sourceId);
   const tBox = boxes.get(params.targetId);
-  const inferred = sBox && tBox ? inferBestSides(sBox, tBox) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
+  const inferred = sBox && tBox ? inferBestSides(sBox, tBox, params.flowDirection) : { sourceSide: 'right' as BorderSide, targetSide: 'left' as BorderSide };
 
   let sourceHandle: string;
   let sourceAuto = false;
@@ -446,7 +452,7 @@ export function pickEdgePortsForConnect(
   } else {
     sourceAuto = true;
     const sSide = parsedSource?.side ?? inferred.sourceSide;
-    const occupied = collectOccupiedOffsets(existingEdges, boxes, params.sourceId, sSide);
+    const occupied = collectOccupiedOffsets(existingEdges, boxes, params.sourceId, sSide, params.flowDirection);
     sourceHandle = pickFreeOffsetOnSide(sBox, tBox, sSide, occupied);
   }
 
@@ -458,7 +464,7 @@ export function pickEdgePortsForConnect(
   } else {
     targetAuto = true;
     const tSide = parsedTarget?.side ?? inferred.targetSide;
-    const occupied = collectOccupiedOffsets(existingEdges, boxes, params.targetId, tSide);
+    const occupied = collectOccupiedOffsets(existingEdges, boxes, params.targetId, tSide, params.flowDirection);
     if (params.sourceId === params.targetId && parseBorderAnchorHandle(sourceHandle)?.side === tSide) {
       occupied.push(parseBorderAnchorHandle(sourceHandle)?.offset ?? 0.5);
     }

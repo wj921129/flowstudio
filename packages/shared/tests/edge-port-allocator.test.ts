@@ -190,7 +190,7 @@ describe('edge-port-allocator 共享端口分摊引擎', () => {
     expect(e2.sourceHandle).toBe('bottom@0.6667');
 
     const flowSpec: DiagramSpec = {
-      paradigm: 'vertical-flow',
+      paradigm: 'circuit-flow',
       nodes: [
         { id: 'm1', label: '开始', type: 'start-end' },
         { id: 'm2', label: '结束', type: 'start-end' },

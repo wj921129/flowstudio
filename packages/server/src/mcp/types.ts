@@ -24,8 +24,8 @@ export interface McpInsertNodeSpec {
 }
 
 export type McpOp =
-  | { op: 'add_node'; type: string; label: string; id?: string; laneId?: string; role?: 'main' | 'branch' | 'annotation'; attachTo?: string; style?: Record<string, unknown> }
-  | { op: 'update_node'; id: string; label?: string; style?: Record<string, unknown> }
+  | { op: 'add_node'; type: string; label: string; id?: string; laneId?: string; role?: 'main' | 'branch' | 'annotation'; attachTo?: string; earlyExit?: boolean; style?: Record<string, unknown> }
+  | { op: 'update_node'; id: string; label?: string; earlyExit?: boolean; style?: Record<string, unknown> }
   | { op: 'delete_node'; id: string }
   | { op: 'connect'; source: string; target: string; sourceHandle?: string; targetHandle?: string; label?: string; kind?: 'next' | 'branch' | 'loop' | 'jump' | 'annotate' | 'tree'; strokeStyle?: EdgeStrokeStyle; routingType?: 'orthogonal' | 'straight'; style?: Record<string, unknown> }
   | { op: 'disconnect'; edgeId?: string; source?: string; target?: string }
@@ -51,6 +51,7 @@ export interface CompactDiagram {
   title: string;
   paradigm?: string;
   orientation?: 'horizontal' | 'vertical';
+  edgeRouting?: 'orthogonal' | 'straight';
   mainOrder?: string[];
   lanes: Array<{ id: string; label: string }>;
   nodes: Array<{
@@ -60,6 +61,7 @@ export interface CompactDiagram {
     laneId?: string;
     role?: 'main' | 'branch' | 'annotation';
     attachTo?: string;
+    earlyExit?: boolean;
     position: { x: number; y: number };
     lockMode?: 'none' | 'position' | 'full';
   }>;

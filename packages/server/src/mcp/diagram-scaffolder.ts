@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import type { AiBatchEntityDiff, DiagramSpec, FlowEdge, FlowNode, NodeLockMode } from '@flowstudio/shared';
-import { normalizeSpec, renderSpec } from '@flowstudio/shared';
+import { normalizeSpec, renderSpec, resolveNodeWorldBoxes } from '@flowstudio/shared';
 import { diffRendered } from './spec-ops.js';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
@@ -57,7 +57,7 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
         return { nodes, edges, locks };
       });
 
-      const existingPool = existing.nodes.find((n) => n.type === 'pool' && n.id === 'pool');
+      const existingPool = existing.nodes.find((n) => n.type === 'pool');
       const prevOrientation = (existingPool?.data?.orientation as string | undefined) ?? 'horizontal';
       const nextOrientation = input.spec.orientation ?? 'horizontal';
       const orientationChanged = Boolean(existingPool && input.spec.paradigm === 'swimlane' && prevOrientation !== nextOrientation);
@@ -98,17 +98,25 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
       const laneSizes = new Map(
         existing.nodes.filter((n) => n.type === 'lane').map((n) => [n.id, { width: n.width ?? 0, height: n.height ?? 0 }]),
       );
+      const worldBoxes = resolveNodeWorldBoxes(existing.nodes);
       const obstacles = new Map(
-        [...fixed].filter(([id]) => {
-          const t = existing.nodes.find((n) => n.id === id)?.type;
-          return t === 'pool' || t === 'lane' || t === 'group';
-        }),
+        [...fixed]
+          .filter(([id]) => {
+            const t = existing.nodes.find((n) => n.id === id)?.type;
+            return t === 'pool' || t === 'lane' || t === 'group';
+          })
+          .map(([id, val]) => {
+            const wb = worldBoxes.get(id);
+            return [id, wb ? { position: { x: wb.x, y: wb.y }, width: wb.width, height: wb.height } : val];
+          }),
       );
+      const poolMatchedById = existingPool && existingPool.id === 'pool';
       const effectiveLaneSizes = orientationChanged ? new Map<string, { width: number; height: number }>() : laneSizes;
       const protectedEdges = existing.edges.filter((e) => protectedIds.has(e.source) || protectedIds.has(e.target));
-      const rendered = renderSpec(input.spec, { fixed, laneSizes: effectiveLaneSizes, poolPosition: existingPool?.position, obstacles, protectedEdges });
+      const normalized = normalizeSpec(input.spec);
+      const rendered = renderSpec(input.spec, { fixed, laneSizes: effectiveLaneSizes, poolPosition: poolMatchedById ? existingPool.position : undefined, obstacles, protectedEdges });
       const diff = diffRendered(rendered, existing.nodes, existing.edges, (id) => existing.locks.get(id) ?? 'none', { orientationChanged });
-      const mainOrder = normalizeSpec(input.spec).mainOrder;
+      const mainOrder = normalized.mainOrder;
 
       const batchId = ctx.newBatchId('ai-scaffold');
       const outcome = await ctx.writer.mutate(input.diagramId, `ai:${batchId}`, (doc) => {
@@ -225,9 +233,11 @@ export async function executeScaffoldDiagram(ctx: ScaffolderContext, input: Scaf
           }
         }
         metaMap.set('paradigm', input.spec.paradigm);
+        metaMap.set('orientation', normalized.orientation);
+        metaMap.set('edgeRouting', normalized.edgeRouting);
         metaMap.set('mainOrder', mainOrder);
         if (input.title) metaMap.set('title', input.title.trim());
-        const semanticWarnings = inspectDiagramSemantics(nodesMap, edgesMap);
+        const semanticWarnings = inspectDiagramSemantics(nodesMap, edgesMap, metaMap);
         return {
           diffs,
           warnings: Array.from(new Set([...rendered.warnings, ...diff.warnings, ...ancestorWarnings, ...warnings, ...semanticWarnings])),

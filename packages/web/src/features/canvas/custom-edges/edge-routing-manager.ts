@@ -42,6 +42,7 @@ export class EdgeRoutingManager {
   private gridBuckets = new Map<string, Set<string>>();
   private nodeCellKeys = new Map<string, string[]>();
   private nodePositions = new Map<string, string>();
+  private nodeParentMap = new Map<string, string | undefined>();
   private obstaclesVersion = 0;
   private edgeHorizontalSegments = new Map<string, HorizontalSegment[]>();
   private routeCache = new Map<string, ComputedEdgeRoute>();
@@ -78,6 +79,7 @@ export class EdgeRoutingManager {
 
     for (const node of nodes) {
       currentNodeIds.add(node.id);
+      this.nodeParentMap.set(node.id, node.parentId);
 
       let wx = node.position.x;
       let wy = node.position.y;
@@ -146,6 +148,7 @@ export class EdgeRoutingManager {
         this.nodeCellKeys.delete(oldId);
         this.obstaclesMap.delete(oldId);
         this.nodePositions.delete(oldId);
+        this.nodeParentMap.delete(oldId);
       }
     }
 
@@ -161,7 +164,7 @@ export class EdgeRoutingManager {
   getCandidateObstacles(
     source: XYPosition,
     target: XYPosition,
-    margin = 150,
+    margin = 240,
     extraIncludeIds?: Set<string>
   ): ObstacleBox[] {
     const minX = Math.min(source.x, target.x) - margin;
@@ -239,9 +242,25 @@ export class EdgeRoutingManager {
     if (cached) return cached;
 
     const extraIds = new Set<string>();
-    if (sourceNodeId) extraIds.add(sourceNodeId);
-    if (targetNodeId) extraIds.add(targetNodeId);
-    const candidateObstacles = this.getCandidateObstacles(source, target, 150, extraIds);
+    const selfContainerIds = new Set<string>();
+    const collectAncestors = (nid?: string) => {
+      let cur = nid ? this.nodeParentMap.get(nid) : undefined;
+      const seen = new Set<string>();
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        selfContainerIds.add(cur);
+        cur = this.nodeParentMap.get(cur);
+      }
+    };
+    if (sourceNodeId) {
+      extraIds.add(sourceNodeId);
+      collectAncestors(sourceNodeId);
+    }
+    if (targetNodeId) {
+      extraIds.add(targetNodeId);
+      collectAncestors(targetNodeId);
+    }
+    const candidateObstacles = this.getCandidateObstacles(source, target, 240, extraIds);
 
     let waypoints: XYPosition[];
     if (manualWaypoints && manualWaypoints.length > 0) {
@@ -253,7 +272,7 @@ export class EdgeRoutingManager {
         sourcePosition,
         targetPosition,
         candidateObstacles,
-        { sourceNodeId, targetNodeId, padding: 14 }
+        { sourceNodeId, targetNodeId, selfContainerIds, padding: 14 }
       );
     }
 
@@ -302,6 +321,7 @@ export class EdgeRoutingManager {
     this.gridBuckets.clear();
     this.nodeCellKeys.clear();
     this.nodePositions.clear();
+    this.nodeParentMap.clear();
     this.edgeHorizontalSegments.clear();
     this.routeCache.clear();
     this.pendingCallbacks.clear();

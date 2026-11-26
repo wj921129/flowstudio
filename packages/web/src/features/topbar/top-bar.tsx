@@ -61,6 +61,8 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const edges = useFlowStore((s) => s.edges);
   const storeTitle = useFlowStore((s) => s.diagramTitle);
   const setDiagramTitle = useFlowStore((s) => s.setDiagramTitle);
+  const setDiagramMeta = useFlowStore((s) => s.setDiagramMeta);
+  const diagramEdgeRouting = useFlowStore((s) => s.diagramEdgeRouting);
   const setDiagram = useFlowStore((s) => s.setDiagram);
   const spotlightActive = useFlowStore((s) => s.spotlightActive);
   const toggleSpotlightMode = useFlowStore((s) => s.toggleSpotlightMode);
@@ -202,13 +204,21 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     }
   };
 
-  const handleAutoLayout = async (mode: 'layered' | 'tree' = 'layered') => {
+  const handleAutoLayout = async (mode: 'circuit' | 'layered' | 'tree' = 'layered', direction?: 'DOWN' | 'RIGHT') => {
     if (nodes.length === 0 || isLayouting) return;
     try {
       setIsLayouting(true);
-      const res = await layoutDiagram(nodes, edges, { mode });
+      const res = await layoutDiagram(nodes, edges, { mode, ...(direction ? { direction } : {}), ...(diagramEdgeRouting ? { edgeRouting: diagramEdgeRouting } : {}) });
       setDiagram(res.nodes, res.edges);
-      showToast(mode === 'tree' ? '树状排版已完成' : '自动排版已完成');
+      const hasPoolOrLane = nodes.some((n) => n.type === 'pool' || n.type === 'lane');
+      if (!hasPoolOrLane) {
+        if (mode === 'circuit') {
+          setDiagramMeta({ paradigm: 'circuit-flow', orientation: direction === 'RIGHT' ? 'horizontal' : 'vertical' });
+        } else if (mode === 'tree') {
+          setDiagramMeta({ paradigm: 'tree', orientation: 'vertical' });
+        }
+      }
+      showToast(mode === 'circuit' ? '电路流排版已完成' : mode === 'tree' ? '树状排版已完成' : '自动排版已完成');
     } catch (err) {
       console.error('[TopBar] 自动排版失败:', err);
       showToast('自动排版异常，已保留原样');
@@ -638,6 +648,36 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
 
               {!isReadOnly && (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreOpen(false);
+                      handleAutoLayout('circuit', 'DOWN');
+                    }}
+                    disabled={isLayouting || nodes.length === 0}
+                    className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles className={`w-4 h-4 text-fs-primary shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
+                    <div className="flex flex-col">
+                      <span className="font-medium">电路流排版（纵）</span>
+                      <span className="text-[10px] text-fs-text-muted">入口出口共轴、分支对称汇合</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreOpen(false);
+                      handleAutoLayout('circuit', 'RIGHT');
+                    }}
+                    disabled={isLayouting || nodes.length === 0}
+                    className="w-full px-3 py-2 flex items-center gap-2.5 text-left text-fs-text hover:bg-fs-bg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles className={`w-4 h-4 text-fs-primary shrink-0 ${isLayouting ? 'animate-spin' : ''}`} />
+                    <div className="flex flex-col">
+                      <span className="font-medium">电路流排版（横）</span>
+                      <span className="text-[10px] text-fs-text-muted">自左向右电路式控制流排版</span>
+                    </div>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
