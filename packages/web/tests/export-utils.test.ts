@@ -117,6 +117,18 @@ describe('export-utils: Pure Vector SVG & High-Fidelity 9-Node Geometry', () => 
     expect(svg).toContain('<polygon');
     expect(svg).toContain('fill="#EFF6FF"');
     expect(svg).toContain('stroke="#3B82F6"');
+
+    // 4. 图层顺序验证：containers-layer (Pool/Lane) 在 edges-layer 之前，leaf nodes-layer 在 edges-layer 之后
+    const containersIdx = svg.indexOf('id="containers-layer"');
+    const poolIdx = svg.indexOf('<!-- Pool: pool-1 -->');
+    const laneIdx = svg.indexOf('<!-- Lane: lane-1 -->');
+    const edgesIdx = svg.indexOf('id="edges-layer"');
+    const nodesIdx = svg.indexOf('id="nodes-layer"');
+    expect(containersIdx).toBeGreaterThan(-1);
+    expect(poolIdx).toBeGreaterThan(containersIdx);
+    expect(laneIdx).toBeGreaterThan(poolIdx);
+    expect(edgesIdx).toBeGreaterThan(laneIdx);
+    expect(nodesIdx).toBeGreaterThan(edgesIdx);
   });
 
   it('工单14：保真导出 UML、云原生架构与富文本卡片，具有专属几何轮廓与元数据标记而非白板矩形', () => {

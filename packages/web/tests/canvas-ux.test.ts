@@ -10,6 +10,8 @@ import {
 } from '../src/stores/flow-store';
 import {
   deriveDisplayNodes,
+  POOL_Z_INDEX,
+  LANE_Z_INDEX,
   type DisplayNodeCacheEntry,
 } from '../src/features/canvas/utils/display-nodes';
 import {
@@ -264,6 +266,64 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(spot2[0]).not.toBe(spot1[0]);
     expect(spot2[1]).toBe(spot1[1]);
     expect(spot2[2]).toBe(spot1[2]);
+  });
+
+  it('deriveDisplayNodes 将 pool/lane 层级置底防遮挡（含选中抬升与 style.zIndex 清理），并自动修复子先于父的拓扑序', () => {
+    const cache = new Map<string, DisplayNodeCacheEntry>();
+    const pool = {
+      id: 'pool-1',
+      type: 'pool' as const,
+      position: { x: 0, y: 0 },
+      style: { width: 800, height: 400, zIndex: 999 },
+      data: { label: '泳道池', type: 'pool' as const },
+    };
+    const lane = {
+      id: 'lane-1',
+      type: 'lane' as const,
+      parentId: 'pool-1',
+      position: { x: 0, y: 40 },
+      style: { width: 800, height: 200, zIndex: 888 },
+      data: { label: '泳道1', type: 'lane' as const },
+    };
+    const child = {
+      id: 'node-child',
+      type: 'process' as const,
+      parentId: 'lane-1',
+      position: { x: 80, y: 60 },
+      data: { label: '泳道内节点', type: 'process' as const },
+    };
+    const floating = {
+      id: 'node-floating',
+      type: 'process' as const,
+      position: { x: 100, y: 120 },
+      data: { label: '浮游节点', type: 'process' as const },
+    };
+
+    const derived = deriveDisplayNodes(
+      [child, floating, lane, pool],
+      { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false },
+      cache
+    );
+
+    expect(derived.map((n) => n.id)).toEqual(['node-floating', 'pool-1', 'lane-1', 'node-child']);
+    expect(derived[0]).toBe(floating);
+    expect(derived[1].zIndex).toBe(POOL_Z_INDEX);
+    expect(derived[2].zIndex).toBe(LANE_Z_INDEX);
+    expect(POOL_Z_INDEX).toBeLessThan(LANE_Z_INDEX);
+    expect(POOL_Z_INDEX + 1000).toBeLessThan(0);
+    expect(LANE_Z_INDEX + 1000).toBeLessThan(0);
+    expect((derived[1].style as Record<string, unknown> | undefined)?.zIndex).toBeUndefined();
+    expect((derived[2].style as Record<string, unknown> | undefined)?.zIndex).toBeUndefined();
+    expect(derived[3]).toBe(child);
+
+    const floatingMoved = { ...floating, position: { x: 120, y: 140 } };
+    const derived2 = deriveDisplayNodes(
+      [pool, lane, floatingMoved, child],
+      { hasSpotlightDim: false, spotlightResult: null, isReadOnly: false },
+      cache
+    );
+    expect(derived2[0]).toBe(derived[1]);
+    expect(derived2[1]).toBe(derived[2]);
   });
 
   it('特殊形状连接点贴合真实几何边框，移除分点浮标，顶部操作栏固定居中且浅色节点光标高对比', () => {

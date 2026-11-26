@@ -2,9 +2,19 @@ import type { FlowNode } from '@flowstudio/shared';
 import type { PathSpotlightResult } from './path-spotlight';
 import { isNodeLocked } from './node-lock-manager';
 
+export const POOL_Z_INDEX = -2000;
+export const LANE_Z_INDEX = -1500;
+
+export function getSwimlaneBaseZIndex(type: FlowNode['type']): number | undefined {
+  if (type === 'pool') return POOL_Z_INDEX;
+  if (type === 'lane') return LANE_Z_INDEX;
+  return undefined;
+}
+
 export interface DisplayNodeCacheEntry {
   raw: FlowNode;
   draggable: false | undefined;
+  zIndex: number | undefined;
   hasSpotlightDim: boolean;
   isHighlighted: boolean;
   derived: FlowNode;
@@ -16,6 +26,27 @@ export interface DeriveDisplayNodesOptions {
   isReadOnly: boolean;
 }
 
+function sortNodesByHierarchy(nodes: FlowNode[], nodeById: Map<string, FlowNode>): FlowNode[] {
+  const depthCache = new Map<string, number>();
+  const getDepth = (node: FlowNode): number => {
+    const cached = depthCache.get(node.id);
+    if (cached !== undefined) return cached;
+    let depth = 0;
+    const visited = new Set<string>([node.id]);
+    let curr: FlowNode | undefined = node;
+    while (curr?.parentId && !visited.has(curr.parentId)) {
+      visited.add(curr.parentId);
+      const parent = nodeById.get(curr.parentId);
+      if (!parent) break;
+      depth++;
+      curr = parent;
+    }
+    depthCache.set(node.id, depth);
+    return depth;
+  };
+  return [...nodes].sort((a, b) => getDepth(a) - getDepth(b));
+}
+
 export function deriveDisplayNodes(
   nodes: FlowNode[],
   options: DeriveDisplayNodesOptions,
@@ -25,12 +56,24 @@ export function deriveDisplayNodes(
 
   const nodeById = new Map<string, FlowNode>();
   const lockedNodeIds = new Set<string>();
+  const unresolvedParentIds: string[] = [];
+  let hasSwimlaneZAdjust = false;
+
   for (const n of nodes) {
     nodeById.set(n.id, n);
     if (isNodeLocked(n, 'position')) {
       lockedNodeIds.add(n.id);
     }
+    if (n.parentId && !nodeById.has(n.parentId)) {
+      unresolvedParentIds.push(n.parentId);
+    }
+    const baseZ = getSwimlaneBaseZIndex(n.type);
+    if (baseZ !== undefined && (n.zIndex !== baseZ || n.style?.zIndex !== undefined)) {
+      hasSwimlaneZAdjust = true;
+    }
   }
+
+  const needsTopologicalSort = unresolvedParentIds.some((pid) => nodeById.has(pid));
 
   const lockedContainers = new Set<string>();
   if (lockedNodeIds.size > 0) {
@@ -48,21 +91,25 @@ export function deriveDisplayNodes(
   }
 
   const hasAnyLocked = lockedNodeIds.size > 0 || lockedContainers.size > 0;
-  if (!hasSpotlightDim && !hasAnyLocked && !isReadOnly) {
+  if (!hasSpotlightDim && !hasAnyLocked && !isReadOnly && !hasSwimlaneZAdjust && !needsTopologicalSort) {
     cache?.clear();
     return nodes;
   }
 
+  const orderedNodes = needsTopologicalSort ? sortNodesByHierarchy(nodes, nodeById) : nodes;
   const nextCache = cache ? new Map<string, DisplayNodeCacheEntry>() : null;
-  const result = nodes.map((node) => {
+  const result = orderedNodes.map((node) => {
     const isLockedFromDrag = isReadOnly || lockedNodeIds.has(node.id) || lockedContainers.has(node.id);
     const draggable: false | undefined = isLockedFromDrag ? false : undefined;
+    const baseZ = getSwimlaneBaseZIndex(node.type);
+    const targetZ = baseZ ?? node.zIndex;
+    const hasStyleZOverride = baseZ !== undefined && node.style?.zIndex !== undefined;
     const isHighlighted =
       hasSpotlightDim && spotlightResult
         ? spotlightResult.nodeIds.has(node.id) || spotlightResult.laneIds.has(node.id)
         : true;
 
-    if (!hasSpotlightDim && draggable === node.draggable) {
+    if (!hasSpotlightDim && draggable === node.draggable && targetZ === node.zIndex && !hasStyleZOverride) {
       return node;
     }
 
@@ -71,6 +118,7 @@ export function deriveDisplayNodes(
       cached &&
       cached.raw === node &&
       cached.draggable === draggable &&
+      cached.zIndex === targetZ &&
       cached.hasSpotlightDim === hasSpotlightDim &&
       cached.isHighlighted === isHighlighted
     ) {
@@ -78,22 +126,31 @@ export function deriveDisplayNodes(
       return cached.derived;
     }
 
+    let nextStyle = node.style;
+    if (hasStyleZOverride && node.style) {
+      const { zIndex: _omitted, ...restStyle } = node.style;
+      nextStyle = restStyle;
+    }
+    if (hasSpotlightDim) {
+      nextStyle = {
+        ...nextStyle,
+        opacity: isHighlighted ? 1 : 0.15,
+        filter: isHighlighted ? undefined : 'grayscale(80%)',
+        transition: 'opacity 0.2s ease, filter 0.2s ease',
+      };
+    }
+
     const derived: FlowNode = {
       ...node,
       draggable,
-      style: hasSpotlightDim
-        ? {
-            ...node.style,
-            opacity: isHighlighted ? 1 : 0.15,
-            filter: isHighlighted ? undefined : 'grayscale(80%)',
-            transition: 'opacity 0.2s ease, filter 0.2s ease',
-          }
-        : node.style,
+      ...(targetZ !== undefined ? { zIndex: targetZ } : {}),
+      style: nextStyle,
     };
 
     nextCache?.set(node.id, {
       raw: node,
       draggable,
+      zIndex: targetZ,
       hasSpotlightDim,
       isHighlighted,
       derived,

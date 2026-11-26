@@ -192,12 +192,245 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
 
   <!-- 背景底色 -->
   <rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="#FAFAFA" />
-
-  <!-- 连线层 -->
-  <g id="edges-layer">
 `;
 
-  // 1. 绘制连线
+  const containerPriority: Record<string, number> = { pool: 0, lane: 1, group: 2 };
+  const containerNodes = nodes
+    .filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group')
+    .sort((a, b) => (containerPriority[a.type ?? ''] ?? 9) - (containerPriority[b.type ?? ''] ?? 9));
+  const leafNodes = nodes.filter((n) => n.type !== 'pool' && n.type !== 'lane' && n.type !== 'group');
+
+  const renderSvgNode = (node: FlowNode): string => {
+    let out = '';
+    const { width: nw, height: nh } = getNodeDimensions(node);
+    const wp = worldPosMap.get(node.id)!;
+    const x = wp.x;
+    const y = wp.y;
+    const label = node.data?.label || '';
+    const safeNodeId = escapeXml(node.id).replace(/--/g, '__');
+
+    const styleData = node.data?.style || {};
+    const defaultFill = node.type === 'comment' ? '#FEF9C3' : '#FFFFFF';
+    const defaultBorder = node.type === 'comment' ? '#FDE047' : '#CBD5E1';
+    const fillColor = sanitizeSvgColor(styleData.fillColor, defaultFill);
+    const strokeColor = sanitizeSvgColor(styleData.borderColor, defaultBorder);
+    const strokeWidth = sanitizeSvgNumber(styleData.borderWidth, node.type === 'pool' ? 2 : 1.5, 0.5, 20);
+    const strokeDash = styleData.borderStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
+    const fontColor = sanitizeSvgColor(styleData.fontColor, '#1E293B');
+    const fontSize = sanitizeSvgNumber(styleData.fontSize, 12, 6, 72);
+
+    switch (node.type) {
+      case 'pool': {
+        const isHoriz = node.data?.orientation !== 'vertical';
+        const headerSize = sanitizeSvgNumber(node.data?.headerSize, 40, 20, 200);
+        out += `    <!-- Pool: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        if (isHoriz) {
+          out += `    <rect x="${x}" y="${y}" width="${nw}" height="${headerSize}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+          out += `    <rect x="${x}" y="${y + headerSize - 8}" width="${nw}" height="8" fill="#F1F5F9" />\n`;
+          out += `    <text x="${x + 16}" y="${y + headerSize / 2 + 4}" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A">${escapeXml(label)}</text>\n`;
+        } else {
+          out += `    <rect x="${x}" y="${y}" width="${headerSize}" height="${nh}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+          out += `    <rect x="${x + headerSize - 8}" y="${y}" width="8" height="${nh}" fill="#F1F5F9" />\n`;
+          out += `    <text x="${x + headerSize / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A" transform="rotate(-90 ${x + headerSize / 2} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'lane': {
+        out += `    <!-- Lane: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="4 4" />\n`;
+        out += `    <rect x="${x}" y="${y}" width="36" height="${nh}" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="1" />\n`;
+        out += `    <text x="${x + 18}" y="${y + nh / 2}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B" transform="rotate(-90 ${x + 18} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'group': {
+        out += `    <!-- Group: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
+        if (label) {
+          out += `    <text x="${x + 12}" y="${y + 20}" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'start-end': {
+        const radius = nh / 2;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="${radius}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'decision': {
+        const cx = x + nw / 2;
+        const cy = y + nh / 2;
+        const pts = `${cx},${y} ${x + nw},${cy} ${cx},${y + nh} ${x},${cy}`;
+        out += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'io': {
+        const offset = Math.min(20, nw * 0.15);
+        const pts = `${x + offset},${y} ${x + nw},${y} ${x + nw - offset},${y + nh} ${x},${y + nh}`;
+        out += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'document': {
+        const d = `M ${x},${y} L ${x + nw},${y} L ${x + nw},${y + nh * 0.92} Q ${x + nw * 0.75},${y + nh * 0.84} ${x + nw * 0.5},${y + nh * 0.98} Q ${x + nw * 0.25},${y + nh * 1.06} ${x},${y + nh * 0.92} Z`;
+        out += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'database': {
+        const rx = nw / 2;
+        const ry = Math.min(16, nh * 0.15);
+        const d = `M ${x},${y + ry} L ${x},${y + nh - ry} A ${rx},${ry} 0 0 0 ${x + nw},${y + nh - ry} L ${x + nw},${y + ry} Z`;
+        out += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <ellipse cx="${x + rx}" cy="${y + ry}" rx="${rx}" ry="${ry}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 8}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'subprocess': {
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="4" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <line x1="${x + 12}" y1="${y}" x2="${x + 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        out += `    <line x1="${x + nw - 12}" y1="${y}" x2="${x + nw - 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'comment': {
+        const fold = 14;
+        const d = `M ${x},${y} L ${x + nw - fold},${y} L ${x + nw},${y + fold} L ${x + nw},${y + nh} L ${x},${y + nh} Z`;
+        out += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <polygon points="${x + nw - fold},${y} ${x + nw},${y + fold} ${x + nw - fold},${y + fold}" fill="#E2E8F0" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+
+      case 'uml-lifeline': {
+        const headH = Math.min(36, nh * 0.25);
+        const headW = Math.min(nw - 8, 140);
+        const headX = x + (nw - headW) / 2;
+        const cx = x + nw / 2;
+        out += `    <!-- UmlLifeline: ${safeNodeId} -->\n`;
+        out += `    <rect x="${headX}" y="${y}" width="${headW}" height="${headH}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${cx}" y="${y + headH / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        out += `    <line x1="${cx}" y1="${y + headH}" x2="${cx}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
+        break;
+      }
+
+      case 'uml-activation': {
+        out += `    <!-- UmlActivation: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="3" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        if (label) {
+          out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="10" font-family="-apple-system, sans-serif" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'uml-message': {
+        const cy = y + nh / 2;
+        const kind = (node.data as any)?.messageKind ?? 'sync';
+        const isReturn = kind === 'return';
+        const isOpen = kind !== 'sync';
+        const msgDash = isReturn ? 'stroke-dasharray="5 5"' : '';
+        out += `    <!-- UmlMessage: ${safeNodeId} -->\n`;
+        out += `    <line x1="${x}" y1="${cy}" x2="${x + nw - 8}" y2="${cy}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${msgDash} />\n`;
+        if (isOpen) {
+          out += `    <polyline points="${x + nw - 10},${cy - 4} ${x + nw - 2},${cy} ${x + nw - 10},${cy + 4}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
+        } else {
+          out += `    <polygon points="${x + nw - 10},${cy - 4} ${x + nw - 2},${cy} ${x + nw - 10},${cy + 4}" fill="${strokeColor}" />\n`;
+        }
+        if (label) {
+          out += `    <text x="${x + nw / 2}" y="${cy - 6}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        }
+        break;
+      }
+
+      case 'rich-card': {
+        const status = String((node.data as any)?.cardStatus || 'draft').toLowerCase();
+        const statusColor = status === 'done' ? '#059669' : status === 'wip' ? '#2563EB' : '#64748B';
+        const md = String((node.data as any)?.markdown || '');
+        const mdLines = md ? md.split('\n').filter(Boolean) : [];
+        out += `    <!-- RichCard: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" filter="url(#card-shadow)" />\n`;
+        out += `    <rect x="${x + 12}" y="${y + 10}" width="42" height="16" rx="8" fill="${statusColor}" />\n`;
+        out += `    <text x="${x + 33}" y="${y + 22}" text-anchor="middle" font-size="9" font-family="-apple-system, sans-serif" font-weight="700" fill="#FFFFFF">${escapeXml(status.toUpperCase())}</text>\n`;
+        out += `    <text x="${x + 62}" y="${y + 22}" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        let curY = y + 42;
+        for (const line of mdLines.slice(0, 3)) {
+          out += `    <text x="${x + 14}" y="${curY}" font-size="11" font-family="-apple-system, sans-serif" fill="#475569">${escapeXml(line)}</text>\n`;
+          curY += 16;
+        }
+        break;
+      }
+
+      case 'arch-microservice':
+      case 'arch-gateway':
+      case 'arch-db-shard':
+      case 'arch-cache':
+      case 'arch-k8s-pod':
+      case 'arch-docker': {
+        const commentTag = node.type === 'arch-microservice' ? 'ArchMicroservice'
+          : node.type === 'arch-gateway' ? 'ArchGateway'
+          : node.type === 'arch-db-shard' ? 'ArchDbShard'
+          : node.type === 'arch-cache' ? 'ArchCache'
+          : node.type === 'arch-k8s-pod' ? 'ArchK8sPod'
+          : 'ArchDocker';
+        const glyphMap: Record<string, string> = {
+          'arch-microservice': '⚙',
+          'arch-gateway': '⇄',
+          'arch-db-shard': '🗄',
+          'arch-cache': '⚡',
+          'arch-k8s-pod': '☸',
+          'arch-docker': '🐳',
+        };
+        const glyph = glyphMap[node.type] || '▣';
+        const env = (node.data as any)?.envTag as string | undefined;
+        const proto = (node.data as any)?.protocol as string | undefined;
+        const health = (node.data as any)?.health as string | undefined;
+        out += `    <!-- ${commentTag}: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${x + 22}" y="${y + 26}" text-anchor="middle" font-size="16">${glyph}</text>\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        if (proto) {
+          out += `    <text x="${x + nw / 2}" y="${y + nh - 10}" text-anchor="middle" font-size="10" font-family="monospace" fill="#64748B">${escapeXml(proto)}</text>\n`;
+        }
+        if (env) {
+          const envBg = env.toLowerCase() === 'prod' ? '#F43F5E' : '#F59E0B';
+          const envW = Math.max(34, env.length * 8 + 10);
+          out += `    <rect x="${x + nw - envW - 8}" y="${y + 8}" width="${envW}" height="15" rx="7.5" fill="${envBg}" />\n`;
+          out += `    <text x="${x + nw - envW / 2 - 8}" y="${y + 19}" text-anchor="middle" font-size="9" font-family="-apple-system, sans-serif" font-weight="700" fill="#FFFFFF">${escapeXml(env.toUpperCase())}</text>\n`;
+        }
+        if (health) {
+          const healthDot = health === 'ok' ? '#10B981' : health === 'warn' ? '#F59E0B' : '#EF4444';
+          out += `    <circle cx="${x + nw - 14}" cy="${y + nh - 14}" r="4" fill="${healthDot}" />\n`;
+        }
+        break;
+      }
+
+      case 'process':
+      default: {
+        out += `    <!-- Process: ${safeNodeId} -->\n`;
+        out += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
+        out += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
+        break;
+      }
+    }
+    return out;
+  };
+
+  svg += `  <!-- 容器层 -->\n  <g id="containers-layer">\n`;
+  for (const node of containerNodes) {
+    svg += renderSvgNode(node);
+  }
+  svg += `  </g>\n\n  <!-- 连线层 -->\n  <g id="edges-layer">\n`;
+
   for (const edge of edges) {
     const srcNode = byId.get(edge.source);
     const tgtNode = byId.get(edge.target);
@@ -242,234 +475,8 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
   }
 
   svg += `  </g>\n\n  <!-- 图元节点层 -->\n  <g id="nodes-layer">\n`;
-
-  // 2. 绘制节点（优先绘制容器类型 pool/lane/group，再绘制业务叶子节点）
-  const containerNodes = nodes.filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group');
-  const leafNodes = nodes.filter((n) => n.type !== 'pool' && n.type !== 'lane' && n.type !== 'group');
-
-  for (const node of [...containerNodes, ...leafNodes]) {
-    const { width: nw, height: nh } = getNodeDimensions(node);
-    const wp = worldPosMap.get(node.id)!;
-    const x = wp.x;
-    const y = wp.y;
-    const label = node.data?.label || '';
-    const safeNodeId = escapeXml(node.id).replace(/--/g, '__');
-
-    const styleData = node.data?.style || {};
-    const defaultFill = node.type === 'comment' ? '#FEF9C3' : '#FFFFFF';
-    const defaultBorder = node.type === 'comment' ? '#FDE047' : '#CBD5E1';
-    const fillColor = sanitizeSvgColor(styleData.fillColor, defaultFill);
-    const strokeColor = sanitizeSvgColor(styleData.borderColor, defaultBorder);
-    const strokeWidth = sanitizeSvgNumber(styleData.borderWidth, node.type === 'pool' ? 2 : 1.5, 0.5, 20);
-    const strokeDash = styleData.borderStyle === 'dashed' ? 'stroke-dasharray="5 5"' : '';
-    const fontColor = sanitizeSvgColor(styleData.fontColor, '#1E293B');
-    const fontSize = sanitizeSvgNumber(styleData.fontSize, 12, 6, 72);
-
-    switch (node.type) {
-      case 'pool': {
-        const isHoriz = node.data?.orientation !== 'vertical';
-        const headerSize = sanitizeSvgNumber(node.data?.headerSize, 40, 20, 200);
-        svg += `    <!-- Pool: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        if (isHoriz) {
-          svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${headerSize}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-          svg += `    <rect x="${x}" y="${y + headerSize - 8}" width="${nw}" height="8" fill="#F1F5F9" />\n`;
-          svg += `    <text x="${x + 16}" y="${y + headerSize / 2 + 4}" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A">${escapeXml(label)}</text>\n`;
-        } else {
-          svg += `    <rect x="${x}" y="${y}" width="${headerSize}" height="${nh}" rx="8" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-          svg += `    <rect x="${x + headerSize - 8}" y="${y}" width="8" height="${nh}" fill="#F1F5F9" />\n`;
-          svg += `    <text x="${x + headerSize / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="13" font-family="-apple-system, sans-serif" font-weight="600" fill="#0F172A" transform="rotate(-90 ${x + headerSize / 2} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
-        }
-        break;
-      }
-
-      case 'lane': {
-        svg += `    <!-- Lane: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="4 4" />\n`;
-        svg += `    <rect x="${x}" y="${y}" width="36" height="${nh}" fill="#F1F5F9" stroke="${strokeColor}" stroke-width="1" />\n`;
-        svg += `    <text x="${x + 18}" y="${y + nh / 2}" text-anchor="middle" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B" transform="rotate(-90 ${x + 18} ${y + nh / 2})">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'group': {
-        svg += `    <!-- Group: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor || '#F8FAFC'}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
-        if (label) {
-          svg += `    <text x="${x + 12}" y="${y + 20}" font-size="11" font-family="-apple-system, sans-serif" font-weight="600" fill="#64748B">${escapeXml(label)}</text>\n`;
-        }
-        break;
-      }
-
-      case 'start-end': {
-        const radius = nh / 2;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="${radius}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'decision': {
-        const cx = x + nw / 2;
-        const cy = y + nh / 2;
-        const pts = `${cx},${y} ${x + nw},${cy} ${cx},${y + nh} ${x},${cy}`;
-        svg += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'io': {
-        const offset = Math.min(20, nw * 0.15);
-        const pts = `${x + offset},${y} ${x + nw},${y} ${x + nw - offset},${y + nh} ${x},${y + nh}`;
-        svg += `    <polygon points="${pts}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'document': {
-        const d = `M ${x},${y} L ${x + nw},${y} L ${x + nw},${y + nh * 0.92} Q ${x + nw * 0.75},${y + nh * 0.84} ${x + nw * 0.5},${y + nh * 0.98} Q ${x + nw * 0.25},${y + nh * 1.06} ${x},${y + nh * 0.92} Z`;
-        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'database': {
-        const rx = nw / 2;
-        const ry = Math.min(16, nh * 0.15);
-        // 柱身与底部圆弧
-        const d = `M ${x},${y + ry} L ${x},${y + nh - ry} A ${rx},${ry} 0 0 0 ${x + nw},${y + nh - ry} L ${x + nw},${y + ry} Z`;
-        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        // 顶面椭圆
-        svg += `    <ellipse cx="${x + rx}" cy="${y + ry}" rx="${rx}" ry="${ry}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 8}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'subprocess': {
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="4" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <line x1="${x + 12}" y1="${y}" x2="${x + 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-        svg += `    <line x1="${x + nw - 12}" y1="${y}" x2="${x + nw - 12}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'comment': {
-        const fold = 14;
-        const d = `M ${x},${y} L ${x + nw - fold},${y} L ${x + nw},${y + fold} L ${x + nw},${y + nh} L ${x},${y + nh} Z`;
-        svg += `    <path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <polygon points="${x + nw - fold},${y} ${x + nw},${y + fold} ${x + nw - fold},${y + fold}" fill="#E2E8F0" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-
-      case 'uml-lifeline': {
-        const headH = Math.min(36, nh * 0.25);
-        const headW = Math.min(nw - 8, 140);
-        const headX = x + (nw - headW) / 2;
-        const cx = x + nw / 2;
-        svg += `    <!-- UmlLifeline: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${headX}" y="${y}" width="${headW}" height="${headH}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${cx}" y="${y + headH / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        svg += `    <line x1="${cx}" y1="${y + headH}" x2="${cx}" y2="${y + nh}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="5 5" />\n`;
-        break;
-      }
-
-      case 'uml-activation': {
-        svg += `    <!-- UmlActivation: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="3" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        if (label) {
-          svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="10" font-family="-apple-system, sans-serif" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        }
-        break;
-      }
-
-      case 'uml-message': {
-        const cy = y + nh / 2;
-        const kind = (node.data as any)?.messageKind ?? 'sync';
-        const isReturn = kind === 'return';
-        const isOpen = kind !== 'sync';
-        const msgDash = isReturn ? 'stroke-dasharray="5 5"' : '';
-        svg += `    <!-- UmlMessage: ${safeNodeId} -->\n`;
-        svg += `    <line x1="${x}" y1="${cy}" x2="${x + nw - 8}" y2="${cy}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${msgDash} />\n`;
-        if (isOpen) {
-          svg += `    <polyline points="${x + nw - 10},${cy - 4} ${x + nw - 2},${cy} ${x + nw - 10},${cy + 4}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" />\n`;
-        } else {
-          svg += `    <polygon points="${x + nw - 10},${cy - 4} ${x + nw - 2},${cy} ${x + nw - 10},${cy + 4}" fill="${strokeColor}" />\n`;
-        }
-        if (label) {
-          svg += `    <text x="${x + nw / 2}" y="${cy - 6}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        }
-        break;
-      }
-
-      case 'rich-card': {
-        const status = String((node.data as any)?.cardStatus || 'draft').toLowerCase();
-        const statusColor = status === 'done' ? '#059669' : status === 'wip' ? '#2563EB' : '#64748B';
-        const md = String((node.data as any)?.markdown || '');
-        const mdLines = md ? md.split('\n').filter(Boolean) : [];
-        svg += `    <!-- RichCard: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" filter="url(#card-shadow)" />\n`;
-        svg += `    <rect x="${x + 12}" y="${y + 10}" width="42" height="16" rx="8" fill="${statusColor}" />\n`;
-        svg += `    <text x="${x + 33}" y="${y + 22}" text-anchor="middle" font-size="9" font-family="-apple-system, sans-serif" font-weight="700" fill="#FFFFFF">${escapeXml(status.toUpperCase())}</text>\n`;
-        svg += `    <text x="${x + 62}" y="${y + 22}" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        let curY = y + 42;
-        for (const line of mdLines.slice(0, 3)) {
-          svg += `    <text x="${x + 14}" y="${curY}" font-size="11" font-family="-apple-system, sans-serif" fill="#475569">${escapeXml(line)}</text>\n`;
-          curY += 16;
-        }
-        break;
-      }
-
-      case 'arch-microservice':
-      case 'arch-gateway':
-      case 'arch-db-shard':
-      case 'arch-cache':
-      case 'arch-k8s-pod':
-      case 'arch-docker': {
-        const commentTag = node.type === 'arch-microservice' ? 'ArchMicroservice'
-          : node.type === 'arch-gateway' ? 'ArchGateway'
-          : node.type === 'arch-db-shard' ? 'ArchDbShard'
-          : node.type === 'arch-cache' ? 'ArchCache'
-          : node.type === 'arch-k8s-pod' ? 'ArchK8sPod'
-          : 'ArchDocker';
-        const glyphMap: Record<string, string> = {
-          'arch-microservice': '⚙',
-          'arch-gateway': '⇄',
-          'arch-db-shard': '🗄',
-          'arch-cache': '⚡',
-          'arch-k8s-pod': '☸',
-          'arch-docker': '🐳',
-        };
-        const glyph = glyphMap[node.type] || '▣';
-        const env = (node.data as any)?.envTag as string | undefined;
-        const proto = (node.data as any)?.protocol as string | undefined;
-        const health = (node.data as any)?.health as string | undefined;
-        svg += `    <!-- ${commentTag}: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${x + 22}" y="${y + 26}" text-anchor="middle" font-size="16">${glyph}</text>\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="600" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        if (proto) {
-          svg += `    <text x="${x + nw / 2}" y="${y + nh - 10}" text-anchor="middle" font-size="10" font-family="monospace" fill="#64748B">${escapeXml(proto)}</text>\n`;
-        }
-        if (env) {
-          const envBg = env.toLowerCase() === 'prod' ? '#F43F5E' : '#F59E0B';
-          const envW = Math.max(34, env.length * 8 + 10);
-          svg += `    <rect x="${x + nw - envW - 8}" y="${y + 8}" width="${envW}" height="15" rx="7.5" fill="${envBg}" />\n`;
-          svg += `    <text x="${x + nw - envW / 2 - 8}" y="${y + 19}" text-anchor="middle" font-size="9" font-family="-apple-system, sans-serif" font-weight="700" fill="#FFFFFF">${escapeXml(env.toUpperCase())}</text>\n`;
-        }
-        if (health) {
-          const healthDot = health === 'ok' ? '#10B981' : health === 'warn' ? '#F59E0B' : '#EF4444';
-          svg += `    <circle cx="${x + nw - 14}" cy="${y + nh - 14}" r="4" fill="${healthDot}" />\n`;
-        }
-        break;
-      }
-
-      case 'process':
-      default: {
-        svg += `    <!-- Process: ${safeNodeId} -->\n`;
-        svg += `    <rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="8" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}" ${strokeDash} filter="url(#card-shadow)" />\n`;
-        svg += `    <text x="${x + nw / 2}" y="${y + nh / 2 + 4}" text-anchor="middle" font-size="${fontSize}" font-family="-apple-system, sans-serif" font-weight="500" fill="${fontColor}">${escapeXml(label)}</text>\n`;
-        break;
-      }
-    }
+  for (const node of leafNodes) {
+    svg += renderSvgNode(node);
   }
 
   svg += `  </g>\n</svg>`;

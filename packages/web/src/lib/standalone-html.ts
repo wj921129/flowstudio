@@ -211,7 +211,10 @@ export function buildStandaloneHtml(
   const worldNodes = resolveWorldNodes(nodes);
   const graphNodes = JSON.stringify(nodes).replace(/</g, '\\u003c');
   const graphEdges = JSON.stringify(edges).replace(/</g, '\\u003c');
-  const containerNodes = worldNodes.filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group');
+  const containerPriority: Record<string, number> = { pool: 0, lane: 1, group: 2 };
+  const containerNodes = worldNodes
+    .filter((n) => n.type === 'pool' || n.type === 'lane' || n.type === 'group')
+    .sort((a, b) => (containerPriority[a.type] ?? 9) - (containerPriority[b.type] ?? 9));
   const leafNodes = worldNodes.filter((n) => n.type !== 'pool' && n.type !== 'lane' && n.type !== 'group');
   const shapesSvg =
     containerNodes.map((n) => renderNode(n)).join('\n') +
