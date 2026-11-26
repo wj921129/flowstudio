@@ -118,10 +118,29 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const shareDropdownRef = useRef<HTMLDivElement>(null);
   const moreDropdownRef = useRef<HTMLDivElement>(null);
+  const moreCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
   const isEscapingRef = useRef(false);
+
+  const openMoreMenu = useCallback(() => {
+    if (moreCloseTimerRef.current) {
+      clearTimeout(moreCloseTimerRef.current);
+      moreCloseTimerRef.current = null;
+    }
+    setIsMoreOpen(true);
+  }, []);
+
+  const scheduleCloseMoreMenu = useCallback(() => {
+    if (moreCloseTimerRef.current) {
+      clearTimeout(moreCloseTimerRef.current);
+    }
+    moreCloseTimerRef.current = setTimeout(() => {
+      moreCloseTimerRef.current = null;
+      setIsMoreOpen(false);
+    }, 120);
+  }, []);
 
   // 当外部/远端 storeTitle 变化时同步更新编辑缓存
   useEffect(() => {
@@ -329,6 +348,9 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
     return () => {
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
+      }
+      if (moreCloseTimerRef.current) {
+        clearTimeout(moreCloseTimerRef.current);
       }
     };
   }, []);
@@ -609,25 +631,38 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
           onChange={handleImportFile}
         />
 
-        <div className="relative" ref={moreDropdownRef}>
-          <Tooltip label="更多功能" placement="bottom">
-            <button
-              type="button"
-              onClick={() => setIsMoreOpen(!isMoreOpen)}
-              aria-label="更多功能"
-              aria-expanded={isMoreOpen}
-              aria-haspopup="true"
-              className="relative inline-flex items-center justify-center p-1.5 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-              {(spotlightActive || isWatermarkEnabled || mermaidDrawerOpen || isHistoryOpen) && (
-                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-fs-primary" />
-              )}
-            </button>
-          </Tooltip>
+        <div
+          className="relative"
+          ref={moreDropdownRef}
+          onMouseEnter={openMoreMenu}
+          onMouseLeave={scheduleCloseMoreMenu}
+        >
+          {(() => {
+            const moreBtn = (
+              <button
+                type="button"
+                onClick={() => setIsMoreOpen((v) => !v)}
+                aria-label="更多功能"
+                aria-expanded={isMoreOpen}
+                aria-haspopup="true"
+                className="relative inline-flex items-center justify-center p-1.5 text-xs font-medium rounded-lg border border-fs-border bg-fs-surface text-fs-text-muted hover:text-fs-text hover:bg-fs-bg transition-colors cursor-pointer shadow-xs"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+                {(spotlightActive || isWatermarkEnabled || mermaidDrawerOpen || isHistoryOpen) && (
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-fs-primary" />
+                )}
+              </button>
+            );
+            return isMoreOpen ? moreBtn : (
+              <Tooltip label="更多功能" placement="bottom">
+                {moreBtn}
+              </Tooltip>
+            );
+          })()}
 
           {isMoreOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+            <div className="absolute right-0 top-full pt-1.5 z-50">
+              <div className="w-56 rounded-xl border border-fs-border bg-fs-surface shadow-lg py-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
               <button
                 type="button"
                 onClick={() => {
@@ -772,6 +807,7 @@ export const TopBar: React.FC<TopBarProps> = ({ diagramId, className = '' }) => 
               <div className="h-px bg-fs-border my-1" />
               <div className="px-3 py-1.5 text-[11px] text-fs-text-muted select-none">
                 {nodes.length} 节点 · {edges.length} 连线
+              </div>
               </div>
             </div>
           )}

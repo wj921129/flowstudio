@@ -295,6 +295,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   const isLane = data.type === 'lane';
   const isPool = data.type === 'pool';
   const isContainer = isLane || isPool;
+  const isTransparentShell = className.includes('!bg-transparent') || isContainer;
 
   const roleToken = semanticRole === 'neutral' ? null : ROLE_TOKENS[semanticRole];
   const defaultBg = isComment ? 'var(--fs-note-bg)' : isContainer ? undefined : (roleToken?.bg ?? 'var(--fs-node-bg)');
@@ -320,7 +321,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
   return (
     <div
       ref={wrapperRef}
-      className={`group relative flex items-center justify-center select-none w-full h-full transition-shadow duration-150 ${className}`}
+      className={`fs-node-shell ${isTransparentShell ? 'fs-node-svg-shell' : 'fs-node-surface'} group relative flex items-center justify-center select-none w-full h-full transition-shadow duration-150 ${className}`}
       style={mergedStyle}
       onDoubleClick={handleDoubleClick}
       onPointerMove={(e) => {

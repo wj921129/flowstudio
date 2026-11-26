@@ -5,10 +5,16 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Panel, useReactFlow, useStore, MiniMap, type MiniMapNodeProps } from '@xyflow/react';
-import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessagesSquare, X } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Map as MapIcon, MessagesSquare, X, SlidersHorizontal, RotateCcw } from 'lucide-react';
 import { useCommentsStore } from '../comments';
+import { usePresentationStore } from '../presentation';
 import { useFlowStore } from '../../stores/flow-store';
 import { Tooltip } from '../../components/tooltip';
+import {
+  NODE_SPACING_MAX_SCALE,
+  NODE_SPACING_MIN_SCALE,
+  NODE_SPACING_STEP,
+} from './utils/node-spacing';
 import {
   computeCanvasTranslateExtent,
   resolveMiniMapFlowPosition,
@@ -107,8 +113,41 @@ export const CanvasControls: React.FC = () => {
   const miniMapDragCleanupRef = useRef<() => void>(() => {});
   const isReviewDrawerOpen = useCommentsStore((s) => s.isReviewDrawerOpen);
   const setReviewDrawerOpen = useCommentsStore((s) => s.setReviewDrawerOpen);
+  const isReadOnly = usePresentationStore((s) => s.isReadOnly);
+  const hasNodes = useFlowStore((s) => s.nodes.length > 0);
+  const spacingScale = useFlowStore((s) => s.spacingScale);
+  const previewDiagramSpacing = useFlowStore((s) => s.previewDiagramSpacing);
+  const commitDiagramSpacing = useFlowStore((s) => s.commitDiagramSpacing);
+  const resetDiagramSpacing = useFlowStore((s) => s.resetDiagramSpacing);
+  const [spacingOpen, setSpacingOpen] = useState(false);
+  const spacingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spacingDraggingRef = useRef(false);
+  const spacingDragCleanupRef = useRef<() => void>(() => {});
 
-  useEffect(() => () => miniMapDragCleanupRef.current(), []);
+  const openSpacingPopover = useCallback(() => {
+    if (spacingCloseTimerRef.current) {
+      clearTimeout(spacingCloseTimerRef.current);
+      spacingCloseTimerRef.current = null;
+    }
+    setSpacingOpen(true);
+  }, []);
+
+  const scheduleCloseSpacingPopover = useCallback(() => {
+    if (spacingDraggingRef.current) return;
+    if (spacingCloseTimerRef.current) {
+      clearTimeout(spacingCloseTimerRef.current);
+    }
+    spacingCloseTimerRef.current = setTimeout(() => {
+      spacingCloseTimerRef.current = null;
+      if (!spacingDraggingRef.current) setSpacingOpen(false);
+    }, 150);
+  }, []);
+
+  useEffect(() => () => {
+    miniMapDragCleanupRef.current();
+    spacingDragCleanupRef.current();
+    if (spacingCloseTimerRef.current) clearTimeout(spacingCloseTimerRef.current);
+  }, []);
   useEffect(() => {
     if (!showMiniMap) miniMapDragCleanupRef.current();
   }, [showMiniMap]);
@@ -315,6 +354,107 @@ export const CanvasControls: React.FC = () => {
               <MessagesSquare className="w-4 h-4" />
             </button>
           </Tooltip>
+          {!isReadOnly && (
+            <>
+              <div className="w-px h-4 bg-[var(--fs-border)] mx-0.5" />
+              <div
+                className="relative flex items-center"
+                onMouseEnter={() => hasNodes && openSpacingPopover()}
+                onMouseLeave={scheduleCloseSpacingPopover}
+              >
+                {(() => {
+                  const btn = (
+                    <button
+                      type="button"
+                      disabled={!hasNodes}
+                      aria-label="调整元素间距"
+                      aria-expanded={spacingOpen}
+                      onClick={() => {
+                        if (hasNodes) setSpacingOpen((v) => !v);
+                      }}
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                        spacingOpen || spacingScale !== 1
+                          ? 'bg-[var(--fs-primary)]/15 text-[var(--fs-primary)]'
+                          : 'hover:bg-[var(--fs-bg)] text-[var(--fs-text-muted)] hover:text-[var(--fs-text)]'
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                    </button>
+                  );
+                  return spacingOpen ? btn : (
+                    <Tooltip label="调整元素间距" placement="top">
+                      {btn}
+                    </Tooltip>
+                  );
+                })()}
+
+                {spacingOpen && hasNodes && (
+                  <div
+                    className="nodrag nopan absolute bottom-full left-1/2 -translate-x-1/2 pb-2 z-50"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="w-56 p-3 rounded-xl backdrop-blur-md bg-[var(--fs-surface)]/95 border border-[var(--fs-border)] shadow-xl flex flex-col gap-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-[var(--fs-text)]">元素间距</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] tabular-nums text-[var(--fs-primary)] font-semibold">
+                            {Math.round(spacingScale * 100)}%
+                          </span>
+                          <button
+                            type="button"
+                            onClick={resetDiagramSpacing}
+                            disabled={spacingScale === 1}
+                            title="恢复默认间距 (100%)"
+                            aria-label="重置元素间距"
+                            className="p-0.5 rounded text-[var(--fs-text-muted)] hover:text-[var(--fs-primary)] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="range"
+                        aria-label="元素间距比例"
+                        min={NODE_SPACING_MIN_SCALE}
+                        max={NODE_SPACING_MAX_SCALE}
+                        step={NODE_SPACING_STEP}
+                        value={spacingScale}
+                        onPointerDown={() => {
+                          spacingDraggingRef.current = true;
+                          spacingDragCleanupRef.current();
+                          const finish = () => {
+                            spacingDraggingRef.current = false;
+                            commitDiagramSpacing();
+                            window.removeEventListener('pointerup', finish);
+                            window.removeEventListener('pointercancel', finish);
+                            spacingDragCleanupRef.current = () => {};
+                          };
+                          spacingDragCleanupRef.current = () => {
+                            window.removeEventListener('pointerup', finish);
+                            window.removeEventListener('pointercancel', finish);
+                          };
+                          window.addEventListener('pointerup', finish);
+                          window.addEventListener('pointercancel', finish);
+                        }}
+                        onChange={(e) => previewDiagramSpacing(Number(e.target.value))}
+                        onKeyUp={() => commitDiagramSpacing()}
+                        onBlur={() => {
+                          if (!spacingDraggingRef.current) commitDiagramSpacing();
+                        }}
+                        className="w-full accent-[var(--fs-primary)] cursor-pointer h-1.5"
+                      />
+                      <div className="flex items-center justify-between text-[10px] text-[var(--fs-text-muted)] font-mono tabular-nums">
+                        <span>50%</span>
+                        <span>100%</span>
+                        <span>250%</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </Panel>
     </>

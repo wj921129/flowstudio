@@ -8,7 +8,6 @@ import { Panel, useReactFlow } from '@xyflow/react';
 import {
   MousePointer2,
   Hand,
-  ArrowUpRight,
   CornerDownRight,
   StickyNote,
   Undo2,
@@ -41,11 +40,6 @@ const LINE_STYLE_ICONS = Object.fromEntries(
     ),
   ])
 ) as Record<EdgeStrokeStyle, React.FC<{ className?: string }>>;
-
-const EDGE_MODE_OPTIONS = [
-  { value: 'orthogonal' as const, label: '折线连线', icon: CornerDownRight },
-  { value: 'straight' as const, label: '直线连线', icon: ArrowUpRight },
-];
 
 const LINE_STYLE_OPTIONS: HoverMenuOption<EdgeStrokeStyle>[] = EDGE_STROKE_STYLES.map((s) => ({
   value: s,
@@ -153,15 +147,7 @@ export interface FloatingToolbarProps {
 export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = '' }) => {
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
-  const edgeConnectMode = useFlowStore((s) => s.edgeConnectMode);
-  const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
-  const setEdgeConnectMode = useFlowStore((s) => s.setEdgeConnectMode);
-  const displayEdgeMode = isShiftPressed
-    ? edgeConnectMode === 'orthogonal'
-      ? 'straight'
-      : 'orthogonal'
-    : edgeConnectMode;
   const canUndo = useFlowStore((s) => s.canUndo);
   const canRedo = useFlowStore((s) => s.canRedo);
   const undo = useFlowStore((s) => s.undo);
@@ -217,14 +203,6 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
   const handleActivateConnectTool = useCallback(() => {
     setActiveTool('connect');
   }, [setActiveTool]);
-
-  const handleSelectConnectMode = useCallback(
-    (mode: 'orthogonal' | 'straight') => {
-      setEdgeConnectMode(mode);
-      setActiveTool('connect');
-    },
-    [setEdgeConnectMode, setActiveTool]
-  );
 
   const edgeLineStyle = useFlowStore((s) => s.edgeLineStyle);
   const selectedEdgeStyle = useFlowStore((s) =>
@@ -303,15 +281,12 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ className = ''
           active={activeTool === 'pan' || isSpacePanning}
           onClick={() => setActiveTool('pan')}
         />
-        <ToolbarHoverMenu
-          icon={displayEdgeMode === 'straight' ? ArrowUpRight : CornerDownRight}
-          label={displayEdgeMode === 'straight' ? '直线连线' : '折线连线'}
+        <ToolbarButton
+          icon={CornerDownRight}
+          label="正交连线"
           shortcut="C"
           active={activeTool === 'connect' && !isSpacePanning}
-          selectedValue={displayEdgeMode}
-          options={EDGE_MODE_OPTIONS}
-          onButtonClick={handleActivateConnectTool}
-          onSelect={handleSelectConnectMode}
+          onClick={handleActivateConnectTool}
         />
         <ToolbarHoverMenu
           icon={LINE_STYLE_ICONS[displayLineStyle] ?? LINE_STYLE_ICONS.solid}

@@ -5,7 +5,6 @@ import {
   buildWaypointPath,
   deriveDefaultOrthogonalWaypoints,
   findNearestNodeBorderAnchor,
-  moveOrthogonalCorner,
   moveOrthogonalSegment,
   simplifyOrthogonalWaypoints,
 } from '../src/features/canvas/custom-edges/waypoint-path-utils.js';
@@ -66,36 +65,6 @@ describe('waypoint-path-utils: 线段横纵拖动', () => {
       { x: 120, y: 100 },
     ]);
     expect(isOrthogonal([{ x: 0, y: 0 }, ...diag, { x: 200, y: 100 }])).toBe(true);
-  });
-
-  it('moveOrthogonalCorner 拖动内部与近端点拐角均保持正交且绝不挪动起终点锚点', () => {
-    const movedCorner0 = moveOrthogonalCorner(s, t, wps, 0, { x: 120, y: 30 });
-    expect(isOrthogonal([s, ...movedCorner0, t])).toBe(true);
-    expect(movedCorner0[0]).toEqual({ x: 16, y: 0 });
-    expect(movedCorner0).toContainEqual({ x: 120, y: 30 });
-    expect(movedCorner0[movedCorner0.length - 1]).toEqual({ x: 120, y: 100 });
-
-    const movedCorner1 = moveOrthogonalCorner(s, t, wps, 1, { x: 140, y: 75 });
-    expect(isOrthogonal([s, ...movedCorner1, t])).toBe(true);
-    expect(movedCorner1[0]).toEqual({ x: 140, y: 0 });
-    expect(movedCorner1[movedCorner1.length - 1]).toEqual({ x: 184, y: 100 });
-
-    const multiSrc = { x: 0, y: 0 };
-    const multiTgt = { x: 300, y: 200 };
-    const multiWps = [
-      { x: 100, y: 0 },
-      { x: 100, y: 100 },
-      { x: 200, y: 100 },
-      { x: 200, y: 200 },
-    ];
-    const movedMiddle = moveOrthogonalCorner(multiSrc, multiTgt, multiWps, 1, { x: 130, y: 80 });
-    expect(movedMiddle).toEqual([
-      { x: 130, y: 0 },
-      { x: 130, y: 80 },
-      { x: 200, y: 80 },
-      { x: 200, y: 200 },
-    ]);
-    expect(isOrthogonal([multiSrc, ...movedMiddle, multiTgt])).toBe(true);
   });
 
   it('中间横线段只沿 Y 平移并保持原有折点数量与正交性', () => {

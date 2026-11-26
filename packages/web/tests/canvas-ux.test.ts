@@ -384,7 +384,7 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(tokensCss).toContain('.react-flow:not(.fs-cursor-pan):not(.fs-cursor-connect) .react-flow__node.draggable');
   });
 
-  it('底部工具栏连线模式与线型按钮采用悬停向上弹窗选择，移出消失且不再点击循环切换', () => {
+  it('底部工具栏连线模式固定正交且线型按钮采用悬停向上弹窗选择', () => {
     const toolbarCode = fs.readFileSync(
       path.resolve(__dirname, '../src/features/toolbar/floating-toolbar.tsx'),
       'utf-8'
@@ -392,12 +392,12 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(toolbarCode).toContain('onMouseEnter={() => setOpen(true)}');
     expect(toolbarCode).toContain('onMouseLeave={() => setOpen(false)}');
     expect(toolbarCode).toContain('bottom-full left-1/2 -translate-x-1/2 pb-2');
-    expect(toolbarCode).toContain('EDGE_MODE_OPTIONS');
+    expect(toolbarCode).not.toContain('EDGE_MODE_OPTIONS');
     expect(toolbarCode).toContain('LINE_STYLE_OPTIONS');
+    expect(toolbarCode).toContain('label="正交连线"');
     expect(toolbarCode).not.toContain('toggleEdgeConnectMode');
     expect(toolbarCode).not.toContain('handleLineStyleCycle');
     expect(toolbarCode).toMatch(/handleActivateConnectTool[\s\S]*?setActiveTool\('connect'\)/);
-    expect(toolbarCode).not.toMatch(/handleActivateConnectTool[\s\S]*?setEdgeConnectMode\('orthogonal'\)/);
 
     useFlowStore.setState({
       nodes: [
@@ -409,10 +409,11 @@ describe('画布交互体验与视觉改造回归测试', () => {
       edgeLineStyle: 'solid',
     });
     useFlowStore.getState().setEdgeConnectMode('straight');
+    expect(useFlowStore.getState().edgeConnectMode).toBe('orthogonal');
     useFlowStore.getState().setEdgeLineStyle('dashed');
     useFlowStore.getState().onConnect({ source: 'n1', target: 'n2', sourceHandle: null, targetHandle: null });
     const created = useFlowStore.getState().edges[0];
-    expect(created.type).toBe('straight');
+    expect(created.type).toBe('orthogonal');
     expect(created.data?.style?.strokeStyle).toBe('dashed');
   });
 
@@ -750,13 +751,34 @@ describe('画布交互体验与视觉改造回归测试', () => {
     expect(canvasCode).toContain('edgesReconnectable={false}');
     expect(canvasCode).toContain('onNodeMouseEnter={handleNodeMouseEnter}');
     expect(canvasCode).toContain('onNodeMouseLeave={handleNodeMouseLeave}');
+    expect(canvasCode).toContain('FlowDotEdgeIdsContext.Provider');
+    expect(canvasCode).toContain('selectedChainFocus');
+    expect(canvasCode).toContain('opacity: 0.5');
+    expect(canvasCode).not.toContain('zIndex: isEdgeSelected ? 20 : 10');
 
     const edgeCode = fs.readFileSync(
       path.resolve(__dirname, '../src/features/canvas/custom-edges/orthogonal-edge.tsx'),
       'utf-8'
     );
     expect(edgeCode).toContain('<animateMotion');
-    expect(edgeCode).toContain('handleCornerPointerDown');
+    expect(edgeCode).toContain('FlowDotEdgeIdsContext');
+    expect(edgeCode).toContain('isAlignedStraight');
+    expect(edgeCode).not.toContain('handleCornerPointerDown');
+    expect(edgeCode).not.toContain('cornerPoints');
     expect(edgeCode).toContain('draggableSegments');
+
+    const tokensCss = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/theme/tokens.css'),
+      'utf-8'
+    );
+    expect(tokensCss).not.toContain('brightness(0.92)');
+    expect(tokensCss).toMatch(/\.fs-node-hover-dim\s*\{[^}]*opacity:\s*0\.5/);
+
+    const topbarCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/topbar/top-bar.tsx'),
+      'utf-8'
+    );
+    expect(topbarCode).toContain('onMouseEnter={openMoreMenu}');
+    expect(topbarCode).toContain('onMouseLeave={scheduleCloseMoreMenu}');
   });
 });

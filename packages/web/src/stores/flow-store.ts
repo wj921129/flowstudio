@@ -46,6 +46,7 @@ import {
   adjustWaypointsOnNodeMove,
   type EdgeAnchorDirection,
 } from '../features/canvas/custom-edges/waypoint-path-utils';
+import { applyDiagramSpacingScale } from '../features/canvas/utils/node-spacing';
 
 /**
  * 画布操作工具模式枚举
@@ -136,6 +137,7 @@ interface FlowStoreInternalState extends FlowStoreState {
   historyDrawerOpen: boolean;
   copilotOpen: boolean;
   isReconnectingEdge: boolean;
+  spacingScale: number;
   /** 全局浮动轻提示消息 */
   toastMessage: string | null;
 }
@@ -233,6 +235,9 @@ export interface FlowStoreActions {
   setHistoryDrawerOpen: (open: boolean) => void;
   setCopilotOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   setReconnectingEdge: (reconnecting: boolean) => void;
+  previewDiagramSpacing: (scale: number) => void;
+  commitDiagramSpacing: () => void;
+  resetDiagramSpacing: () => void;
   /** 应用 Mermaid 增量融合产生的操作集合 */
   applyMermaidOps: (ops: MermaidBridgeOp[]) => { addedNodes: number; addedEdges: number };
   /** 弹出全局轻提示 Toast */
@@ -260,6 +265,14 @@ let toastTimer: any = null;
  */
 const centeredResizes = new Map<string, { x: number; y: number }>();
 const dirtyMovedEdgeIds = new Set<string>();
+let spacingBaseline: DiagramSnapshot | null = null;
+let spacingCommitPrev: DiagramSnapshot | null = null;
+let committingSpacing = false;
+
+function clearSpacingBaseline() {
+  spacingBaseline = null;
+  spacingCommitPrev = null;
+}
 
 function resolveNodeWorldRectFromMap(
   node: FlowNode,
@@ -487,6 +500,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   historyDrawerOpen: false,
   copilotOpen: false,
   isReconnectingEdge: false,
+  spacingScale: 1,
   toastMessage: null,
 
   onNodesChange: (changes: NodeChange[]) => {
@@ -566,6 +580,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     );
 
     if (!isSelectionOnly && !isMeasureOnly) {
+      clearSpacingBaseline();
       if (hasDragStart) {
         if (!isInteracting) {
           shouldPushHistory = true;
@@ -663,6 +678,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       selectedNodeIds: nextSelectedNodeIds,
       isInteracting: nextInteracting,
+      ...(!isSelectionOnly && !isMeasureOnly ? { spacingScale: 1 } : {}),
       ...(guidesChanged ? { alignmentGuides: nextGuides } : {}),
       ...historyUpdate,
     });
@@ -795,14 +811,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   onConnect: (connection: Connection) => {
     if (!connection.source || !connection.target) return;
 
-    const { nodes, edges, historyPast, edgeConnectMode, edgeLineStyle, isShiftPressed } = get();
-    const effectiveMode = isShiftPressed
-      ? edgeConnectMode === 'orthogonal'
-        ? 'straight'
-        : 'orthogonal'
-      : edgeConnectMode;
+    const { nodes, edges, historyPast, edgeLineStyle } = get();
     const newData = {
-      ...(effectiveMode === 'straight' ? { routingType: 'straight' as const } : {}),
       ...(edgeLineStyle !== 'solid' ? { style: { strokeStyle: edgeLineStyle } } : {}),
     };
 
@@ -812,7 +822,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       target: connection.target,
       sourceHandle: connection.sourceHandle ?? undefined,
       targetHandle: connection.targetHandle ?? undefined,
-      type: effectiveMode,
+      type: 'orthogonal',
       ...(Object.keys(newData).length ? { data: newData } : {}),
       markerEnd: { type: MarkerType.ArrowClosed },
       animated: false,
@@ -1052,11 +1062,13 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       }
     }
 
+    clearSpacingBaseline();
     const newNode = createNodeFromType(type, position, options);
     const nextNodes = [...nodes, newNode];
 
     set({
       nodes: nextNodes,
+      spacingScale: 1,
       ...historyUpdate,
     });
 
@@ -1070,6 +1082,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     const { nodes, edges, historyPast } = get();
     if (newNodes.length === 0) return;
 
+    clearSpacingBaseline();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const newIds = newNodes.map((n) => n.id);
 
@@ -1082,6 +1095,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       nodes: nextNodes,
       selectedNodeIds: newIds,
       selectedEdgeId: null,
+      spacingScale: 1,
       ...historyUpdate,
     });
 
@@ -1126,6 +1140,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       return { ...e, id: finalEdgeId, source, target };
     });
 
+    clearSpacingBaseline();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const newIds = safeNodes.map((n) => n.id);
 
@@ -1140,6 +1155,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       selectedNodeIds: newIds,
       selectedEdgeId: null,
+      spacingScale: 1,
       ...historyUpdate,
     });
 
@@ -1228,6 +1244,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       return;
     }
 
+    clearSpacingBaseline();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
     const nextNodes = nodes.filter((n) => !nodeIdsToDelete.has(n.id));
     const nextEdges = edges.filter((e) => !edgeIdsToDelete.has(e.id));
@@ -1237,6 +1254,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       edges: nextEdges,
       selectedNodeIds: [],
       selectedEdgeId: null,
+      spacingScale: 1,
       ...historyUpdate,
     });
 
@@ -1410,18 +1428,16 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         const nextAnimated =
           data.style?.animated !== undefined ? data.style.animated : e.animated;
         const nextLabel = 'label' in data ? (data.label || undefined) : e.label;
-        const nextType = 'routingType' in data && data.routingType ? data.routingType : e.type;
+        const nextType = 'routingType' in data && data.routingType ? 'orthogonal' : e.type;
         const mergedData: FlowEdgeData = {
           ...e.data,
           ...data,
+          ...( 'routingType' in data && data.routingType ? { routingType: 'orthogonal' as const } : {}),
           style: {
             ...e.data?.style,
             ...data.style,
           },
         };
-        if (nextType === 'straight') {
-          delete mergedData.waypoints;
-        }
         updatedEdge = {
           ...e,
           type: nextType,
@@ -1481,8 +1497,8 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     set({ activeTool: tool, alignmentGuides: [] });
   },
 
-  setEdgeConnectMode: (mode: EdgeConnectMode) => {
-    set({ edgeConnectMode: mode });
+  setEdgeConnectMode: (_mode: EdgeConnectMode) => {
+    set({ edgeConnectMode: 'orthogonal' });
   },
 
   setEdgeLineStyle: (style: EdgeStrokeStyle) => {
@@ -1490,9 +1506,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   toggleEdgeConnectMode: () => {
-    set((s) => ({
-      edgeConnectMode: s.edgeConnectMode === 'orthogonal' ? 'straight' : 'orthogonal',
-    }));
+    set({ edgeConnectMode: 'orthogonal' });
   },
 
   setShiftPressed: (pressed: boolean) => {
@@ -1562,7 +1576,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   },
 
   undo: () => {
+    clearSpacingBaseline();
     if (activeUndoManager) {
+      set({ spacingScale: 1 });
       activeUndoManager.undo();
       return;
     }
@@ -1590,11 +1606,14 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       historyFuture: newFuture,
       canUndo: newPast.length > 0,
       canRedo: true,
+      spacingScale: 1,
     });
   },
 
   redo: () => {
+    clearSpacingBaseline();
     if (activeUndoManager) {
+      set({ spacingScale: 1 });
       activeUndoManager.redo();
       return;
     }
@@ -1622,6 +1641,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       historyFuture: newFuture,
       canUndo: true,
       canRedo: newFuture.length > 0,
+      spacingScale: 1,
     });
   },
 
@@ -1895,8 +1915,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       return { ...node, position: nextPos };
     });
 
+    clearSpacingBaseline();
     const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
-    set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
+    set({ nodes: nextNodes, edges: synced.edges, spacingScale: 1, ...historyUpdate });
     const patches = nextNodes
       .filter((n) => targetIdSet.has(n.id) && !isNodeLocked(n, 'position'))
       .map((n) => ({ id: n.id, patch: { position: n.position } }));
@@ -1943,8 +1964,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         return node;
       });
 
+      clearSpacingBaseline();
       const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
-      set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
+      set({ nodes: nextNodes, edges: synced.edges, spacingScale: 1, ...historyUpdate });
       const patches = nextNodes
         .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
         .map((n) => ({ id: n.id, patch: { position: n.position } }));
@@ -1980,8 +2002,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         return node;
       });
 
+      clearSpacingBaseline();
       const synced = syncEdgesWaypointsOnNodeMove(nodes, nextNodes, edges);
-      set({ nodes: nextNodes, edges: synced.edges, ...historyUpdate });
+      set({ nodes: nextNodes, edges: synced.edges, spacingScale: 1, ...historyUpdate });
       const patches = nextNodes
         .filter((n) => posMap.has(n.id) && !isNodeLocked(n, 'position'))
         .map((n) => ({ id: n.id, patch: { position: n.position } }));
@@ -2082,6 +2105,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         ? syncedEdges.map((e) => (e.selected ? { ...e, selected: false } : e))
         : syncedEdges;
 
+    clearSpacingBaseline();
     const historyUpdate = pushHistorySnapshot(historyPast, nodes, edges);
 
     set({
@@ -2093,6 +2117,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         editingEdgeLabelId && existingEdgeIdSet.has(editingEdgeLabelId) ? editingEdgeLabelId : null,
       selectedEdgeLabelId:
         selectedEdgeLabelId && existingEdgeIdSet.has(selectedEdgeLabelId) ? selectedEdgeLabelId : null,
+      spacingScale: 1,
       ...historyUpdate,
     });
 
@@ -2111,6 +2136,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setDiagram: (nodes: FlowNode[], edges: FlowEdge[]) => {
     dirtyMovedEdgeIds.clear();
+    clearSpacingBaseline();
     const snapshot = cloneSnapshot(nodes, edges);
     const cleanNodes = snapshot.nodes.map((n) => ({
       ...n,
@@ -2133,6 +2159,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canRedo: false,
       isInteracting: false,
       isReconnectingEdge: false,
+      spacingScale: 1,
     });
 
     commitBridgeDelta((bridge) => {
@@ -2162,6 +2189,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   resetDiagramState: () => {
     centeredResizes.clear();
     dirtyMovedEdgeIds.clear();
+    clearSpacingBaseline();
     if (toastTimer) {
       clearTimeout(toastTimer);
       toastTimer = null;
@@ -2181,6 +2209,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       canRedo: false,
       isInteracting: false,
       isReconnectingEdge: false,
+      spacingScale: 1,
       alignmentGuides: [],
       spotlightActive: false,
       spotlightTargetId: null,
@@ -2281,6 +2310,79 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
 
   setReconnectingEdge: (reconnecting: boolean) => {
     set((s) => (s.isReconnectingEdge === reconnecting ? s : { isReconnectingEdge: reconnecting }));
+  },
+
+  previewDiagramSpacing: (scale: number) => {
+    const { nodes, edges } = get();
+    if (!spacingBaseline) {
+      spacingBaseline = cloneSnapshot(nodes, edges);
+      spacingCommitPrev = cloneSnapshot(nodes, edges);
+    }
+    const { nodes: scaledNodes, clampedScale } = applyDiagramSpacingScale(spacingBaseline.nodes, scale);
+    const synced = syncEdgesWaypointsOnNodeMove(spacingBaseline.nodes, scaledNodes, spacingBaseline.edges);
+    set({
+      nodes: scaledNodes,
+      edges: synced.edges,
+      spacingScale: clampedScale,
+    });
+  },
+
+  commitDiagramSpacing: () => {
+    if (!spacingBaseline || !spacingCommitPrev) return;
+    const prevSnapshot = spacingCommitPrev;
+    const { nodes, edges, historyPast } = get();
+    const prevNodeById = new Map(prevSnapshot.nodes.map((n) => [n.id, n]));
+    const prevEdgeById = new Map(prevSnapshot.edges.map((e) => [e.id, e]));
+
+    const nodePatches: Array<{ id: string; patch: Partial<FlowNode> }> = [];
+    for (const n of nodes) {
+      const prev = prevNodeById.get(n.id);
+      if (!prev) continue;
+      const posChanged = prev.position.x !== n.position.x || prev.position.y !== n.position.y;
+      const dimChanged = prev.width !== n.width || prev.height !== n.height;
+      if (posChanged || dimChanged) {
+        nodePatches.push({
+          id: n.id,
+          patch: {
+            position: n.position,
+            ...(dimChanged ? { width: n.width, height: n.height, style: n.style } : {}),
+          },
+        });
+      }
+    }
+
+    const edgePatches: FlowEdge[] = [];
+    for (const e of edges) {
+      const prev = prevEdgeById.get(e.id);
+      if (prev && prev.data !== e.data) {
+        edgePatches.push(e);
+      }
+    }
+
+    if (nodePatches.length === 0 && edgePatches.length === 0) return;
+
+    const historyUpdate = pushHistorySnapshot(historyPast, prevSnapshot.nodes, prevSnapshot.edges);
+    spacingCommitPrev = cloneSnapshot(nodes, edges);
+    set({ ...historyUpdate });
+
+    committingSpacing = true;
+    try {
+      commitBridgeDelta((bridge) => {
+        if (nodePatches.length > 0) bridge.patchNodes(nodePatches);
+        for (const e of edgePatches) bridge.patchEdge(e.id, { data: e.data });
+      }, true);
+    } finally {
+      committingSpacing = false;
+    }
+  },
+
+  resetDiagramSpacing: () => {
+    if (spacingBaseline) {
+      get().previewDiagramSpacing(1);
+      get().commitDiagramSpacing();
+    }
+    clearSpacingBaseline();
+    set({ spacingScale: 1 });
   },
 
   showToast: (message: string, duration = 3000) => {
@@ -2672,6 +2774,12 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         });
       }
 
+      const graphChangedExternally =
+        !committingSpacing && (state.nodes !== prevBridgeNodes || state.edges !== prevBridgeEdges);
+      if (graphChangedExternally) {
+        clearSpacingBaseline();
+      }
+
       prevBridgeNodes = state.nodes;
       prevBridgeEdges = state.edges;
       prevRawNodeById.clear();
@@ -2686,6 +2794,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
         selectedEdgeId: nextSelectedEdgeId,
         editingEdgeLabelId: nextEditingEdgeLabelId,
         selectedEdgeLabelId: nextSelectedEdgeLabelId,
+        ...(graphChangedExternally ? { spacingScale: 1 } : {}),
         ...(state.title !== diagramTitle ? { diagramTitle: state.title } : {}),
         diagramParadigm: state.paradigm,
         diagramOrientation: state.orientation,
@@ -2721,6 +2830,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     }
     centeredResizes.clear();
     dirtyMovedEdgeIds.clear();
+    clearSpacingBaseline();
     activeBridge = null;
     activeUndoManager = null;
   },

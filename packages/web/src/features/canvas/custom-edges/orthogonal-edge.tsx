@@ -16,7 +16,6 @@ import {
   getPointAtPolylineRatio,
   getSegmentAxis,
   inferAnchorDirection,
-  moveOrthogonalCorner,
   moveOrthogonalSegment,
   projectPointOntoPolyline,
   simplifyOrthogonalWaypoints,
@@ -35,6 +34,7 @@ import { InlineTextEditor } from '../custom-nodes/inline-text-editor';
 export const FLOW_DOT_SPEED_PX_PER_SEC = 160;
 export const FLOW_DOT_INTERVAL_SEC = 0.5;
 export const FLOW_DOT_MAX_COUNT = 20;
+export const FlowDotEdgeIdsContext = React.createContext<ReadonlySet<string> | null>(null);
 
 export interface FlowDotAnimationSpec {
   dotCount: number;
@@ -156,13 +156,8 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const selectedEdgeLabelId = useFlowStore((s) => s.selectedEdgeLabelId);
   const setSelectedEdgeLabelId = useFlowStore((s) => s.setSelectedEdgeLabelId);
   const selectedEdgeId = useFlowStore((s) => s.selectedEdgeId);
-  const showFlowDots = useFlowStore(
-    (s) =>
-      !s.spotlightActive &&
-      !s.selectedEdgeId &&
-      s.selectedNodeIds.length > 0 &&
-      (s.selectedNodeIds.includes(source) || s.selectedNodeIds.includes(target))
-  );
+  const flowDotEdgeIds = React.useContext(FlowDotEdgeIdsContext);
+  const showFlowDots = Boolean(flowDotEdgeIds?.has(id));
   const activeTool = useFlowStore((s) => s.activeTool);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const isReadOnly = usePresentationStore((s) => s.isReadOnly);
@@ -260,7 +255,9 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
   const [overlapVer, setOverlapVer] = useState(() => manager.getOverlapVersion());
   useEffect(() => manager.subscribeOverlaps(() => setOverlapVer(manager.getOverlapVersion())), [manager]);
 
-  const isStraight = type === 'straight' || data?.routingType === 'straight';
+  const isAlignedStraight =
+    Math.abs(dockSource.x - dockTarget.x) < 1 || Math.abs(dockSource.y - dockTarget.y) < 1;
+  const isStraight = (type === 'straight' || data?.routingType === 'straight') && isAlignedStraight;
   const effectiveSourceNodeId = isDraggingSourceEnd ? endpointDrag.snapped?.nodeId : source;
   const effectiveTargetNodeId = isDraggingTargetEnd ? endpointDrag.snapped?.nodeId : target;
   const routeManualWaypoints = endpointDrag ? undefined : waypoints;
@@ -429,17 +426,13 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
       const b = polylinePoints[i + 1];
       if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return [];
       const axis = getSegmentAxis(a, b);
+      if (!axis) return [];
       return [{ index: i, a, b, axis }];
     });
   }, [polylinePoints]);
 
-  const cornerPoints = useMemo(() => {
-    if (isStraight || !computedRoute.waypoints || computedRoute.waypoints.length === 0) return [];
-    return computedRoute.waypoints.map((pt, index) => ({ index, x: pt.x, y: pt.y }));
-  }, [isStraight, computedRoute.waypoints]);
-
   const handleSegmentPointerDown = useCallback(
-    (index: number, axis: 'h' | 'v' | null, e: React.PointerEvent<SVGLineElement | HTMLDivElement>) => {
+    (index: number, axis: 'h' | 'v', e: React.PointerEvent<SVGLineElement | HTMLDivElement>) => {
       if (e.button !== 0 || isPanOrLocked) return;
       e.stopPropagation();
       const src = { ...dockSource };
@@ -456,16 +449,7 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
         }
         moved = true;
         const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
-        const dx = cur.x - start.x;
-        const dy = cur.y - start.y;
-        const offset =
-          axis === 'h'
-            ? dy
-            : axis === 'v'
-            ? dx
-            : Math.abs(dockTarget.x - dockSource.x) >= Math.abs(dockTarget.y - dockSource.y)
-            ? dx
-            : dy;
+        const offset = axis === 'h' ? cur.y - start.y : cur.x - start.x;
         const zoom = useFlowStore.getState().viewportZoom || 1;
         const snapThreshold = moveEvent.altKey
           ? 0
@@ -476,53 +460,6 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
             ? [{ x: (src.x + tgt.x) / 2, y: (src.y + tgt.y) / 2 }]
             : latest;
         setDragWaypoints(preview);
-      };
-
-      let detach = () => {};
-      const finish = () => {
-        detach();
-        setDragWaypoints(null);
-        if (!moved) return;
-        const next = simplifyOrthogonalWaypoints(src, tgt, latest);
-        useFlowStore.getState().updateEdgeData(id, { waypoints: next.length ? next : undefined });
-      };
-
-      detach = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', finish);
-      };
-      dragEndRef.current = () => {
-        detach();
-        setDragWaypoints(null);
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', finish);
-    },
-    [isPanOrLocked, dockSource.x, dockSource.y, dockTarget.x, dockTarget.y, computedRoute.waypoints, screenToFlowPosition, id]
-  );
-
-  const handleCornerPointerDown = useCallback(
-    (cornerIndex: number, e: React.PointerEvent<SVGElement>) => {
-      if (e.button !== 0 || isPanOrLocked) return;
-      e.stopPropagation();
-      const src = { ...dockSource };
-      const tgt = { ...dockTarget };
-      const base = (computedRoute.waypoints || []).map((p) => ({ ...p }));
-      const startClient = { x: e.clientX, y: e.clientY };
-      let moved = false;
-      let latest = base;
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        if (!moved && Math.hypot(moveEvent.clientX - startClient.x, moveEvent.clientY - startClient.y) < 3) {
-          return;
-        }
-        moved = true;
-        const cur = screenToFlowPosition({ x: moveEvent.clientX, y: moveEvent.clientY });
-        latest = moveOrthogonalCorner(src, tgt, base, cornerIndex, cur);
-        setDragWaypoints(latest);
       };
 
       let detach = () => {};
@@ -716,31 +653,12 @@ export const OrthogonalEdge: React.FC<EdgeProps<Edge<FlowEdgeData>>> = ({
               strokeWidth={14}
               className="nodrag nopan"
               style={{
-                cursor: seg.axis === 'h' ? 'ns-resize' : seg.axis === 'v' ? 'ew-resize' : 'move',
+                cursor: seg.axis === 'h' ? 'ns-resize' : 'ew-resize',
                 pointerEvents: 'stroke',
               }}
               onPointerDown={(e) => handleSegmentPointerDown(seg.index, seg.axis, e)}
               onDoubleClick={handleResetWaypoints}
             />
-          ))}
-          {cornerPoints.map((pt) => (
-            <g
-              key={`corner-${pt.index}`}
-              className="nodrag nopan"
-              style={{ cursor: 'move', pointerEvents: 'all' }}
-              onPointerDown={(e) => handleCornerPointerDown(pt.index, e)}
-              onDoubleClick={handleResetWaypoints}
-            >
-              <circle cx={pt.x} cy={pt.y} r={8} fill="transparent" />
-              <circle
-                cx={pt.x}
-                cy={pt.y}
-                r={4}
-                fill="var(--fs-surface, #ffffff)"
-                stroke="var(--fs-selection-ring, #2563eb)"
-                strokeWidth={1.8}
-              />
-            </g>
           ))}
         </g>
       )}

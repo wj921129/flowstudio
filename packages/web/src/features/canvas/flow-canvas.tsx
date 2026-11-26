@@ -27,7 +27,7 @@ import {
 import { generateUniqueId, createNodeFromType } from '../../lib/node-utils';
 import { useFlowStore } from '../../stores/flow-store';
 import { nodeTypes } from './custom-nodes';
-import { edgeTypes, EdgeRoutingManager } from './custom-edges';
+import { edgeTypes, EdgeRoutingManager, FlowDotEdgeIdsContext } from './custom-edges';
 import { AlignmentGuides } from './alignment-guides';
 import { ContextualActionBar } from './floating-toolbar/contextual-action-bar';
 import { CanvasControls } from './canvas-controls';
@@ -76,9 +76,6 @@ export const FlowCanvas: React.FC = () => {
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
   const setActiveTool = useFlowStore((s) => s.setActiveTool);
-  const edgeConnectMode = useFlowStore((s) => s.edgeConnectMode);
-  const isShiftPressed = useFlowStore((s) => s.isShiftPressed);
-  const setShiftPressed = useFlowStore((s) => s.setShiftPressed);
   const isSpacePanning = useFlowStore((s) => s.isSpacePanning);
   const setSpacePanning = useFlowStore((s) => s.setSpacePanning);
   const applyIncrementalUpdate = useFlowStore((s) => s.applyIncrementalUpdate);
@@ -173,6 +170,45 @@ export const FlowCanvas: React.FC = () => {
     return { nodeIds, edgeIds };
   }, [activeHoveredNodeId, edges]);
 
+  const selectedChainFocus = useMemo(() => {
+    if (
+      spotlightActive ||
+      effectivePanMode ||
+      isReconnectingEdge ||
+      isConnectingEdge ||
+      selectedEdgeId ||
+      selectedNodeIds.length !== 1
+    ) {
+      return null;
+    }
+    const selectedNode = nodes.find((n) => n.id === selectedNodeIds[0]);
+    if (!selectedNode || CONTAINER_NODE_TYPE_SET.has(selectedNode.type ?? '')) {
+      return null;
+    }
+    const res = computePathSpotlight(nodes, edges, selectedNode.id);
+    return { nodeIds: res.nodeIds, edgeIds: res.edgeIds };
+  }, [
+    spotlightActive,
+    effectivePanMode,
+    isReconnectingEdge,
+    isConnectingEdge,
+    selectedEdgeId,
+    selectedNodeIds,
+    nodes,
+    edges,
+  ]);
+
+  const activeFocus = useMemo(() => {
+    if (spotlightActive) return null;
+    if (
+      hoverFocus &&
+      (selectedNodeIds.length !== 1 || activeHoveredNodeId !== selectedNodeIds[0])
+    ) {
+      return hoverFocus;
+    }
+    return selectedChainFocus;
+  }, [spotlightActive, hoverFocus, selectedNodeIds, activeHoveredNodeId, selectedChainFocus]);
+
   const autoSpotlightTargetId = useMemo(() => {
     if (selectedNodeIds.length === 1 && !selectedEdgeId) return selectedNodeIds[0];
     return null;
@@ -205,11 +241,11 @@ export const FlowCanvas: React.FC = () => {
         hasSpotlightDim,
         spotlightResult,
         isReadOnly,
-        hoverFocusNodeIds: hasSpotlightDim ? null : hoverFocus?.nodeIds ?? null,
+        hoverFocusNodeIds: hasSpotlightDim ? null : activeFocus?.nodeIds ?? null,
       },
       displayNodeCacheRef.current
     );
-  }, [nodes, spotlightActive, spotlightResult, isReadOnly, hoverFocus]);
+  }, [nodes, spotlightActive, spotlightResult, isReadOnly, activeFocus]);
 
   const displayEdges = useMemo(() => {
     const tintMarker = (marker: FlowEdge['markerEnd'], color: string, fallbackType?: MarkerType) => {
@@ -221,7 +257,7 @@ export const FlowCanvas: React.FC = () => {
     const selectionRing = 'var(--fs-selection-ring, #2563eb)';
     const focusStroke = 'var(--fs-edge-focus-stroke, #475569)';
     const hasSelected = Boolean(selectedEdgeId) || edges.some((e) => e.selected);
-    if (!spotlightResult && !hoveredEdgeForInsert && !hasSelected && !hoverFocus) return edges;
+    if (!spotlightResult && !hoveredEdgeForInsert && !hasSelected && !activeFocus) return edges;
     const edgeIds = spotlightResult?.edgeIds;
 
     return edges.map((edge) => {
@@ -273,8 +309,8 @@ export const FlowCanvas: React.FC = () => {
         };
       }
 
-      if (hoverFocus) {
-        const isFocusEdge = hoverFocus.edgeIds.has(edge.id);
+      if (activeFocus) {
+        const isFocusEdge = activeFocus.edgeIds.has(edge.id);
         const baseW = typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.5;
         if (isFocusEdge) {
           const hasCustomColor = Boolean(edge.data?.style?.strokeColor || edge.style?.stroke);
@@ -285,7 +321,6 @@ export const FlowCanvas: React.FC = () => {
             : focusStroke;
           return {
             ...edge,
-            zIndex: isEdgeSelected ? 20 : 10,
             ...(selectedPatch || (!hasCustomColor
               ? {
                   markerEnd: tintMarker(edge.markerEnd, focusStroke, MarkerType.ArrowClosed),
@@ -307,7 +342,7 @@ export const FlowCanvas: React.FC = () => {
           style: {
             ...edge.style,
             ...(isEdgeSelected ? { stroke: selectionRing, strokeWidth: Math.max(baseW, 2) } : {}),
-            opacity: 0.8,
+            opacity: 0.5,
             transition: 'opacity 0.16s ease, stroke-width 0.16s ease',
           },
         };
@@ -327,7 +362,7 @@ export const FlowCanvas: React.FC = () => {
 
       return edge;
     });
-  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert, selectedEdgeId, hoverFocus]);
+  }, [edges, spotlightResult, spotlightActive, hoveredEdgeForInsert, selectedEdgeId, activeFocus]);
 
   const lastCursorBroadcastRef = useRef(0);
 
@@ -793,12 +828,9 @@ export const FlowCanvas: React.FC = () => {
     canvasContainerRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // 画布聚焦中按住空格临时切换为平移交互，按住 Shift 临时切换连线类型，松开恢复原状态
+  // 画布聚焦中按住空格临时切换为平移交互，松开恢复原状态
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') {
-        setShiftPressed(true);
-      }
       if (e.code !== 'Space' || isPresenting) return;
       const target = e.target as HTMLElement | null;
       const isInput =
@@ -816,9 +848,6 @@ export const FlowCanvas: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') {
-        setShiftPressed(false);
-      }
       if (e.code === 'Space') {
         setSpacePanning(false);
       }
@@ -826,7 +855,6 @@ export const FlowCanvas: React.FC = () => {
 
     const handleWindowBlur = () => {
       setSpacePanning(false);
-      setShiftPressed(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -837,9 +865,8 @@ export const FlowCanvas: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
       setSpacePanning(false);
-      setShiftPressed(false);
     };
-  }, [isPresenting, setSpacePanning, setShiftPressed]);
+  }, [isPresenting, setSpacePanning]);
 
   // 绑定全局高频快捷键 (Ctrl+G, Ctrl+Shift+G, Delete, Ctrl+Z, Ctrl+Shift+Z)
   useEffect(() => {
@@ -1122,11 +1149,6 @@ export const FlowCanvas: React.FC = () => {
   }, [isReadOnly]);
 
   const translateExtent = useMemo(() => computeCanvasTranslateExtent(nodes), [nodes]);
-  const effectiveConnectMode = isShiftPressed
-    ? edgeConnectMode === 'orthogonal'
-      ? 'straight'
-      : 'orthogonal'
-    : edgeConnectMode;
 
   // 根据当前激活的工具模式配置画布专属光标
   const cursorClass =
@@ -1222,6 +1244,7 @@ export const FlowCanvas: React.FC = () => {
         </div>
       )}
 
+      <FlowDotEdgeIdsContext.Provider value={spotlightActive ? null : activeFocus?.edgeIds ?? null}>
       <ReactFlow
         nodes={displayNodes}
         edges={displayEdges}
@@ -1261,11 +1284,7 @@ export const FlowCanvas: React.FC = () => {
         selectionMode={SelectionMode.Partial}
         selectionOnDrag={!isSpacePanning && !isReadOnly && activeTool === 'select'}
         connectionMode={ConnectionMode.Loose}
-        connectionLineType={
-          effectiveConnectMode === 'straight'
-            ? ConnectionLineType.Straight
-            : ConnectionLineType.SmoothStep
-        }
+        connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{
           stroke: 'var(--fs-selection-ring, #2563eb)',
           strokeWidth: 2,
@@ -1333,6 +1352,7 @@ export const FlowCanvas: React.FC = () => {
         {/* 评审模式右侧顺序跳转抽屉 */}
         {!isPresenting && <ReviewDrawer />}
       </ReactFlow>
+      </FlowDotEdgeIdsContext.Provider>
 
       {/* 历史版本 Visual Diff 差异清单侧边栏 */}
       {!isPresenting && <SnapshotDiffSidebar />}

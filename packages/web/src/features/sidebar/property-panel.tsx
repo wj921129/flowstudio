@@ -645,29 +645,6 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ className = '' }) 
                 </select>
               </div>
 
-              <div>
-                <label className="text-[11px] font-medium text-[var(--fs-text-muted)] block mb-1">
-                  连线路由
-                </label>
-                <select
-                  value={
-                    selectedEdge.data?.routingType ??
-                    (selectedEdge.type === 'straight' ? 'straight' : 'orthogonal')
-                  }
-                  onChange={(e) => {
-                    const nextRouting = e.target.value as 'orthogonal' | 'straight';
-                    updateEdgeData(selectedEdge.id, {
-                      routingType: nextRouting,
-                      ...(nextRouting === 'straight' ? { waypoints: undefined } : {}),
-                    });
-                  }}
-                  className="w-full text-xs px-2 py-1.5 rounded-lg bg-[var(--fs-bg)] border border-[var(--fs-border)] text-[var(--fs-text)] outline-none focus:border-[var(--fs-primary)] cursor-pointer"
-                >
-                  <option value="orthogonal">折线路由 (orthogonal)</option>
-                  <option value="straight">纯直线路由 (straight)</option>
-                </select>
-              </div>
-
               {/* 线条样式 */}
               <div>
                 <label className="text-[11px] font-medium text-[var(--fs-text-muted)] block mb-1">
