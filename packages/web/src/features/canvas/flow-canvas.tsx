@@ -173,7 +173,6 @@ export const FlowCanvas: React.FC = () => {
   const selectedChainFocus = useMemo(() => {
     if (
       spotlightActive ||
-      effectivePanMode ||
       isReconnectingEdge ||
       isConnectingEdge ||
       selectedEdgeId ||
@@ -189,7 +188,6 @@ export const FlowCanvas: React.FC = () => {
     return { nodeIds: res.nodeIds, edgeIds: res.edgeIds };
   }, [
     spotlightActive,
-    effectivePanMode,
     isReconnectingEdge,
     isConnectingEdge,
     selectedEdgeId,
@@ -664,6 +662,8 @@ export const FlowCanvas: React.FC = () => {
 
   const handleSelectionChange = useCallback(
     ({ nodes: selectedNodes, edges: selectedEdges }: { nodes: FlowNode[]; edges: FlowEdge[] }) => {
+      const { isSpacePanning: spacePanningNow, activeTool: activeToolNow } = useFlowStore.getState();
+      if (spacePanningNow || activeToolNow === 'pan') return;
       const nodeIds = selectedNodes.map((n) => n.id);
       setSelectedNodes(nodeIds);
       if (selectedEdges.length > 0) {
@@ -803,6 +803,7 @@ export const FlowCanvas: React.FC = () => {
    * 画布空白区域点击事件处理器：清空所有节点与连线选中态及连线源状态
    */
   const handlePaneClick = useCallback(() => {
+    if (isSpacePanning || activeTool === 'pan') return;
     setSelectedNodes([]);
     setSelectedEdge(null);
     useFlowStore.getState().setSelectedEdgeLabelId(null);
@@ -812,7 +813,7 @@ export const FlowCanvas: React.FC = () => {
       toggleSpotlightMode(false);
       setSpotlightTarget(null);
     }
-  }, [setSelectedNodes, setSelectedEdge, spotlightTargetId, toggleSpotlightMode, setSpotlightTarget]);
+  }, [isSpacePanning, activeTool, setSelectedNodes, setSelectedEdge, spotlightTargetId, toggleSpotlightMode, setSpotlightTarget]);
 
   const handleCanvasPointerDownCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null;

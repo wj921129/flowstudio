@@ -109,9 +109,9 @@ export const RichCardNode: React.FC<NodeProps<Node<FlowNodeData>>> = (props) => 
   const hue = OWNER_HUES[owner.length % OWNER_HUES.length] ?? 212;
 
   return (
-    <BaseNodeWrapper {...props} customContent className="!rounded-xl overflow-hidden">
+    <BaseNodeWrapper {...props} customContent className="!rounded-xl">
       <div
-        className="w-full h-full flex flex-col min-h-0"
+        className="w-full h-full flex flex-col min-h-0 rounded-[inherit] overflow-hidden"
         onDoubleClick={(e) => {
           const { activeTool, isSpacePanning } = useFlowStore.getState();
           const { isReadOnly } = usePresentationStore.getState();

@@ -40,6 +40,22 @@ const POSITION_MAP: Record<HandlePosition, Position> = {
   left: Position.Left,
 };
 
+export function isInResizeCornerZone(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; right: number; bottom: number; width: number; height: number },
+  maxRadiusPx = 16
+): boolean {
+  const radius = Math.min(maxRadiusPx, Math.min(rect.width, rect.height) * 0.25);
+  if (radius <= 0) return false;
+  return (
+    Math.hypot(clientX - rect.left, clientY - rect.top) <= radius ||
+    Math.hypot(clientX - rect.right, clientY - rect.top) <= radius ||
+    Math.hypot(clientX - rect.left, clientY - rect.bottom) <= radius ||
+    Math.hypot(clientX - rect.right, clientY - rect.bottom) <= radius
+  );
+}
+
 function buildHandleAnchorStyle(
   side: BorderSide,
   offset: number,
@@ -223,6 +239,10 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
       }
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
+      if (showResize && !isLocked && !isConnecting && isInResizeCornerZone(clientX, clientY, rect)) {
+        setHoverAnchor(null);
+        return;
+      }
 
       const margin = 16;
       if (
@@ -258,7 +278,7 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         prev && prev.id === hid ? prev : { id: hid, side: proj.side, offset: proj.offset }
       );
     },
-    [baseHandles.length, isPanOrLocked, data.type]
+    [baseHandles.length, isPanOrLocked, data.type, showResize, isLocked, isConnecting]
   );
 
   useEffect(() => {
@@ -360,10 +380,13 @@ export const BaseNodeWrapper: React.FC<BaseNodeWrapperProps> = ({
         <NodeResizer
           minWidth={40}
           minHeight={30}
-          onResizeStart={() => useFlowStore.getState().startCenteredResize(id)}
+          onResizeStart={() => {
+            setHoverAnchor(null);
+            useFlowStore.getState().startCenteredResize(id);
+          }}
           onResizeEnd={() => useFlowStore.getState().finishCenteredResize(id)}
           lineClassName="border-[var(--fs-selection-ring)]/80"
-          handleClassName="h-2 w-2 bg-white border border-[var(--fs-selection-ring)] rounded-sm"
+          handleClassName="!z-40 h-2 w-2 bg-white border border-[var(--fs-selection-ring)] rounded-sm before:absolute before:-inset-1.5 before:content-['']"
         />
       )}
 

@@ -514,7 +514,11 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       alignmentGuides,
       viewportZoom,
       alignmentSnapEnabled,
+      isSpacePanning,
+      activeTool,
     } = get();
+
+    const isPanSelectionLocked = isSpacePanning || activeTool === 'pan';
 
     // 锚定锁守卫：过滤掉被锁定节点自身以及包含锁定子节点的容器的 position 变更 (B3)
     const lockedNodeIds = new Set(nodes.filter((n) => isNodeLocked(n, 'position')).map((n) => n.id));
@@ -531,6 +535,9 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
     }
 
     const safeChanges = changes.filter((c) => {
+      if (isPanSelectionLocked && c.type === 'select') {
+        return false;
+      }
       if (c.type === 'position' || c.type === 'dimensions') {
         if (lockedNodeIds.has(c.id) || lockedContainers.has(c.id)) {
           return false;
@@ -766,16 +773,22 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
   onEdgesChange: (changes: EdgeChange[]) => {
     if (changes.length === 0) return;
 
-    const { nodes, edges, historyPast } = get();
+    const { nodes, edges, historyPast, isSpacePanning, activeTool } = get();
+    const isPanSelectionLocked = isSpacePanning || activeTool === 'pan';
+    const safeChanges = isPanSelectionLocked
+      ? changes.filter((c) => c.type !== 'select')
+      : changes;
+    if (safeChanges.length === 0) return;
+
     const isSelectionOnly =
-      changes.length > 0 && changes.every((c) => c.type === 'select');
+      safeChanges.length > 0 && safeChanges.every((c) => c.type === 'select');
     const shouldPushHistory = !isSelectionOnly;
 
     const historyUpdate = shouldPushHistory
       ? pushHistorySnapshot(historyPast, nodes, edges)
       : {};
 
-    const nextEdges = applyEdgeChanges(changes as any, edges) as FlowEdge[];
+    const nextEdges = applyEdgeChanges(safeChanges as any, edges) as FlowEdge[];
     const selectedEdge = nextEdges.find((e) => e.selected);
 
     set({
@@ -788,7 +801,7 @@ export const useFlowStore = create<FlowStore>((set, get) => ({
       const nextEdgeMap = new Map(nextEdges.map((e) => [e.id, e]));
       const removedIds: string[] = [];
       const addedOrReplaced: FlowEdge[] = [];
-      for (const change of changes) {
+      for (const change of safeChanges) {
         if (change.type === 'remove') {
           removedIds.push(change.id);
         } else if (change.type === 'add') {

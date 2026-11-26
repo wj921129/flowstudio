@@ -19,7 +19,10 @@ import {
   computeCanvasTranslateExtent,
   resolveMiniMapFlowPosition,
 } from '../src/features/canvas/utils/canvas-bounds';
-import { resolveNodeSemanticRole } from '../src/features/canvas/custom-nodes/base-node-wrapper';
+import {
+  resolveNodeSemanticRole,
+  isInResizeCornerZone,
+} from '../src/features/canvas/custom-nodes/base-node-wrapper';
 import {
   getPointAtPolylineRatio,
   projectPointOntoPolyline,
@@ -780,5 +783,83 @@ describe('画布交互体验与视觉改造回归测试', () => {
     );
     expect(topbarCode).toContain('onMouseEnter={openMoreMenu}');
     expect(topbarCode).toContain('onMouseLeave={scheduleCloseMoreMenu}');
+  });
+
+  it('节点边角缩放手柄压过边框连线点且避让四角热区，卡片不裁切缩放手柄', () => {
+    const rect160 = { left: 0, top: 0, right: 160, bottom: 80, width: 160, height: 80 };
+    expect(isInResizeCornerZone(0, 0, rect160)).toBe(true);
+    expect(isInResizeCornerZone(160, 0, rect160)).toBe(true);
+    expect(isInResizeCornerZone(0, 80, rect160)).toBe(true);
+    expect(isInResizeCornerZone(160, 80, rect160)).toBe(true);
+    expect(isInResizeCornerZone(10, 10, rect160)).toBe(true);
+    expect(isInResizeCornerZone(40, 0, rect160)).toBe(false);
+    expect(isInResizeCornerZone(0, 20, rect160)).toBe(false);
+    expect(isInResizeCornerZone(80, 0, rect160)).toBe(false);
+
+    const rectSmall = { left: 0, top: 0, right: 40, bottom: 30, width: 40, height: 30 };
+    expect(isInResizeCornerZone(0, 0, rectSmall)).toBe(true);
+    expect(isInResizeCornerZone(20, 0, rectSmall)).toBe(false);
+    expect(isInResizeCornerZone(0, 15, rectSmall)).toBe(false);
+
+    const wrapperCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/base-node-wrapper.tsx'),
+      'utf-8'
+    );
+    expect(wrapperCode).toContain('!z-40');
+    expect(wrapperCode).toContain('isInResizeCornerZone');
+    expect(wrapperCode).toContain('setHoverAnchor(null)');
+
+    const richCardCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/custom-nodes/rich-card-node.tsx'),
+      'utf-8'
+    );
+    expect(richCardCode).toContain('<BaseNodeWrapper {...props} customContent className="!rounded-xl">');
+    expect(richCardCode).toContain('rounded-[inherit] overflow-hidden');
+  });
+
+  it('选中元素后按住空格平移或手型工具态保留流程走势高亮且不丢失选中态', () => {
+    const canvasCode = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/canvas/flow-canvas.tsx'),
+      'utf-8'
+    );
+    const chainFocusMatch = canvasCode.match(/const selectedChainFocus = useMemo\([\s\S]*?\n  \}/);
+    expect(chainFocusMatch).toBeTruthy();
+    expect(chainFocusMatch![0]).not.toContain('effectivePanMode');
+    expect(canvasCode).toMatch(/handlePaneClick = useCallback\(\(\) => \{\s*if \(isSpacePanning \|\| activeTool === 'pan'\) return;/);
+
+    useFlowStore.setState({
+      nodes: [
+        { id: 'n1', type: 'process', position: { x: 0, y: 0 }, selected: true, data: { label: 'A', type: 'process' } },
+        { id: 'n2', type: 'process', position: { x: 240, y: 0 }, data: { label: 'B', type: 'process' } },
+      ],
+      edges: [
+        { id: 'e1', source: 'n1', target: 'n2', selected: true },
+      ],
+      selectedNodeIds: ['n1'],
+      selectedEdgeId: 'e1',
+      activeTool: 'select',
+      isSpacePanning: true,
+    });
+
+    useFlowStore.getState().onNodesChange([{ id: 'n1', type: 'select', selected: false }]);
+    useFlowStore.getState().onEdgesChange([{ id: 'e1', type: 'select', selected: false }]);
+    expect(useFlowStore.getState().selectedNodeIds).toEqual(['n1']);
+    expect(useFlowStore.getState().nodes[0].selected).toBe(true);
+    expect(useFlowStore.getState().selectedEdgeId).toBe('e1');
+    expect(useFlowStore.getState().edges[0].selected).toBe(true);
+
+    useFlowStore.setState({ isSpacePanning: false, activeTool: 'pan' });
+    useFlowStore.getState().onNodesChange([{ id: 'n1', type: 'select', selected: false }]);
+    useFlowStore.getState().onEdgesChange([{ id: 'e1', type: 'select', selected: false }]);
+    expect(useFlowStore.getState().selectedNodeIds).toEqual(['n1']);
+    expect(useFlowStore.getState().selectedEdgeId).toBe('e1');
+
+    useFlowStore.setState({ activeTool: 'select', isSpacePanning: false });
+    useFlowStore.getState().onNodesChange([{ id: 'n1', type: 'select', selected: false }]);
+    useFlowStore.getState().onEdgesChange([{ id: 'e1', type: 'select', selected: false }]);
+    expect(useFlowStore.getState().selectedNodeIds).toEqual([]);
+    expect(useFlowStore.getState().nodes[0].selected).toBe(false);
+    expect(useFlowStore.getState().selectedEdgeId).toBeNull();
+    expect(useFlowStore.getState().edges[0].selected).toBe(false);
   });
 });
