@@ -114,7 +114,7 @@ export const DiagramCard: React.FC<DiagramCardProps> = ({
       }}
     >
       <div
-        className="w-full h-36 rounded-t-xl flex items-center justify-center p-3 relative overflow-hidden border-b transition-colors"
+        className="w-full aspect-[16/10] rounded-t-xl flex items-center justify-center p-3 relative overflow-hidden border-b transition-colors"
         style={{
           backgroundColor: 'var(--fs-bg)',
           borderColor: 'var(--fs-border)',
@@ -122,7 +122,7 @@ export const DiagramCard: React.FC<DiagramCardProps> = ({
       >
         {safeThumbnail ? (
           <div
-            className="w-full h-full flex items-center justify-center [&>svg]:max-w-full [&>svg]:max-h-full dark:opacity-75 dark:saturate-50"
+            className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:max-w-full [&>svg]:max-h-full dark:opacity-90"
             dangerouslySetInnerHTML={{ __html: safeThumbnail }}
           />
         ) : (

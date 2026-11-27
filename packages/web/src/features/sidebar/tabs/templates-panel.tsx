@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { renderSpec } from '@flowstudio/shared';
 import {
   ChevronDown,
   ChevronRight,
@@ -15,7 +14,7 @@ import {
   type DiagramTemplate,
   type TemplateCategory,
 } from '../templates';
-import { generateMiniSvgThumbnail } from '../../../lib/api-client';
+import { getTemplateMiniThumbnail } from '../../../lib/mini-thumbnail.js';
 
 export interface TemplatesPanelProps {
   onApplyTemplate?: (template: DiagramTemplate) => void;
@@ -83,14 +82,10 @@ export const TemplatesPanel: React.FC<TemplatesPanelProps> = ({ onApplyTemplate 
                 onClick={() => onApplyTemplate?.(tmpl)}
                 className="group relative flex flex-col p-2.5 rounded-lg border border-fs-border/80 bg-fs-surface hover:bg-fs-bg/80 hover:border-fs-primary/70 hover:shadow-xs transition-all cursor-pointer active:cursor-grabbing"
               >
-                {/* 模板结构缩略图 */}
                 <div
-                  className="mb-2 h-24 w-full shrink-0 overflow-hidden rounded border border-fs-border/60 bg-fs-bg"
+                  className="mb-2 h-24 w-full shrink-0 overflow-hidden rounded border border-fs-border/60 bg-fs-bg [&>svg]:w-full [&>svg]:h-full dark:opacity-90"
                   dangerouslySetInnerHTML={{
-                    __html: generateMiniSvgThumbnail(
-                      renderSpec(tmpl.spec).nodes,
-                      renderSpec(tmpl.spec).edges
-                    ),
+                    __html: getTemplateMiniThumbnail(tmpl),
                   }}
                 />
 

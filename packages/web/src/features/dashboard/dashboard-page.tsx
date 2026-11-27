@@ -3,6 +3,7 @@ import type { DiagramSummary, UserIdentity } from '@flowstudio/shared';
 import { Plus, Search, Sun, Moon, X, AlertTriangle, FolderKanban, Clock, LayoutTemplate, ArrowRight, Sparkles } from 'lucide-react';
 import { apiClient } from '../../lib/api-client.js';
 import { DiagramCard } from './diagram-card.js';
+import { TemplateCard } from './template-card.js';
 import { CreateDiagramModal } from './create-diagram-modal.js';
 import { getOrCreateUserIdentity, saveUserNickname } from '../collaboration/user-identity.js';
 import { NicknameModal } from '../collaboration/nickname-modal.js';
@@ -10,6 +11,8 @@ import { BrandLogo } from '../../components/brand-logo.js';
 import { TEMPLATES_REGISTRY, type DiagramTemplate, type TemplateCategory } from '../sidebar/templates/index.js';
 
 type DashboardView = 'all' | 'recent' | 'templates';
+
+const TEMPLATE_CATEGORY_ORDER: readonly TemplateCategory[] = ['flowchart', 'swimlane', 'topology', 'org-chart'];
 
 const TEMPLATE_CATEGORY_LABELS: Record<'all' | TemplateCategory, string> = {
   all: '全部',
@@ -127,6 +130,27 @@ export const DashboardPage: React.FC = () => {
 
   const visibleDiagrams = activeView === 'recent' ? recentDiagrams : diagrams;
 
+  const featuredTemplates = useMemo(() => {
+    const buckets = TEMPLATE_CATEGORY_ORDER.map((cat) =>
+      TEMPLATES_REGISTRY.filter((tpl) => tpl.category === cat)
+    );
+    const picked: DiagramTemplate[] = [];
+    const seen = new Set<string>();
+    let round = 0;
+    while (picked.length < 6 && buckets.some((b) => round < b.length)) {
+      for (const bucket of buckets) {
+        const tpl = bucket[round];
+        if (tpl && !seen.has(tpl.id)) {
+          seen.add(tpl.id);
+          picked.push(tpl);
+          if (picked.length >= 6) break;
+        }
+      }
+      round += 1;
+    }
+    return picked;
+  }, []);
+
   const filteredTemplates = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return TEMPLATES_REGISTRY.filter((tpl) => {
@@ -145,92 +169,103 @@ export const DashboardPage: React.FC = () => {
       }}
     >
       <header
-        className="h-16 px-3 sm:px-6 border-b flex items-center justify-between gap-2 sm:gap-4 sticky top-0 z-20 backdrop-blur-md"
+        className="h-16 border-b flex items-center sticky top-0 z-20 backdrop-blur-md"
         style={{
           backgroundColor: 'var(--fs-surface)',
           borderColor: 'var(--fs-border)',
         }}
       >
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-md bg-fs-primary">
+        <div
+          className="md:w-56 xl:w-60 md:border-r md:px-5 px-3 shrink-0 h-full flex items-center gap-2.5"
+          style={{ borderColor: 'var(--fs-border)' }}
+        >
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-md bg-fs-primary shrink-0">
             <BrandLogo className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <h1 className="text-sm sm:text-base font-bold tracking-tight">FlowStudio</h1>
-            <p className="hidden sm:block text-[11px] -mt-0.5 text-[var(--fs-text-muted)] font-medium">
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight truncate">FlowStudio</h1>
+            <p className="hidden sm:block text-[11px] -mt-0.5 text-[var(--fs-text-muted)] font-medium truncate">
               局域网协同流程图
             </p>
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 max-w-xs sm:max-w-md relative mx-1 sm:mx-0">
-          <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 text-[var(--fs-text-muted)]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索流程图标题..."
-            className="w-full pl-8 sm:pl-9 pr-7 sm:pr-8 py-1 sm:py-1.5 rounded-lg border text-xs sm:text-sm outline-none transition-all focus:ring-2 focus:ring-fs-primary/20"
-            style={{
-              backgroundColor: 'var(--fs-bg)',
-              borderColor: 'var(--fs-border)',
-              color: 'var(--fs-text)',
-            }}
-          />
-          {searchQuery && (
+        <div className="flex-1 min-w-0 h-full px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0 max-w-xl relative">
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 text-[var(--fs-text-muted)]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索流程图或模板..."
+              className="w-full pl-8 sm:pl-9 pr-7 sm:pr-8 py-1.5 rounded-lg border text-xs sm:text-sm outline-none transition-all focus:ring-2 focus:ring-fs-primary/20"
+              style={{
+                backgroundColor: 'var(--fs-bg)',
+                borderColor: 'var(--fs-border)',
+                color: 'var(--fs-text)',
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[var(--fs-text-muted)] cursor-pointer"
+                title="清除搜索"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             <button
               type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[var(--fs-text-muted)] cursor-pointer"
-              title="清除搜索"
+              onClick={toggleTheme}
+              title={theme === 'light' ? '切换暗色' : '切换亮色'}
+              className="p-1.5 sm:p-2 rounded-lg border text-[var(--fs-text-muted)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+              style={{ borderColor: 'var(--fs-border)' }}
             >
-              <X className="w-3.5 h-3.5" />
+              {theme === 'light' ? <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
             </button>
-          )}
-        </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            title={theme === 'light' ? '切换暗色' : '切换亮色'}
-            className="p-1.5 sm:p-2 rounded-lg border text-[var(--fs-text-muted)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-            style={{ borderColor: 'var(--fs-border)' }}
-          >
-            {theme === 'light' ? <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setNicknameModalOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 sm:px-2.5 sm:py-1 rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
-            style={{ borderColor: 'var(--fs-border)' }}
-            title="点击修改昵称"
-          >
-            <div
-              className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-xs shrink-0"
-              style={{ backgroundColor: currentUser.color }}
+            <button
+              type="button"
+              onClick={() => setNicknameModalOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-1 sm:px-2.5 sm:py-1 rounded-lg border transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+              style={{ borderColor: 'var(--fs-border)' }}
+              title="点击修改昵称"
             >
-              {currentUser.nickname.slice(0, 1)}
-            </div>
-            <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate text-[var(--fs-text)]">
-              {currentUser.nickname}
-            </span>
-          </button>
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-xs shrink-0"
+                style={{ backgroundColor: currentUser.color }}
+              >
+                {currentUser.nickname.slice(0, 1)}
+              </div>
+              <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate text-[var(--fs-text)]">
+                {currentUser.nickname}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setCreateModalOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium text-white shadow-sm transition-transform active:scale-95 cursor-pointer bg-fs-primary hover:opacity-90"
-          >
-            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span className="hidden sm:inline">新建流程图</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setCreateModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium text-white shadow-sm transition-transform active:scale-95 cursor-pointer bg-fs-primary hover:opacity-90"
+            >
+              <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">新建流程图</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 md:px-8 py-5 flex flex-col md:flex-row gap-6">
-        <aside className="md:w-52 shrink-0 flex md:flex-col gap-1 overflow-x-auto md:overflow-visible pb-1 md:pb-0">
+      <div className="flex-1 w-full flex flex-col md:flex-row">
+        <aside
+          className="md:w-56 xl:w-60 shrink-0 border-b md:border-b-0 md:border-r md:sticky md:top-16 md:h-[calc(100vh-4rem)] md:overflow-y-auto px-3 py-2.5 md:p-4 flex md:flex-col gap-1.5 overflow-x-auto"
+          style={{
+            backgroundColor: 'var(--fs-surface)',
+            borderColor: 'var(--fs-border)',
+          }}
+        >
           {[
             { id: 'all' as const, label: '全部流程图', icon: FolderKanban, count: diagrams.length },
             { id: 'recent' as const, label: '最近编辑', icon: Clock, count: recentDiagrams.length },
@@ -246,7 +281,7 @@ export const DashboardPage: React.FC = () => {
                 className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer shrink-0 ${
                   isActive
                     ? 'bg-fs-primary/10 text-fs-primary font-semibold'
-                    : 'text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-[var(--fs-surface)]'
+                    : 'text-[var(--fs-text-muted)] hover:text-[var(--fs-text)] hover:bg-black/5 dark:hover:bg-white/5'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -259,13 +294,18 @@ export const DashboardPage: React.FC = () => {
           })}
         </aside>
 
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6">
           {activeView === 'templates' ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-                <h2 className="text-lg font-semibold tracking-tight">模板库</h2>
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-lg font-semibold tracking-tight">模板库</h2>
+                  <span className="text-xs text-[var(--fs-text-muted)]">
+                    共 {filteredTemplates.length} 套模板
+                  </span>
+                </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {(['all', 'flowchart', 'swimlane', 'topology', 'org-chart'] as const).map((cat) => (
+                  {(['all', ...TEMPLATE_CATEGORY_ORDER] as const).map((cat) => (
                     <button
                       key={cat}
                       type="button"
@@ -287,42 +327,26 @@ export const DashboardPage: React.FC = () => {
                   未找到匹配的模板
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-5">
                   {filteredTemplates.map((tpl) => (
-                    <div
+                    <TemplateCard
                       key={tpl.id}
-                      className="rounded-xl border p-4 flex flex-col justify-between gap-3 bg-[var(--fs-surface)] transition-colors hover:border-fs-primary/50"
-                      style={{ borderColor: 'var(--fs-border)' }}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className="text-sm font-semibold truncate">{tpl.title}</span>
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-fs-primary/10 text-fs-primary shrink-0">
-                            {TEMPLATE_CATEGORY_LABELS[tpl.category]}
-                          </span>
-                        </div>
-                        <p className="text-xs text-[var(--fs-text-muted)] line-clamp-2 leading-relaxed">
-                          {tpl.description}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={Boolean(creatingTemplateId)}
-                        onClick={() => handleCreateFromTemplate(tpl)}
-                        className="w-full py-1.5 px-3 rounded-lg text-xs font-medium text-white bg-fs-primary hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
-                      >
-                        {creatingTemplateId === tpl.id ? '创建中...' : '使用此模板'}
-                      </button>
-                    </div>
+                      template={tpl}
+                      categoryLabel={TEMPLATE_CATEGORY_LABELS[tpl.category]}
+                      variant="default"
+                      isCreating={creatingTemplateId === tpl.id}
+                      disabled={Boolean(creatingTemplateId)}
+                      onSelect={handleCreateFromTemplate}
+                    />
                   ))}
                 </div>
               )}
             </>
           ) : (
             <>
-              {activeView === 'all' && !searchQuery && TEMPLATES_REGISTRY.length > 0 && (
-                <section className="mb-6">
-                  <div className="flex items-center justify-between mb-2.5">
+              {activeView === 'all' && !searchQuery && featuredTemplates.length > 0 && (
+                <section className="mb-8">
+                  <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--fs-text-muted)]">
                       <Sparkles className="w-3.5 h-3.5 text-fs-primary" />
                       <span>快速从模板开始</span>
@@ -336,26 +360,28 @@ export const DashboardPage: React.FC = () => {
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {TEMPLATES_REGISTRY.slice(0, 4).map((tpl) => (
-                      <button
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 min-[1920px]:grid-cols-6 gap-4">
+                    {featuredTemplates.map((tpl, idx) => (
+                      <div
                         key={tpl.id}
-                        type="button"
-                        disabled={Boolean(creatingTemplateId)}
-                        onClick={() => handleCreateFromTemplate(tpl)}
-                        className="text-left p-3 rounded-xl border bg-[var(--fs-surface)] hover:border-fs-primary/60 transition-colors cursor-pointer disabled:opacity-50"
-                        style={{ borderColor: 'var(--fs-border)' }}
+                        className={
+                          idx === 4
+                            ? 'hidden xl:block'
+                            : idx === 5
+                              ? 'hidden min-[1920px]:block'
+                              : ''
+                        }
                       >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="text-xs font-semibold truncate">{tpl.title}</span>
-                          <span className="text-[10px] text-fs-primary shrink-0">
-                            {TEMPLATE_CATEGORY_LABELS[tpl.category]}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-[var(--fs-text-muted)] truncate">
-                          {creatingTemplateId === tpl.id ? '正在创建画布...' : tpl.description}
-                        </p>
-                      </button>
+                        <TemplateCard
+                          template={tpl}
+                          categoryLabel={TEMPLATE_CATEGORY_LABELS[tpl.category]}
+                          variant="compact"
+                          isCreating={creatingTemplateId === tpl.id}
+                          disabled={Boolean(creatingTemplateId)}
+                          className="w-full h-full"
+                          onSelect={handleCreateFromTemplate}
+                        />
+                      </div>
                     ))}
                   </div>
                 </section>
@@ -414,7 +440,7 @@ export const DashboardPage: React.FC = () => {
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-5">
                   {visibleDiagrams.map((d) => (
                     <DiagramCard
                       key={d.id}
