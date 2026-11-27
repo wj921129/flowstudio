@@ -1,5 +1,9 @@
 import type { FlowEdge, FlowNode, FlowNodeType } from '@flowstudio/shared';
 import { getEdgeDashArray, getNodeRegistryEntry } from '@flowstudio/shared';
+import {
+  deriveDefaultOrthogonalWaypoints,
+  ensureOrthogonalWaypoints,
+} from '../features/canvas/custom-edges/waypoint-path-utils.js';
 
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -177,8 +181,16 @@ const renderEdge = (e: FlowEdge, nodes: FlowNode[]): string => {
   if (!s || !t) return '';
   const sc = { x: s.position.x + (s.width ?? 160) / 2, y: s.position.y + (s.height ?? 80) / 2 };
   const tc = { x: t.position.x + (t.width ?? 160) / 2, y: t.position.y + (t.height ?? 80) / 2 };
-  const isStraight = e.type === 'straight' || e.data?.routingType === 'straight';
-  const pts = !isStraight && e.data?.waypoints && e.data.waypoints.length >= 2 ? [sc, ...e.data.waypoints, tc] : [sc, tc];
+  const isAlignedStraight = Math.abs(sc.x - tc.x) < 1 || Math.abs(sc.y - tc.y) < 1;
+  const isStraight = (e.type === 'straight' || e.data?.routingType === 'straight') && isAlignedStraight;
+  const wps = isStraight
+    ? []
+    : e.data?.waypoints && e.data.waypoints.length > 0
+    ? ensureOrthogonalWaypoints(sc, tc, e.data.waypoints)
+    : isAlignedStraight
+    ? []
+    : deriveDefaultOrthogonalWaypoints(sc, tc);
+  const pts = [sc, ...wps, tc];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
   const labelPos = pts[Math.floor(pts.length / 2)];
   const dashArray = getEdgeDashArray(e.data?.style?.strokeStyle);

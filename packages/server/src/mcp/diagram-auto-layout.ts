@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import type ELK from 'elkjs/lib/elk.bundled.js';
 import {
   type AiBatchEntityDiff,
+  alignWaypointsToAnchors,
   type CircuitEdgePlan,
   distributeEdgePorts,
   type FlowEdge,
@@ -9,6 +10,7 @@ import {
   isAutoManagedPort,
   layoutCircuitFlowGraph,
   layoutTreeGraph,
+  resolveNodeWorldBoxes,
 } from '@flowstudio/shared';
 import type { DiagramRepository } from '../db/diagram-repository.js';
 import type { AiBatchManager } from '../collaboration/ai-batch-manager.js';
@@ -638,6 +640,7 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
           lockedTargetEdgeIds,
           flowDirection: effectiveDirection,
         });
+        const liveBoxes = resolveNodeWorldBoxes(liveNodes);
 
         for (const nextEdge of distributed) {
           if (fixedEdgeIds.has(nextEdge.id)) continue;
@@ -665,7 +668,12 @@ export async function executeAutoLayout(ctx: AutoLayoutContext, input: AutoLayou
             edgeMap.set('type', 'orthogonal');
             nextData.routingType = 'orthogonal';
             if (activeMode === 'circuit' && plan?.waypoints && bothAutoEdgeIds.has(nextEdge.id)) {
-              nextData.waypoints = plan.waypoints;
+              const sBox = liveBoxes.get(nextEdge.source);
+              const tBox = liveBoxes.get(nextEdge.target);
+              nextData.waypoints =
+                sBox && tBox
+                  ? alignWaypointsToAnchors(plan.waypoints, sBox, nextEdge.sourceHandle, tBox, nextEdge.targetHandle)
+                  : plan.waypoints;
             } else if (bothAutoEdgeIds.has(nextEdge.id) && 'waypoints' in nextData) {
               delete nextData.waypoints;
             }

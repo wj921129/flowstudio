@@ -4,6 +4,7 @@
 
 | 日期 | 编号/模块 | 问题描述与修复摘要 | 关联文档 |
 | --- | --- | --- | --- |
+| 2026-11-27 | MCP auto_layout 与前端正交折线兜底 | 修复 `circuit-flow` 执行 `auto_layout` 时用未对齐偏心端口的原始 `plan.waypoints` 覆写 `distributeEdgePorts` 结果导致产生非 90° 斜线的缺陷（回写前通过 `alignWaypointsToAnchors` 对齐并补齐单拐点正交对齐/拆段）；新增 `ensureOrthogonalWaypoints` 接入画布路由管理器与 SVG / 离线 HTML 导出链路兜底矫正存量或异常非 90° 折线 | — |
 | 2026-11-26 | 节点边角缩放与空格平移焦点保持 | 修复选中长方形等形状时边框连线点热区压住/抢占边角缩放手柄（`BaseNodeWrapper` 提升角柄至 `!z-40` 并扩热区、新增 `isInResizeCornerZone` 四角避让 `hoverAnchor`、调整 `RichCardNode` 裁切层级）；修复选中元素后按住空格平移画布丢失流程走势及流向动画效果（`selectedChainFocus` 解除平移态置空，且平移态拦截误清选中事件） | — |
 | 2026-11-26 | 连线边界闪烁与Hover变灰 | 修复鼠标移入连线起终点与元素交界处因提升连线 `zIndex` 抢夺鼠标事件导致的整条连线高频闪烁；修复 Hover 焦点节点 `brightness(0.92)` 导致浅色图元背景发灰问题 | — |
 | 2026-11-26 | 流程错乱与协同布局缺陷 | 修复复杂流程图分支 BFS 吞主干、数组声明序破环倒置、负坐标飞出、节点与泳道物理重叠（`spec-ops.ts` 同向重渲染顺推防叠压同时保留人工间距）、`op-executor.ts` 幽灵 `parentId`/未转局部坐标/`insert_between` 顺推前选桩与误推 `loop` 边、`auto_layout` 默认误排及直线被洗成折线、`obstacle-avoidance-router` 自身泳道误罚，并新增 `diagram-inspector` 重叠/越界/逆流/负坐标断链 4 项软告警 | [2026-11-26-电路式全流程排版与树状直线升级设计方案.md](./2026-11-26-电路式全流程排版与树状直线升级设计方案.md) |

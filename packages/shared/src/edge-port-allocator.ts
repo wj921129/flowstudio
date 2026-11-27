@@ -120,13 +120,22 @@ export function alignWaypointsToAnchors(
   const inferred = inferBestSides(sourceBox, targetBox);
   const sPt = getBorderAnchorWorldPoint(sourceBox, sourceHandle, inferred.sourceSide, sourceBox.type);
   const tPt = getBorderAnchorWorldPoint(targetBox, targetHandle, inferred.targetSide, targetBox.type);
-  if (sPt.side === 'left' || sPt.side === 'right') next[0] = { x: next[0].x, y: sPt.y };
-  else next[0] = { x: sPt.x, y: next[0].y };
-  if (next.length >= 2) {
-    const last = next.length - 1;
-    if (tPt.side === 'left' || tPt.side === 'right') next[last] = { x: next[last].x, y: tPt.y };
-    else next[last] = { x: tPt.x, y: next[last].y };
+  const sHoriz = sPt.side === 'left' || sPt.side === 'right';
+  const tHoriz = tPt.side === 'left' || tPt.side === 'right';
+  if (next.length === 1) {
+    if (sHoriz !== tHoriz) {
+      return [sHoriz ? { x: tPt.x, y: sPt.y } : { x: sPt.x, y: tPt.y }];
+    }
+    if (sHoriz ? Math.abs(sPt.y - tPt.y) >= 0.5 : Math.abs(sPt.x - tPt.x) >= 0.5) {
+      return sHoriz
+        ? [{ x: next[0].x, y: sPt.y }, { x: next[0].x, y: tPt.y }]
+        : [{ x: sPt.x, y: next[0].y }, { x: tPt.x, y: next[0].y }];
+    }
+    return [sHoriz ? { x: next[0].x, y: sPt.y } : { x: sPt.x, y: next[0].y }];
   }
+  next[0] = sHoriz ? { x: next[0].x, y: sPt.y } : { x: sPt.x, y: next[0].y };
+  const last = next.length - 1;
+  next[last] = tHoriz ? { x: next[last].x, y: tPt.y } : { x: tPt.x, y: next[last].y };
   return next;
 }
 

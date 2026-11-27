@@ -6,6 +6,7 @@ import {
 } from './obstacle-avoidance-router';
 import {
   buildWaypointPath,
+  ensureOrthogonalWaypoints,
   type EdgeAnchorDirection,
   type PathSegment,
 } from './waypoint-path-utils';
@@ -342,7 +343,7 @@ export class EdgeRoutingManager {
 
     let waypoints: XYPosition[];
     if (manualWaypoints && manualWaypoints.length > 0) {
-      waypoints = manualWaypoints;
+      waypoints = ensureOrthogonalWaypoints(source, target, manualWaypoints, sourcePosition, targetPosition);
     } else {
       waypoints = findObstacleAvoidingPath(
         source,

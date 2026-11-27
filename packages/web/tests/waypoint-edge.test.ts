@@ -4,6 +4,7 @@ import {
   adjustWaypointsOnNodeMove,
   buildWaypointPath,
   deriveDefaultOrthogonalWaypoints,
+  ensureOrthogonalWaypoints,
   findNearestNodeBorderAnchor,
   moveOrthogonalSegment,
   simplifyOrthogonalWaypoints,
@@ -370,5 +371,75 @@ describe('waypoint-path-utils: Orthogonal Edge Waypoints and Routing', () => {
     expect(result.path).toBe('M 0 0 L 100 100');
     expect(result.segments.length).toBe(1);
     expect(result.labelPosition).toEqual({ x: 50, y: 50 });
+  });
+
+  it('ensureOrthogonalWaypoints 修正错位锚点、单拐点、中间斜段并原样保留已正交路径', () => {
+    const orthoAlready = [
+      { x: 568.34, y: 313 },
+      { x: 740, y: 313 },
+    ];
+    expect(
+      ensureOrthogonalWaypoints({ x: 568.34, y: 272.7 }, { x: 740, y: 340 }, orthoAlready, 'bottom', 'top')
+    ).toBe(orthoAlready);
+
+    const fixedSrc = ensureOrthogonalWaypoints(
+      { x: 568.34, y: 272.7 },
+      { x: 740, y: 340 },
+      [
+        { x: 545, y: 313 },
+        { x: 740, y: 313 },
+      ],
+      'bottom',
+      'top'
+    );
+    expect(fixedSrc).toEqual([
+      { x: 568.34, y: 313 },
+      { x: 740, y: 313 },
+    ]);
+    expect(isOrthogonal([{ x: 568.34, y: 272.7 }, ...fixedSrc, { x: 740, y: 340 }])).toBe(true);
+
+    const fixedBoth = ensureOrthogonalWaypoints(
+      { x: 761.67, y: 2012.7 },
+      { x: 606.67, y: 2190 },
+      [
+        { x: 785, y: 2053 },
+        { x: 580, y: 2053 },
+      ],
+      'bottom',
+      'top'
+    );
+    expect(fixedBoth).toEqual([
+      { x: 761.67, y: 2053 },
+      { x: 606.67, y: 2053 },
+    ]);
+    expect(isOrthogonal([{ x: 761.67, y: 2012.7 }, ...fixedBoth, { x: 606.67, y: 2190 }])).toBe(true);
+
+    const fixedL = ensureOrthogonalWaypoints({ x: 100, y: 120 }, { x: 300, y: 240 }, [{ x: 250, y: 150 }], 'right', 'top');
+    expect(fixedL).toEqual([{ x: 300, y: 120 }]);
+    expect(isOrthogonal([{ x: 100, y: 120 }, ...fixedL, { x: 300, y: 240 }])).toBe(true);
+
+    const fixedSameAxisSingle = ensureOrthogonalWaypoints(
+      { x: 120, y: 100 },
+      { x: 260, y: 300 },
+      [{ x: 150, y: 200 }],
+      'bottom',
+      'top'
+    );
+    const sameAxisPts = [{ x: 120, y: 100 }, ...fixedSameAxisSingle, { x: 260, y: 300 }];
+    expect(fixedSameAxisSingle.length).toBeGreaterThanOrEqual(2);
+    expect(isOrthogonal(sameAxisPts)).toBe(true);
+
+    const fixedMid = ensureOrthogonalWaypoints(
+      { x: 100, y: 100 },
+      { x: 300, y: 300 },
+      [
+        { x: 100, y: 160 },
+        { x: 220, y: 240 },
+        { x: 300, y: 240 },
+      ],
+      'bottom',
+      'top'
+    );
+    expect(isOrthogonal([{ x: 100, y: 100 }, ...fixedMid, { x: 300, y: 300 }])).toBe(true);
   });
 });

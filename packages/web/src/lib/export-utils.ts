@@ -4,7 +4,8 @@
  */
 
 import type { FlowNode, FlowEdge, XYPosition } from '@flowstudio/shared';
-import { flowNodeSchema, flowEdgeSchema, getBorderAnchorWorldPoint, getEdgeDashArray } from '@flowstudio/shared';
+import { flowNodeSchema, flowEdgeSchema, getBorderAnchorWorldPoint, getEdgeDashArray, parseBorderAnchorHandle } from '@flowstudio/shared';
+import { ensureOrthogonalWaypoints } from '../features/canvas/custom-edges/waypoint-path-utils.js';
 import { getNodeDimensions } from '../features/canvas/utils/group-calculator.js';
 import { getNodeWorldPosition } from '../features/canvas/utils/split-insert-manager.js';
 import { sanitizeNodes, sanitizeEdges } from './storage.js';
@@ -452,8 +453,15 @@ export function generateDiagramSvg(nodes: FlowNode[], edges: FlowEdge[], title: 
     const waypoints = edge.data?.waypoints;
 
     if (Array.isArray(waypoints) && waypoints.length > 0) {
+      const orthoWaypoints = ensureOrthogonalWaypoints(
+        start,
+        end,
+        waypoints,
+        parseBorderAnchorHandle(edge.sourceHandle)?.side ?? 'right',
+        parseBorderAnchorHandle(edge.targetHandle)?.side ?? 'left'
+      );
       pathD = `M ${start.x} ${start.y}`;
-      for (const wp of waypoints) {
+      for (const wp of orthoWaypoints) {
         pathD += ` L ${wp.x} ${wp.y}`;
       }
       pathD += ` L ${end.x} ${end.y}`;

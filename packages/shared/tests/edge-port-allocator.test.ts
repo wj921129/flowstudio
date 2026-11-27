@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  alignWaypointsToAnchors,
   distributeEdgePorts,
   getBorderAnchorWorldPoint,
   parseBorderAnchorHandle,
@@ -201,5 +202,27 @@ describe('edge-port-allocator 共享端口分摊引擎', () => {
     const flowRes = renderSpec(flowSpec);
     const ann = flowRes.edges.find((e) => e.data?.kind === 'annotate')!;
     expect(ann.data?.style?.strokeStyle).toBe('dashed');
+  });
+
+  it('alignWaypointsToAnchors：L 型单拐点与同轴单拐点对齐后保持严格正交', () => {
+    const s = makeNode('s', 100, 100);
+    const t = makeNode('t', 380, 260);
+    const boxes = resolveNodeWorldBoxes([s, t]);
+    const sBox = boxes.get('s')!;
+    const tBox = boxes.get('t')!;
+
+    const lAligned = alignWaypointsToAnchors([{ x: 460, y: 140 }], sBox, 'right@0.3333', tBox, 'top@0.25');
+    const lS = getBorderAnchorWorldPoint(sBox, 'right@0.3333', 'right', 'process');
+    const lT = getBorderAnchorWorldPoint(tBox, 'top@0.25', 'top', 'process');
+    const lPts = [lS, ...lAligned, lT];
+    expect(lAligned).toHaveLength(1);
+    expect(lPts.slice(1).every((p, i) => Math.abs(p.x - lPts[i].x) < 0.5 || Math.abs(p.y - lPts[i].y) < 0.5)).toBe(true);
+
+    const sameAxisAligned = alignWaypointsToAnchors([{ x: 240, y: 200 }], sBox, 'bottom@0.3333', tBox, 'top@0.6667');
+    const saS = getBorderAnchorWorldPoint(sBox, 'bottom@0.3333', 'bottom', 'process');
+    const saT = getBorderAnchorWorldPoint(tBox, 'top@0.6667', 'top', 'process');
+    const saPts = [saS, ...sameAxisAligned, saT];
+    expect(sameAxisAligned).toHaveLength(2);
+    expect(saPts.slice(1).every((p, i) => Math.abs(p.x - saPts[i].x) < 0.5 || Math.abs(p.y - saPts[i].y) < 0.5)).toBe(true);
   });
 });

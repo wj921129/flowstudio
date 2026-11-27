@@ -3,7 +3,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as Y from 'yjs';
-import { DIAGRAM_PRESETS } from '@flowstudio/shared';
+import {
+  DIAGRAM_PRESETS,
+  getBorderAnchorWorldPoint,
+  resolveNodeWorldBoxes,
+  type FlowEdge,
+  type FlowNode,
+} from '@flowstudio/shared';
 import { buildServer } from '../src/server.js';
 
 type Server = Awaited<ReturnType<typeof buildServer>>;
@@ -192,5 +198,64 @@ describe('MCP Resources、circuit-flow auto_layout 与协同修复闭环', () =>
       ops: [{ op: 'move_node', id: 'n2', position: { x: 410, y: 55 } }],
     });
     expect(outOverlap.data.warnings.some((w: string) => w.includes('物理重叠'))).toBe(true);
+  });
+
+  it('circuit-flow 执行 scaffold_diagram 后再调用 auto_layout(circuit) 所有带 waypoints 的边保持严格正交', async () => {
+    const id = await newDiagram('电路正交回归');
+    await callTool(server, 'scaffold_diagram', {
+      diagramId: id,
+      spec: {
+        paradigm: 'circuit-flow',
+        orientation: 'vertical',
+        edgeRouting: 'orthogonal',
+        nodes: [
+          { id: 's', label: '开始', type: 'start-end' },
+          { id: 'd1', label: '条件1', type: 'decision' },
+          { id: 'e1', label: '拦截1', type: 'start-end', earlyExit: true },
+          { id: 'd2', label: '条件2', type: 'decision' },
+          { id: 'b1', label: '分支A', type: 'process' },
+          { id: 'b2', label: '分支B', type: 'process' },
+          { id: 'm', label: '汇合落库', type: 'process' },
+          { id: 'end', label: '结束', type: 'start-end' },
+        ],
+        edges: [
+          { from: 's', to: 'd1' },
+          { from: 'd1', to: 'e1', kind: 'branch', label: '是' },
+          { from: 'd1', to: 'd2', kind: 'next', label: '否' },
+          { from: 'd2', to: 'b1', kind: 'branch', label: 'A' },
+          { from: 'd2', to: 'b2', kind: 'next', label: 'B' },
+          { from: 'b1', to: 'm' },
+          { from: 'b2', to: 'm' },
+          { from: 'm', to: 'end' },
+        ],
+      },
+    });
+    const layoutRes = await callTool(server, 'auto_layout', { diagramId: id, mode: 'circuit' });
+    expect(layoutRes.isError, layoutRes.text).toBe(false);
+
+    const { nodes, edges } = await server.writer.readDocument(id, (doc) => {
+      const nodeList: FlowNode[] = [];
+      const edgeList: FlowEdge[] = [];
+      doc.getMap<Y.Map<unknown>>('nodes').forEach((m) => nodeList.push(m.toJSON() as FlowNode));
+      doc.getMap<Y.Map<unknown>>('edges').forEach((m) => edgeList.push(m.toJSON() as FlowEdge));
+      return { nodes: nodeList, edges: edgeList };
+    });
+
+    const boxes = resolveNodeWorldBoxes(nodes);
+    const wpEdges = edges.filter((e) => Array.isArray(e.data?.waypoints) && e.data.waypoints.length > 0);
+    expect(wpEdges.length).toBeGreaterThan(0);
+
+    for (const edge of wpEdges) {
+      const sBox = boxes.get(edge.source)!;
+      const tBox = boxes.get(edge.target)!;
+      const sPt = getBorderAnchorWorldPoint(sBox, edge.sourceHandle, 'bottom', sBox.type);
+      const tPt = getBorderAnchorWorldPoint(tBox, edge.targetHandle, 'top', tBox.type);
+      const pts = [sPt, ...edge.data!.waypoints!, tPt];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const dx = Math.abs(pts[i + 1].x - pts[i].x);
+        const dy = Math.abs(pts[i + 1].y - pts[i].y);
+        expect(dx < 0.5 || dy < 0.5, `${edge.id} seg ${i}: dx=${dx}, dy=${dy}`).toBe(true);
+      }
+    }
   });
 });

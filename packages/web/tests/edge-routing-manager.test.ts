@@ -376,4 +376,25 @@ describe('EdgeRoutingManager', () => {
     expect(manager.getAllOverlaps()).toHaveLength(0);
     unsub();
   });
+
+  it('normalizes misaligned manualWaypoints into strictly orthogonal segments', () => {
+    const route = manager.routeEdge({
+      id: 'misaligned-edge',
+      source: { x: 568.3, y: 272.7 },
+      target: { x: 740, y: 340 },
+      sourcePosition: 'bottom',
+      targetPosition: 'top',
+      manualWaypoints: [
+        { x: 545, y: 313 },
+        { x: 740, y: 313 },
+      ],
+    });
+
+    expect(route.segments.length).toBeGreaterThanOrEqual(2);
+    for (const seg of route.segments) {
+      const dx = Math.abs(seg.end.x - seg.start.x);
+      const dy = Math.abs(seg.end.y - seg.start.y);
+      expect(dx < 0.5 || dy < 0.5).toBe(true);
+    }
+  });
 });

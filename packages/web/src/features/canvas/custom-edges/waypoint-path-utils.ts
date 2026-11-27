@@ -676,3 +676,94 @@ export function findNearestNodeBorderAnchor(
 
   return best ? best.hit : null;
 }
+
+export function ensureOrthogonalWaypoints(
+  source: XYPosition,
+  target: XYPosition,
+  waypoints: XYPosition[],
+  sourcePosition?: EdgeAnchorDirection,
+  targetPosition?: EdgeAnchorDirection
+): XYPosition[] {
+  if (waypoints.length === 0) return [];
+  const isOrtho = (a: XYPosition, b: XYPosition) =>
+    Math.abs(a.x - b.x) < 0.5 || Math.abs(a.y - b.y) < 0.5;
+  const raw = [source, ...waypoints, target];
+  let allOrtho = true;
+  for (let i = 0; i < raw.length - 1; i++) {
+    if (!isOrtho(raw[i], raw[i + 1])) {
+      allOrtho = false;
+      break;
+    }
+  }
+  if (allOrtho) return waypoints;
+
+  const next = waypoints.map((p) => ({ x: p.x, y: p.y }));
+  const sAxis = sideToAxis(sourcePosition);
+  const tAxis = sideToAxis(targetPosition);
+
+  if (next.length === 1) {
+    if (sAxis && tAxis && sAxis !== tAxis) {
+      next[0] = sAxis === 'h' ? { x: target.x, y: source.y } : { x: source.x, y: target.y };
+    }
+  } else {
+    if (!isOrtho(source, next[0])) {
+      if (sAxis === 'v' && Math.abs(next[0].y - next[1].y) < 0.5) next[0].x = source.x;
+      else if (sAxis === 'h' && Math.abs(next[0].x - next[1].x) < 0.5) next[0].y = source.y;
+    }
+    const last = next.length - 1;
+    if (!isOrtho(next[last], target)) {
+      if (tAxis === 'v' && Math.abs(next[last - 1].y - next[last].y) < 0.5) next[last].x = target.x;
+      else if (tAxis === 'h' && Math.abs(next[last - 1].x - next[last].x) < 0.5) next[last].y = target.y;
+    }
+  }
+
+  const pts = [source, ...next, target];
+  const out: XYPosition[] = [pts[0]];
+  let prevAxis: SegmentAxis | null = null;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = out[out.length - 1];
+    const curr = pts[i];
+    if (isOrtho(prev, curr)) {
+      out.push(curr);
+      if (Math.hypot(curr.x - prev.x, curr.y - prev.y) >= 0.5) {
+        prevAxis = Math.abs(curr.y - prev.y) < 0.5 ? 'h' : 'v';
+      }
+      continue;
+    }
+    const firstAxis: SegmentAxis =
+      i === 1 && sAxis
+        ? sAxis
+        : i === pts.length - 1 && tAxis
+        ? tAxis === 'h'
+          ? 'v'
+          : 'h'
+        : prevAxis === 'h'
+        ? 'v'
+        : 'h';
+    const corner = firstAxis === 'h' ? { x: curr.x, y: prev.y } : { x: prev.x, y: curr.y };
+    out.push(corner, curr);
+    prevAxis = firstAxis === 'h' ? 'v' : 'h';
+  }
+
+  const eps = 0.01;
+  const samePt = (a: XYPosition, b: XYPosition) =>
+    Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps;
+  const cleaned: XYPosition[] = [out[0]];
+  for (let i = 1; i < out.length; i++) {
+    const p = out[i];
+    if (i < out.length - 1 && samePt(p, cleaned[cleaned.length - 1])) continue;
+    while (cleaned.length >= 2) {
+      const prev = cleaned[cleaned.length - 1];
+      const pp = cleaned[cleaned.length - 2];
+      const dup = samePt(p, prev);
+      const colX = Math.abs(pp.x - prev.x) < eps && Math.abs(prev.x - p.x) < eps;
+      const colY = Math.abs(pp.y - prev.y) < eps && Math.abs(prev.y - p.y) < eps;
+      if (dup || colX || colY) cleaned.pop();
+      else break;
+    }
+    if (i === out.length - 1 || !samePt(p, cleaned[cleaned.length - 1])) {
+      cleaned.push(p);
+    }
+  }
+  return cleaned.slice(1, -1);
+}
